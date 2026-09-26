@@ -347,3 +347,19 @@ This section documents implementation and targeted verification for BR-01, BR-02
 - Status logging, capture test coverage, depth lifetime fix, and Evaluate capture: new CPU suite `LoDlssStatusLogTest` (400 checks against real logger), presentation capture hardware fixture `LoPresentCaptureTest` (4 multi-frame/error cases, plus `--case close`), depth retirement suite `motion_replay_gpu_test.exe --depth-retirement-only` (26 checks on RTX 5080 Vulkan D32S8), and evaluate capture suites `LoDlssEvaluateCaptureContractTest.exe --evaluate-capture-contract-only` and `LoNativeDlssRendererTest.exe --evaluate-capture-only` passed; `motion_renderer_compile` compiled cleanly.
 - Synchronous NGX Evaluate input/output capture: Controller records isolated pre-Evaluate color copy and post-Evaluate scratch output copy with `VK_IMAGE_LAYOUT_GENERAL` restoration before composite/UI. Captures export `dlss-evaluations.json`, `dlss-input-NNN.bin` / `-preview.bmp`, and `dlss-output-NNN.bin` / `-preview.bmp` (RGBA8/RGBA16F formats with jitter, reset, and plan metadata; fallback frames omit mock images).
 - Full executable relink and verification baseline: the updated game executable target `LostOdysseyRecomp` completed linking successfully (`build/LostOdysseyRecomp/LostOdysseyRecomp.exe`, 93,635,072 bytes, SHA-256 `08d50e3774d18a02d4f6eaf2267472e9fab75db36e3ee970980aa96faf641e9d`, UTC 2026-09-23 02:32:58 / local 2026-09-22 20:32:58 -0600, built from `0625923` plus uncommitted changes with source ID `bdd9539ee4f176bdda0d9660bb5621b8a90a09acf8f8faa8427c10f2075c2688`; earlier 16:24:35 and 19:33:37 intermediate builds preserved). Live user session previously verified Quality -> DLAA switching without crashes; the user's next step is Quality/DLAA export with the new binary (Off baseline run does not need to be repeated). In-game visual quality verification, player acceptance, and release packaging have not been performed.
+
+## 2026-09-26 DLAA sizing correction
+
+The runtime log `runtime(1).log` exposed a false DLAA `SizingError`: for a `3840×2160` output, NGX returned a successful sizing result with `min=1920×1080`, `optimal=2560×1440`, and `max=3840×2160`. The previous planner treated the vendor `optimal` extent as a mandatory DLAA input and rejected the valid 1:1 output extent.
+
+The correction in `gpu/upscaling_plan.h` and `gpu/dlss_ngx.cpp` keeps the raw vendor values for diagnostics, validates only successful queries with nonzero, ordered bounds, and chooses `input=output` for DLAA when the output lies within those bounds. `mode.optimal` now records the selected render extent. This follows the locked NVIDIA DLSS Programming Guide §3.2.1 requirement that DLAA uses a 1:1 input/output extent regardless of the Optimal Settings result.
+
+`LoNativeDlaaTest` passed 1,380 CPU contract checks covering the three logged resolutions (`3840×2160`, `5120×2160`, and `3844×2119`), fallback recovery, out-of-range rejection, and preservation of ordinary SR recommended extents. The Windows clang-cl SDK 310.9.1 build also compiled `dlss_ngx.cpp` standalone successfully. No full game relink, NVIDIA GPU runtime or visual-quality verification has been performed for this correction, and it has not received user acceptance or publication.
+
+## 2026-09-26 DLAA 尺寸修正
+
+`runtime(1).log` 暴露了一个错误的 DLAA `SizingError`：对于 `3840×2160` 输出，NGX 成功返回了 `min=1920×1080`、`optimal=2560×1440`、`max=3840×2160`。旧版规划器把厂商返回的 `optimal` 尺寸当成 DLAA 必须使用的输入尺寸，因此拒绝了有效的 1:1 输出尺寸。
+
+修正位于 `gpu/upscaling_plan.h` 和 `gpu/dlss_ngx.cpp`：保留原始厂商值用于诊断，仅对成功查询检查尺寸非零且上下界顺序有效；当 DLAA 输出尺寸位于该范围内时选择 `input=output`，并让 `mode.optimal` 记录选定的渲染尺寸。该行为符合锁定的 NVIDIA DLSS Programming Guide §3.2.1：DLAA 无论 Optimal Settings 返回什么，都要求输入与输出保持 1:1。
+
+更新后的规划器 `LoNativeDlaaTest` 已通过 1,380 项 CPU contract checks，覆盖日志中的三种分辨率（`3840×2160`、`5120×2160`、`3844×2119`）、fallback 恢复、超范围拒绝以及普通 SR 推荐尺寸保持；Windows clang-cl SDK 310.9.1 启用的 `dlss_ngx.cpp` 单独编译也已通过。此次修正尚未进行完整游戏重链、NVIDIA GPU 实机运行或画质验证，也未完成用户验收或发布。

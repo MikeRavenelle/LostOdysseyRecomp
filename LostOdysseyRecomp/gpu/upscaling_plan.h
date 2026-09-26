@@ -41,7 +41,7 @@ inline constexpr FsrQuality NormalizeFsrQuality(FsrQuality value) {
 enum class FrameGeneration : uint32_t { Off = 0, Dlss2x = 1 };
 inline constexpr bool KnownFrameGeneration(FrameGeneration value) { return uint32_t(value) <= uint32_t(FrameGeneration::Dlss2x); }
 // DLAA consumes the output content extent, not drawable bars or guest padding.
-// A failed/mismatched vendor query must not be replaced with a guessed 1:1 size.
+// Check actual render dimensions, not the vendor's recommended SR dimensions.
 inline constexpr bool ValidDlssRenderExtent(DlssQuality quality, resolution::Size render,
     resolution::Size output) {
     return KnownDlssQuality(quality) && render.width && render.height && output.width && output.height &&
@@ -128,6 +128,7 @@ inline constexpr const char* SizingIssueName(SizingIssue issue) {
 
 struct ModeSizing {
     SizingState state = SizingState::Pending;
+    // Selected render extent; DLAA resolves the NGX recommendation to native.
     resolution::Size optimal{};
     resolution::Size minimum{};
     resolution::Size maximum{};
@@ -136,6 +137,25 @@ struct ModeSizing {
     std::optional<int32_t> optimalWidthResult, optimalHeightResult, cleanupResult;
     bool operator==(const ModeSizing&) const = default;
 };
+
+// Called only after a successful NGX query and required output reads. The
+// programming guide defines DLAA as 1:1 regardless of GetOptimalSettings.
+// Keep the queried range, but select native input for DLAA within that range.
+inline SizingIssue ResolveDlssSizing(ModeSizing& mode, DlssQuality quality, resolution::Size output) {
+    if (!mode.optimal.width || !mode.optimal.height || !mode.minimum.width ||
+        !mode.minimum.height || !mode.maximum.width || !mode.maximum.height ||
+        !output.width || !output.height) return SizingIssue::ZeroExtent;
+    const auto inRange = [&](resolution::Size size) {
+        return mode.minimum.width <= size.width && size.width <= mode.maximum.width &&
+            mode.minimum.height <= size.height && size.height <= mode.maximum.height;
+    };
+    if (!inRange(mode.optimal)) return SizingIssue::InvalidRange;
+    if (quality == DlssQuality::Dlaa) {
+        if (!inRange(output)) return SizingIssue::DlaaExtentMismatch;
+        mode.optimal = output;
+    }
+    return SizingIssue::None;
+}
 
 inline bool ModeReadyForOutput(const ModeSizing& mode, DlssQuality quality, resolution::Size output) {
     return mode.state == SizingState::Ready && ValidDlssRenderExtent(quality, mode.optimal, output);

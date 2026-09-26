@@ -8,11 +8,13 @@ One record of completed changes, with unpublished work separated from verified r
 
 ### English
 
+- DLAA sizing correction: successful NGX sizing queries now validate nonzero `min / optimal / max` extents and their ordering, while DLAA selects the output extent when it is within the reported range. This prevents a false `SizingError` when NGX reports a smaller optimal SR extent (for example, `2560×1440`) for a `3840×2160` DLAA output. `LoNativeDlaaTest` passed 1,380 CPU contract checks covering the three logged resolutions (`3840×2160`, `5120×2160`, and `3844×2119`), fallback recovery, out-of-range rejection, and preservation of ordinary SR recommended extents; the Windows clang-cl SDK 310.9.1 `dlss_ngx.cpp` standalone compilation also passed. Full game relink, NVIDIA GPU runtime, visual quality, user acceptance, and publication remain unverified for this correction.
 - Planning targets for v0.8.0:
   - Added D3D12 DLSS Frame Generation and dynamic Multi-Frame Generation (dynamic MFG; target APIs, platforms, or generation multipliers not predetermined) to the v0.8.0 roadmap, alongside existing fixed 2× DLSS FG on Windows Vulkan and independent FSR Frame Generation. Added a Flatpak release package (without promising Flathub acceptance or publication), Linux AArch64, macOS AArch64 (Apple Silicon), experimental Android support, and removal of the legacy PM4 packet translation layer as future roadmap targets for v0.8.0. All newly incorporated items represent uncompleted roadmap planning rather than current implementation, test verification, user acceptance, or release delivery, nor does targeting Apple Silicon preclude other macOS architectures or promise complete Android support.
 
 ### 简体中文
 
+- DLAA 尺寸修正：成功的 NGX 尺寸查询现在检查 `min / optimal / max` 均为非零且顺序有效；当输出尺寸落在该范围内时，DLAA 选择输出尺寸作为输入尺寸。这样可避免 NGX 为 `3840×2160` 的 DLAA 输出报告较小的超分推荐尺寸（例如 `2560×1440`）时被错误标记为 `SizingError`。`LoNativeDlaaTest` 已通过 1,380 项 CPU contract checks，覆盖日志中的三种分辨率（`3840×2160`、`5120×2160`、`3844×2119`）、fallback 恢复、超范围拒绝以及普通 SR 推荐尺寸保持；Windows clang-cl SDK 310.9.1 启用的 `dlss_ngx.cpp` 单独编译也已通过。完整游戏重链、NVIDIA GPU 实机运行、画质、用户验收和发布状态仍未确认。
 - v0.8.0 规划目标更新：
   - 将 D3D12 DLSS 插帧（D3D12 DLSS FG）与动态多帧生成（动态 MFG，目标 API、平台或生成倍率不作预先设定）纳入本期 v0.8.0 路线图规划，并保留现有 Windows Vulkan 下固定 2× DLSS FG 与独立 FSR 插帧规划目标；新增 Flatpak 发布包（不承诺 Flathub 已接受或发布）、Linux AArch64、macOS AArch64（Apple Silicon）、实验性 Android 支持以及移除既有 PM4 数据包转换层作为未来规划目标。所有新纳入项目均为未完成规划，不宣称已有实现、测试验证、用户验收或发布交付，明确 Apple Silicon 目标亦不排除后续支持其他 macOS 架构的可能性，且不对 Android 承诺完整支持。
 

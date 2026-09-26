@@ -593,6 +593,9 @@ upscaling::OutputSizing Controller::QueryOutputSizing(const plume::VulkanInterfa
                 ToNgxQuality(quality), &optimalWidth, &optimalHeight, &maxWidth, &maxHeight, &minWidth, &minHeight, &sharpness);
             mode.ngxResult = int32_t(optimalResult);
             RecordCall("Sizing_DLSS_GetOptimalSettings", int32_t(optimalResult), NVSDK_NGX_FAILED(optimalResult));
+            mode.optimal = {optimalWidth, optimalHeight};
+            mode.minimum = {minWidth, minHeight};
+            mode.maximum = {maxWidth, maxHeight};
             if (!NVSDK_NGX_FAILED(optimalResult)) {
                 // The helper returns the callback status, not the required
                 // output getter statuses. Its optional min/max fallback stays.
@@ -604,23 +607,15 @@ upscaling::OutputSizing Controller::QueryOutputSizing(const plume::VulkanInterfa
                 if (NVSDK_NGX_FAILED(widthResult) || NVSDK_NGX_FAILED(heightResult) ||
                     checkedWidth != optimalWidth || checkedHeight != optimalHeight)
                     mode.issue = upscaling::SizingIssue::OptimalRead;
-                else if (!optimalWidth || !optimalHeight || !minWidth || !minHeight || !maxWidth || !maxHeight)
-                    mode.issue = upscaling::SizingIssue::ZeroExtent;
-                else if (minWidth > optimalWidth || optimalWidth > maxWidth ||
-                    minHeight > optimalHeight || optimalHeight > maxHeight)
-                    mode.issue = upscaling::SizingIssue::InvalidRange;
-                else if (!upscaling::ValidDlssRenderExtent(quality,
-                    {optimalWidth, optimalHeight}, {key.outputWidth, key.outputHeight}))
-                    mode.issue = upscaling::SizingIssue::DlaaExtentMismatch;
+                else
+                    mode.issue = upscaling::ResolveDlssSizing(mode, quality, {key.outputWidth, key.outputHeight});
             } else {
                 mode.issue = upscaling::SizingIssue::OptimalQuery;
             }
             mode.state = mode.issue == upscaling::SizingIssue::None ? upscaling::SizingState::Ready :
                 optimalResult == NVSDK_NGX_Result_FAIL_FeatureNotSupported ? upscaling::SizingState::Unavailable : upscaling::SizingState::Error;
-            // Retain actual vendor extents, even on failure. Never invent DLAA sizing.
-            mode.optimal = {optimalWidth, optimalHeight};
-            mode.minimum = {minWidth, minHeight};
-            mode.maximum = {maxWidth, maxHeight};
+            // Raw vendor extents remain in the diagnostic below; mode.optimal
+            // is the selected render extent (native output for supported DLAA).
             const auto cleanup = NVSDK_NGX_VULKAN_DestroyParameters(modeParameters);
             mode.cleanupResult = int32_t(cleanup);
             RecordCall("Sizing_DestroyModeParameters", int32_t(cleanup), NVSDK_NGX_FAILED(cleanup));

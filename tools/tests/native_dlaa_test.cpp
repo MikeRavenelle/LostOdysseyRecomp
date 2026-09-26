@@ -114,6 +114,51 @@ int main() {
     Check(!ValidDlssRenderExtent(DlssQuality::Dlaa, {0, 720}, {0, 720}), "reject zero extents");
     Check(ValidDlssRenderExtent(DlssQuality::Quality, {853, 480}, {1280, 720}), "retain ordinary SR sizing");
 
+    // Reproduce the reported NGX response: all presets recommend 2/3 input,
+    // but the supported range includes native resolution. Feed the production
+    // sizing policy into the real planner, including fallback and recovery.
+    for (auto extent : std::array<resolution::Size, 3>{{{3840, 2160}, {5120, 2160}, {3844, 2119}}}) {
+        const OutputRegion region{extent, 0, 0, extent.width, extent.height};
+        auto queried = Sizing(region);
+        auto& mode = queried.modes[DlssQualityIndex(DlssQuality::Dlaa)];
+        mode.optimal = {(extent.width * 2 + 2) / 3, (extent.height * 2 + 2) / 3};
+        mode.minimum = {(extent.width + 1) / 2, (extent.height + 1) / 2};
+        mode.maximum = extent;
+        const auto raw = mode;
+        for (auto quality : {DlssQuality::Quality, DlssQuality::Balanced, DlssQuality::Performance}) {
+            auto sr = raw;
+            Check(ResolveDlssSizing(sr, quality, extent) == SizingIssue::None && sr.optimal == raw.optimal,
+                "SR retains the vendor recommendation");
+        }
+        auto request = Input(queried, region);
+        PlannerState planner;
+        mode.state = SizingState::Error;
+        const auto fallback = planner.Begin(request);
+        Check(fallback.consumer == TemporalConsumer::None, "sizing error retains fallback");
+        mode.issue = ResolveDlssSizing(mode, DlssQuality::Dlaa, extent);
+        mode.state = mode.issue == SizingIssue::None ? SizingState::Ready : SizingState::Error;
+        const auto recovered = planner.Begin(request);
+        Check(recovered.consumer == TemporalConsumer::DlssSr && recovered.width == extent.width &&
+            recovered.height == extent.height && recovered.geometryEpoch != fallback.geometryEpoch,
+            "smaller optimal recommendation recovers to native DLAA with a fresh epoch");
+        Check(mode.minimum == raw.minimum && mode.maximum == raw.maximum, "vendor limits are preserved");
+        RoundTrip(recovered);
+        for (unsigned axis = 0; axis < 2; ++axis) {
+            auto limited = raw;
+            if (axis == 0) --limited.maximum.width; else --limited.maximum.height;
+            Check(ResolveDlssSizing(limited, DlssQuality::Dlaa, extent) == SizingIssue::DlaaExtentMismatch,
+                "native input outside either vendor maximum remains rejected");
+        }
+        auto malformed = raw;
+        malformed.minimum.width = malformed.optimal.width + 1;
+        Check(ResolveDlssSizing(malformed, DlssQuality::Dlaa, extent) == SizingIssue::InvalidRange,
+            "invalid vendor range remains rejected");
+        malformed = raw;
+        malformed.optimal.height = 0;
+        Check(ResolveDlssSizing(malformed, DlssQuality::Dlaa, extent) == SizingIssue::ZeroExtent,
+            "missing optimal dimensions cannot be replaced with native output");
+    }
+
     for (auto drawable : std::array<resolution::Size, 7>{{
             {1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160},
             {3440, 1440}, {1280, 800}, {1366, 768}}}) {
