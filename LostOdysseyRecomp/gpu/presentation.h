@@ -43,6 +43,14 @@ class Presentation
     bool ProcessSceneColor(plume::RenderCommandList *commands, plume::RenderTexture *source,
                            plume::RenderTexture *target, uint32_t width, uint32_t height,
                            Antialiasing antialiasing);
+    // Composite an independently produced straight-alpha UI image over a
+    // HUD-less output-resolution scene. This performs no AA or scaling and is
+    // intended for the final real/generated-frame presentation stage. Source
+    // images finish SHADER_READ; target finishes COLOR_WRITE for the caller's
+    // normal present transition. All three images must cover width x height.
+    bool DrawSeparatedUi(plume::RenderCommandList *commands, plume::RenderTexture *hudless,
+                         plume::RenderTexture *uiColorAndAlpha, plume::RenderTexture *target,
+                         uint32_t width, uint32_t height, bool toSwapchain = true);
     // Present the scene + subsequently composited UI without applying AA again.
     // Same ownership/layout contract as Draw (source ends COPY_SOURCE).
     void DrawComposited(plume::RenderCommandList *commands, plume::RenderTexture *source,

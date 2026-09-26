@@ -37,8 +37,8 @@
 
 规划执行顺序（开发执行安排，不虚构后项对前项的必然技术依赖；P0/P3/P4 为阶段标识，不混同为优先级）：
 
-1. [~] **P0：**共同时序契约已实现，Streamline／NGX 共存 Gate 1 尚未通过。
-2. [ ] **P3：**生产插帧呈现基础、资源租约与 UI 分离。
+1. [~] **P0：**共同时序契约已实现；独立 Streamline／NGX 探针已加入宿主代理图像 layout 修正候选，但 Gate 1 仍需 validation-clean 实机重跑与外部显示证据，尚未通过。
+2. [~] **P3：**已实现 provider-neutral present lease 与最终阶段 straight-alpha HUDless／UI 合成底座；生产者资源所有权接线、真实 provider／Reflex、resize／模式切换实机验证与正式启用 FG 仍待完成。
 3. [ ] **P4：**Windows Vulkan 固定 2× DLSS 插帧，包括 DLSS／DLAA／FSR 组合与安全暂停／恢复。
 4. [ ] **独立 FSR 插帧：**独立目标，不预设 API、平台和倍率。
 5. [ ] **D3D12 DLSS 插帧：**D3D12 后端 DLSS 插帧规划目标，独立于 Windows Vulkan P4 里程碑。

@@ -10,7 +10,9 @@ Status as of 2026-09-26:
 - **Flathub submission status**:
   - The application packaging branch pushed to `freefrank/flathub:add-lostodysseyrecomp` (commit `0c058f43dba98d4e27000de827b7b9a23ada447e`) serves as preparation material. Under Flathub's Generative AI Policy (`requirements#generative-ai-policy`), manifests must not contain AI-generated or AI-assisted content (disclosure does not exempt manifests from this restriction), and pull request submission messages, descriptions, and review interactions must not be AI-generated. The upstream pull request template also requires an application demonstration video. Submission is pending manual authoring and submission by the maintainer.
 - **Milestone context & Gate 1 P0**:
-  - Streamline Frame Generation Gate 1 P0 remains blocked on SDK validation and display evidence; earlier lifecycle fixes are implemented and reviewed (`out/streamline-fg-p0/gate1-triage-next/REPORT.md`), but Gate 1 P0 has not passed.
+  - Streamline Frame Generation Gate 1 P0 remains blocked on SDK validation and display evidence. The standalone probe now hands the Streamline proxy swapchain image to the hooked Present in `TRANSFER_SRC_OPTIMAL`, directly addressing the previously recorded pacer layout mismatch; this source correction has not yet been rebuilt/rerun on hardware and does not pass Gate 1 by itself.
+- **P3 frame-generation presentation foundation (development)**:
+  - Added a provider-neutral present-lease contract that requires exact temporal resource identity plus explicit HUDless/UI separation before publication, retains producer lifetime tokens through provider completion serials, cancels only unsubmitted work during mode changes, and introduces no per-frame GPU wait. Presentation also has an output-resolution straight-alpha HUDless/UI composition path with no repeated AA or scaling. The real producer ownership bridge, Streamline/FSR provider hookup, Reflex tokens, resize/minimize hardware validation and active FG remain open.
 
 ## v0.7.1 published / v0.7.1 已发布
 

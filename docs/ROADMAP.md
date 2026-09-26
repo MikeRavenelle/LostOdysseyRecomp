@@ -37,8 +37,8 @@ Reviewed on 2026-09-26 against live Issues, Project fields, merged commits and r
 
 Planned development sequence (ordered execution arrangement; does not construct artificial hard technical dependencies between subsequent and preceding items; P0/P3/P4 represent stage identifiers, not priority levels):
 
-1. [~] **P0:** common temporal contracts are implemented; Streamline/NGX coexistence Gate 1 remains unpassed.
-2. [ ] **P3:** production frame-generation presentation infrastructure, leases and UI separation.
+1. [~] **P0:** common temporal contracts are implemented; a host proxy-layout remediation is now in the standalone Streamline/NGX probe, while Gate 1 remains unpassed pending a validation-clean hardware rerun and display evidence.
+2. [~] **P3:** provider-neutral present leases and final straight-alpha HUDless/UI composition are implemented as production foundations. Producer ownership hookup, real provider/Reflex integration, resize/mode-switch hardware validation and active FG remain open.
 3. [ ] **P4:** fixed 2× DLSS Frame Generation on Windows Vulkan, including DLSS/DLAA/FSR combinations and safe suspension/recovery.
 4. [ ] **FSR Frame Generation:** independent target; API, platform and multiplier are not predetermined.
 5. [ ] **D3D12 DLSS Frame Generation:** planning target for DLSS Frame Generation on the D3D12 backend, independent of the Windows Vulkan P4 milestone.
