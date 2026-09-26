@@ -90,11 +90,17 @@ void Scene::Continuation(RenderCommandList& list, VkImage swapImage, VkExtent2D 
     blit.dstOffsets[1] = {int32_t(extent.width), int32_t(extent.height), 1};
     vkCmdBlitImage(cmd, static_cast<VulkanTexture*>(hudless.get())->vk, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         swapImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+    // The image returned by the Streamline swapchain proxy is an application
+    // source image, not the physical WSI image. Hand it to the hooked Present
+    // in TRANSFER_SRC so the DLSS-G pacer can consume/copy it before the proxy
+    // performs the real presentation transition. Transitioning this proxy image
+    // to PRESENT_SRC here races the pacer contract and was the stable Gate-1
+    // validation failure in the previous probe runs.
     before.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    before.dstAccessMask = 0;
+    before.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     before.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    before.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &before);
+    before.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &before);
     list.end();
 }
 void Scene::Tags(sl::Resource (&resources)[4], sl::ResourceTag (&tags)[4]) const {

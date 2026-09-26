@@ -452,7 +452,7 @@ struct App {
         pendingUseId = attempt.useId;
         Check(attempt.status == gpu::dlss::SrStatus::Executable && attempt.useId, "native NGX SR create/evaluate failed");
         scene->Continuation(*continuation, swap.images.at(image), swap.extent, capture);
-        std::printf("HOST_SWAP_FINAL_LAYOUT_RECORDED epoch=%u frame=%u index=%u handle=0x%llx layout=PRESENT_SRC_KHR\n",
+        std::printf("HOST_SWAP_FINAL_LAYOUT_RECORDED epoch=%u frame=%u index=%u handle=0x%llx layout=TRANSFER_SRC_OPTIMAL owner=streamline_present_proxy\n",
             swap.epoch, frame, image, static_cast<unsigned long long>(ImageHandle(swap.images[image])));
         sl::Resource resources[] = {{sl::ResourceType::eTex2d, nullptr}, {sl::ResourceType::eTex2d, nullptr},
             {sl::ResourceType::eTex2d, nullptr}, {sl::ResourceType::eTex2d, nullptr}};
