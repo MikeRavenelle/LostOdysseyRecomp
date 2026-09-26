@@ -140,13 +140,31 @@ The script builds inside the sandbox, finishes the app permissions, validates th
 
 #### Standalone bundle installation and update limits
 
-Install the generated bundle locally:
+Because standalone `.flatpak` bundles do not embed a remote runtime repository URL, ensure the required `org.freedesktop.Platform 26.08` runtime is installed before installing the bundle:
+
+```bash
+flatpak --system install flathub org.freedesktop.Platform//26.08
+```
+
+Install the published stable release bundle:
+
+```bash
+flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.1.flatpak
+```
+
+Or install a locally packaged development bundle:
 
 ```bash
 flatpak --user install --bundle out/flatpak-build/LostOdysseyRecomp-v<version>-<commit>-dev.flatpak
 ```
 
-Standalone bundles installed directly from `.flatpak` files do not attach an OSTree remote repository and cannot receive updates via `flatpak update`. Upgrading a local installation requires installing a newly generated `.flatpak` bundle. Regular updates will be available once published via an OSTree remote or Flathub (submission pending).
+Launch the installed sandbox application:
+
+```bash
+flatpak run io.github.freefrank.LostOdysseyRecomp
+```
+
+Standalone bundles installed directly from `.flatpak` files do not configure an OSTree remote repository and cannot receive updates via `flatpak update`. Upgrading a local installation requires installing a newly downloaded or generated `.flatpak` bundle. Automatic updates will be available once published via an OSTree remote or Flathub (submission pending).
 
 ## Launch with a consistent working directory
 

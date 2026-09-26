@@ -7,9 +7,11 @@
 ## 当前交付
 
 - [x] **v0.7.0 已发布：**源码 `4142f23`，Release CI [36228746088](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36228746088)。Windows 与 Linux 包见[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.0)。
-- [x] **v0.7.1 源码已提交：**`b1cf166` 新增 Gameplay → 导入光盘与 DLC、安全重启至导入器、选择性替换与失败回滚。合成导入、菜单、controller、host 测试及 Windows 开发构建已通过；用户提供的 Asia GOD 和 USA/Europe ISO 来源均只读识别成功，未执行真实重新导入。打标签与发布尚待进行。
+- [x] **v0.7.1 已发布：**源码提交 `c585ef820cb72993ad87a90a1a03c1c648fb654c`，打标 `v0.7.1`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1)（2026-09-26T21:51:24Z），Release CI [36274702691](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36274702691)。包含 Gameplay → 导入光盘与 DLC、安全重启至导入器、选择性替换与失败回滚。公开产物已核实 SHA256：Windows 包 `LostOdysseyRecomp-windows-x64-v0.7.1.zip`（243,762,106 字节，SHA256 `e53753a71b06ab39c41a3a5b327a8477523db4b006543c54e70834b183c5291f`），Linux AppImage `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage`（251,038,200 字节，SHA256 `878d04f9a530771fc2ba752842c1c9b5ba1cfc3fea63555a401dd53b46dd6e65`），正式独立 Flatpak `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`（265,618,800 字节，SHA256 `2efe0a4ba556037f9118894b36cba4b7667132b708c9ec3ea325db9c16f71775`，stable 分支），以及 Flathub 输入 runtime `LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz`（SHA256 `661838345ca5e1590dce99e35a9dba2bc1138d073c1c76d947aec34ea4db931f`）。Flatpak 经验证获 psvita 用户验收（严格限制于该验证范围，不推断性能或多场景兼容性）。
 
 ## 已完成功能与已核对跟踪项
+
+- [x] **Flatpak 独立发布：**原计划 v0.8.0，现提前随 v0.7.1 交付。独立包 `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak` 已发布并通过 psvita 用户验收。独立 Flatpak 目标不以 Flathub 上架为前提。Flathub 商店提交流程单独跟踪（未创建 PR）：因 Flathub `requirements#generative-ai-policy` 严格禁止 AI 生成或协助编写 manifest 与 PR，且 PR 模板要求附带应用演示视频（application demonstration video），需由维护者本人人工另制 manifest、提供应用视频并提交 PR。
 
 - [x] **DLSS/DLAA 与 FSR 超分：**v0.7.0 范围已在记录的 Windows／原生 Linux 覆盖内通过用户验收。FSR P1/P2 完成，插帧见下方计划。
 - [x] **PlayStation 按键提示：**宿主与游戏内面键、肩键、Start/Back 提示已验收并随 v0.7.0 发布。
@@ -49,7 +51,7 @@
 
 并行推进：
 
-- [ ] **Flatpak 发布：**独立打包交付，从第 1 步起并行推进；与更广的 Linux／Steam Deck 硬件验证及强制 Flathub 上架区分。
+- [x] **Flatpak 发布：**已提前于 v0.7.1 交付完成（独立包已发布并经验证；Flathub 提交流程受 AI 政策限制，需人工另制 manifest、录制应用演示视频并提交，独立跟踪）。
 
 ## 后续积压
 

@@ -7,9 +7,11 @@ Reviewed on 2026-09-26 against live Issues, Project fields, merged commits and r
 ## Current delivery
 
 - [x] **v0.7.0 published:** source `4142f23`, Release CI [36228746088](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36228746088). Windows and Linux packages are available on the [release page](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.0).
-- [x] **v0.7.1 source committed:** `b1cf166` adds Gameplay → Import discs & DLC, safe restart into the importer, selective replacement and failure rollback. Synthetic importer/menu/controller/host tests and the Windows development build passed. Both user-provided Asia GOD and USA/Europe ISO sources were recognized read-only; no real re-import was performed. Tagging and release remain pending.
+- [x] **v0.7.1 published:** source commit `c585ef820cb72993ad87a90a1a03c1c648fb654c`, tag `v0.7.1`, [release page](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1) (2026-09-26T21:51:24Z), Release CI [36274702691](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36274702691). Adds Gameplay → Import discs & DLC, safe restart into the importer, selective replacement and failure rollback. Public artifacts verified with matching SHA256 digests: Windows package `LostOdysseyRecomp-windows-x64-v0.7.1.zip` (243,762,106 bytes, SHA256: `e53753a71b06ab39c41a3a5b327a8477523db4b006543c54e70834b183c5291f`), Linux AppImage `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage` (251,038,200 bytes, SHA256: `878d04f9a530771fc2ba752842c1c9b5ba1cfc3fea63555a401dd53b46dd6e65`), standalone Flatpak `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak` (265,618,800 bytes, SHA256: `2efe0a4ba556037f9118894b36cba4b7667132b708c9ec3ea325db9c16f71775`, stable branch), and Flathub runtime input `LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz` (SHA256: `661838345ca5e1590dce99e35a9dba2bc1138d073c1c76d947aec34ea4db931f`). psvita user acceptance received for Flatpak (strictly bounded; does not extrapolate to performance or multi-scenario compatibility).
 
 ## Completed features and reconciled trackers
+
+- [x] **Flatpak standalone release:** delivered ahead of schedule in v0.7.1 (originally planned in v0.8.0). Independent standalone bundle `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak` published and psvita user accepted. Standalone Flatpak delivery is independent of Flathub listing. Flathub store submission is tracked separately (no PR created): Flathub's `requirements#generative-ai-policy` strictly prohibits AI generation or assistance for manifests and PRs, and the PR template requires an application demonstration video; maintainer must manually author a separate manifest/PR and provide the application video.
 
 - [x] **DLSS/DLAA and FSR SR:** the v0.7.0 scope passed user acceptance within recorded Windows/native Linux coverage. FSR P1/P2 are complete; frame generation remains below.
 - [x] **PlayStation prompts:** host and guest face/shoulder/Start/Back glyphs accepted and published in v0.7.0.
@@ -49,7 +51,7 @@ Planned development sequence (ordered execution arrangement; does not construct 
 
 Parallel tracks:
 
-- [ ] **Flatpak release:** independent package delivery running in parallel starting from step 1; distinct from broader Steam Deck hardware verification or mandatory Flathub publishing.
+- [x] **Flatpak release:** delivered ahead of schedule in v0.7.1 (standalone package published and user-verified; Flathub store submission requires manual authoring of manifest/PR and application demonstration video per Flathub AI policy, tracked separately).
 
 ## Later backlog
 

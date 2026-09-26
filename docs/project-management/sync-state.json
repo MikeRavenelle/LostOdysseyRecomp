@@ -3062,14 +3062,14 @@
       "fields": {
         "Kind": "Release",
         "Area": "Release Engineering",
-        "Status": "Todo",
-        "Delivery": "Not started",
-        "Release": "v0.8.0",
-        "Evidence": "Added as an independent parallel delivery target for milestone v0.8.0 per user decision. Advances alongside execution step 1. Scope is delivering a functional Flatpak package, distinct from broader Steam Deck hardware verification or mandatory Flathub store publishing.",
+        "Status": "Done",
+        "Delivery": "Released",
+        "Release": "v0.7.1",
+        "Evidence": "Delivered ahead of schedule in v0.7.1 (originally planned v0.8.0). Tag v0.7.1 / commit c585ef820cb72993ad87a90a1a03c1c648fb654c. Standalone Flatpak bundle LostOdysseyRecomp-linux-x64-v0.7.1.flatpak (265,618,800 bytes, SHA256: 2efe0a4ba556037f9118894b36cba4b7667132b708c9ec3ea325db9c16f71775, stable branch) exported from accepted SDK 26.08 LLVM 22 install tree without recompile; Flathub runtime LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz (SHA256: 661838345ca5e1590dce99e35a9dba2bc1138d073c1c76d947aec34ea4db931f). Windows ZIP (SHA256: e53753a71b06ab39c41a3a5b327a8477523db4b006543c54e70834b183c5291f) and AppImage (SHA256: 878d04f9a530771fc2ba752842c1c9b5ba1cfc3fea63555a401dd53b46dd6e65) published via CI 36274702691. API hashes match; psvita user accepted Flatpak (strictly bounded). Flathub store submission separate (no PR): Flathub AI policy prohibits AI assistance for manifests/PRs and requires application demo video; maintainer must manually author manifest/PR and video.",
         "Source key": "flatpak-release"
       },
       "title": "Deliver Flatpak package release",
-      "body_sha256": "fd472330e683db6000f52a60504ba8cd11620f97cba7cb8e373b2b77922781f1"
+      "body_sha256": "53635c6715f52c505d97ad38da9d27c3e5745fbda9f08e3325e522d72f7850af"
     }
   },
   "project_id": "PVT_kwHOAAsUY84Biy1a"
