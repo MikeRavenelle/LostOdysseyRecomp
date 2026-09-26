@@ -15,6 +15,7 @@ struct Presentation::Impl
     RenderDevice *device = nullptr;
     bool initialized = false;
     bool vulkan = false;
+    RenderFormat swapchainFormat = RenderFormat::R8G8B8A8_UNORM;
     SmaaPipeline smaa;
     std::unique_ptr<RenderPipelineLayout> layout;
     std::unique_ptr<RenderShader> vs, ps;
@@ -32,7 +33,12 @@ struct Presentation::Impl
         uint32_t width = 0, height = 0;
     };
     std::vector<Pass> passes;
-    Pass uiPass;
+    bool EnsureUiPipelines();
+};
+struct Presentation::UiCompositionLease
+{
+    std::unique_ptr<RenderDescriptorSet> descriptors;
+    std::unique_ptr<RenderFramebuffer> framebuffer;
 };
 Presentation::Presentation() : impl(std::make_unique<Impl>())
 {
@@ -48,6 +54,12 @@ bool Presentation::Init(RenderDevice *device, RenderFormat swapchainFormat)
     p.initialized = false;
     p.device = device;
     p.vulkan = device->getCapabilities().shaderFormat == RenderShaderFormat::SPIRV;
+    p.swapchainFormat = swapchainFormat;
+    p.uiPresentPipeline.reset();
+    p.uiPipeline.reset();
+    p.uiVs.reset();
+    p.uiPs.reset();
+    p.uiLayout.reset();
     const auto binaryFormat = p.vulkan ? xenos::ShaderBinaryFormat::Spirv : xenos::ShaderBinaryFormat::Dxil;
     const auto renderFormat = p.vulkan ? RenderShaderFormat::SPIRV : RenderShaderFormat::DXIL;
     const char *source = R"(
@@ -129,40 +141,16 @@ float4 pixel(float4 position : SV_Position) : SV_Target {
     float lb=luma(b);
     return float4((lb<lo || lb>hi)?a:b,1);
 })";
-    const char *uiSource = R"(
-#ifdef __spirv__
-[[vk::binding(0,0)]]
-#endif
-Texture2D<float4> sceneFrame : register(t0);
-#ifdef __spirv__
-[[vk::binding(1,0)]]
-#endif
-Texture2D<float4> uiFrame : register(t1);
-float4 vertexUi(uint id : SV_VertexID) : SV_Position {
-    float2 uv = float2((id << 1) & 2, id & 2);
-    return float4(uv * float2(2,-2) + float2(-1,1),0,1);
-}
-float4 pixelUi(float4 position : SV_Position) : SV_Target {
-    int2 p = int2(position.xy);
-    float4 scene = sceneFrame.Load(int3(p,0));
-    float4 overlay = uiFrame.Load(int3(p,0));
-    float alpha = saturate(overlay.a);
-    return float4(lerp(scene.rgb, overlay.rgb, alpha), 1);
-})";
     auto vs = xenos::CompileCachedHlsl(source, "vertex", "vs_6_0", binaryFormat);
     auto ps = xenos::CompileCachedHlsl(source, "pixel", "ps_6_0", binaryFormat);
-    auto uiVs = xenos::CompileCachedHlsl(uiSource, "vertexUi", "vs_6_0", binaryFormat);
-    auto uiPs = xenos::CompileCachedHlsl(uiSource, "pixelUi", "ps_6_0", binaryFormat);
-    if (!vs.ok || !ps.ok || !uiVs.ok || !uiPs.ok)
+    if (!vs.ok || !ps.ok)
     {
-        LOG_WARNING("presentation shaders: {} {} {} {}", vs.errors, ps.errors, uiVs.errors, uiPs.errors);
+        LOG_WARNING("presentation shaders: {} {}", vs.errors, ps.errors);
         return false;
     }
     p.vs = device->createShader(vs.bytecode.data(), vs.bytecode.size(), "vertex", renderFormat);
     p.ps = device->createShader(ps.bytecode.data(), ps.bytecode.size(), "pixel", renderFormat);
-    p.uiVs = device->createShader(uiVs.bytecode.data(), uiVs.bytecode.size(), "vertexUi", renderFormat);
-    p.uiPs = device->createShader(uiPs.bytecode.data(), uiPs.bytecode.size(), "pixelUi", renderFormat);
-    if (!p.vs || !p.ps || !p.uiVs || !p.uiPs) return false;
+    if (!p.vs || !p.ps) return false;
     RenderDescriptorSetBuilder set;
     set.begin();
     set.addTexture(0);
@@ -190,26 +178,70 @@ float4 pixelUi(float4 position : SV_Position) : SV_Target {
     desc.renderTargetFormat[0] = swapchainFormat;
     p.presentPipeline = device->createGraphicsPipeline(desc);
 
-    RenderDescriptorSetBuilder uiSet;
-    uiSet.begin(); uiSet.addTexture(0); uiSet.addTexture(1); uiSet.end();
-    RenderPipelineLayoutBuilder uiLayout;
-    uiLayout.begin(false, false); uiLayout.addDescriptorSet(uiSet); uiLayout.end();
-    p.uiLayout = uiLayout.create(device);
-    RenderGraphicsPipelineDesc uiDesc;
-    uiDesc.pipelineLayout = p.uiLayout.get();
-    uiDesc.vertexShader = p.uiVs.get();
-    uiDesc.pixelShader = p.uiPs.get();
-    uiDesc.renderTargetCount = 1;
-    uiDesc.renderTargetFormat[0] = RenderFormat::R8G8B8A8_UNORM;
-    uiDesc.renderTargetBlend[0] = RenderBlendDesc::Copy();
-    uiDesc.cullMode = RenderCullMode::NONE;
-    p.uiPipeline = device->createGraphicsPipeline(uiDesc);
-    uiDesc.renderTargetFormat[0] = swapchainFormat;
-    p.uiPresentPipeline = device->createGraphicsPipeline(uiDesc);
-    p.initialized = bool(p.pipeline) && bool(p.presentPipeline) && bool(p.uiLayout) &&
-        bool(p.uiPipeline) && bool(p.uiPresentPipeline) &&
+    p.initialized = bool(p.pipeline) && bool(p.presentPipeline) &&
         p.smaa.Init(device, p.vs.get(), p.sampler.get(), p.vulkan);
     return p.initialized;
+}
+bool Presentation::Impl::EnsureUiPipelines()
+{
+    if (uiPipeline && uiPresentPipeline) return true;
+    const char *uiSource = R"(
+#ifdef __spirv__
+[[vk::binding(0,0)]]
+#endif
+Texture2D<float4> sceneFrame : register(t0);
+#ifdef __spirv__
+[[vk::binding(1,0)]]
+#endif
+Texture2D<float4> uiFrame : register(t1);
+float4 vertexUi(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2,-2) + float2(-1,1),0,1);
+}
+float4 pixelUi(float4 position : SV_Position) : SV_Target {
+    int2 p = int2(position.xy);
+    float4 scene = sceneFrame.Load(int3(p,0));
+    float4 overlay = uiFrame.Load(int3(p,0));
+    float alpha = saturate(overlay.a);
+    return float4(lerp(scene.rgb, overlay.rgb, alpha), 1);
+})";
+    const auto binaryFormat = vulkan ? xenos::ShaderBinaryFormat::Spirv : xenos::ShaderBinaryFormat::Dxil;
+    const auto renderFormat = vulkan ? RenderShaderFormat::SPIRV : RenderShaderFormat::DXIL;
+    auto vsResult = xenos::CompileCachedHlsl(uiSource, "vertexUi", "vs_6_0", binaryFormat);
+    auto psResult = xenos::CompileCachedHlsl(uiSource, "pixelUi", "ps_6_0", binaryFormat);
+    if (!vsResult.ok || !psResult.ok) {
+        LOG_WARNING("presentation UI shaders: {} {}", vsResult.errors, psResult.errors);
+        return false;
+    }
+    auto vertexShader = device->createShader(vsResult.bytecode.data(), vsResult.bytecode.size(),
+                                              "vertexUi", renderFormat);
+    auto pixelShader = device->createShader(psResult.bytecode.data(), psResult.bytecode.size(),
+                                             "pixelUi", renderFormat);
+    if (!vertexShader || !pixelShader) return false;
+    RenderDescriptorSetBuilder set;
+    set.begin(); set.addTexture(0); set.addTexture(1); set.end();
+    RenderPipelineLayoutBuilder builder;
+    builder.begin(false, false); builder.addDescriptorSet(set); builder.end();
+    auto pipelineLayout = builder.create(device);
+    if (!pipelineLayout) return false;
+    RenderGraphicsPipelineDesc desc;
+    desc.pipelineLayout = pipelineLayout.get();
+    desc.vertexShader = vertexShader.get();
+    desc.pixelShader = pixelShader.get();
+    desc.renderTargetCount = 1;
+    desc.renderTargetFormat[0] = RenderFormat::R8G8B8A8_UNORM;
+    desc.renderTargetBlend[0] = RenderBlendDesc::Copy();
+    desc.cullMode = RenderCullMode::NONE;
+    auto texturePipeline = device->createGraphicsPipeline(desc);
+    desc.renderTargetFormat[0] = swapchainFormat;
+    auto swapchainPipeline = device->createGraphicsPipeline(desc);
+    if (!texturePipeline || !swapchainPipeline) return false;
+    uiVs = std::move(vertexShader);
+    uiPs = std::move(pixelShader);
+    uiLayout = std::move(pipelineLayout);
+    uiPipeline = std::move(texturePipeline);
+    uiPresentPipeline = std::move(swapchainPipeline);
+    return true;
 }
 bool Presentation::ProcessSceneColor(RenderCommandList *commands, RenderTexture *source, RenderTexture *target,
                                      uint32_t width, uint32_t height, Antialiasing antialiasing)
@@ -226,43 +258,43 @@ bool Presentation::ProcessSceneColor(RenderCommandList *commands, RenderTexture 
     commands->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(target, RenderTextureLayout::SHADER_READ));
     return true;
 }
-bool Presentation::DrawSeparatedUi(RenderCommandList *commands, RenderTexture *hudless,
-                                   RenderTexture *uiColorAndAlpha, RenderTexture *target,
-                                   uint32_t width, uint32_t height, bool toSwapchain)
+std::shared_ptr<Presentation::UiCompositionLease> Presentation::DrawSeparatedUi(
+    RenderCommandList *commands, RenderTexture *hudless,
+    RenderTexture *uiColorAndAlpha, RenderTexture *target,
+    uint32_t width, uint32_t height, bool toSwapchain)
 {
     if (!commands || !hudless || !uiColorAndAlpha || !target ||
         hudless == target || uiColorAndAlpha == target || !width || !height ||
         width > 16384 || height > 16384 || !impl->initialized)
-        return false;
+        return {};
     auto &p = *impl;
-    auto &pass = p.uiPass;
-    if (!pass.descriptors) {
-        RenderDescriptorSetBuilder set;
-        set.begin(); set.addTexture(0); set.addTexture(1); set.end();
-        pass.descriptors = set.create(p.device);
-    }
-    if (!pass.descriptors) return false;
+    if (!p.EnsureUiPipelines()) return {};
+    auto lease = std::make_shared<UiCompositionLease>();
+    RenderDescriptorSetBuilder set;
+    set.begin(); set.addTexture(0); set.addTexture(1); set.end();
+    lease->descriptors = set.create(p.device);
+    if (!lease->descriptors) return {};
     const RenderTexture *attachments[] = {target};
-    pass.framebuffer = p.device->createFramebuffer(RenderFramebufferDesc(attachments, 1));
-    if (!pass.framebuffer) return false;
-    pass.descriptors->setTexture(0, hudless, RenderTextureLayout::SHADER_READ);
-    pass.descriptors->setTexture(1, uiColorAndAlpha, RenderTextureLayout::SHADER_READ);
+    lease->framebuffer = p.device->createFramebuffer(RenderFramebufferDesc(attachments, 1));
+    if (!lease->framebuffer) return {};
+    lease->descriptors->setTexture(0, hudless, RenderTextureLayout::SHADER_READ);
+    lease->descriptors->setTexture(1, uiColorAndAlpha, RenderTextureLayout::SHADER_READ);
     commands->barriers(RenderBarrierStage::GRAPHICS,
         RenderTextureBarrier(hudless, RenderTextureLayout::SHADER_READ));
     commands->barriers(RenderBarrierStage::GRAPHICS,
         RenderTextureBarrier(uiColorAndAlpha, RenderTextureLayout::SHADER_READ));
     commands->barriers(RenderBarrierStage::GRAPHICS,
         RenderTextureBarrier(target, RenderTextureLayout::COLOR_WRITE));
-    commands->setFramebuffer(pass.framebuffer.get());
+    commands->setFramebuffer(lease->framebuffer.get());
     RenderViewport viewport(0, 0, float(width), float(height));
     RenderRect scissor(0, 0, width, height);
     commands->setViewports(&viewport, 1);
     commands->setScissors(&scissor, 1);
     commands->setGraphicsPipelineLayout(p.uiLayout.get());
     commands->setPipeline(toSwapchain ? p.uiPresentPipeline.get() : p.uiPipeline.get());
-    commands->setGraphicsDescriptorSet(pass.descriptors.get(), 0);
+    commands->setGraphicsDescriptorSet(lease->descriptors.get(), 0);
     commands->drawInstanced(3, 1, 0, 0);
-    return true;
+    return lease;
 }
 void Presentation::DrawComposited(RenderCommandList *commands, RenderTexture *source, RenderTexture *target,
                                   uint32_t sw, uint32_t sh, uint32_t ow, uint32_t oh, ScalingFilter scalingFilter)
@@ -369,10 +401,11 @@ bool Presentation::ProcessSceneColor(plume::RenderCommandList *, plume::RenderTe
 {
     return false;
 }
-bool Presentation::DrawSeparatedUi(plume::RenderCommandList *, plume::RenderTexture *, plume::RenderTexture *,
-                                   plume::RenderTexture *, uint32_t, uint32_t, bool)
+std::shared_ptr<Presentation::UiCompositionLease> Presentation::DrawSeparatedUi(
+    plume::RenderCommandList *, plume::RenderTexture *, plume::RenderTexture *,
+    plume::RenderTexture *, uint32_t, uint32_t, bool)
 {
-    return false;
+    return {};
 }
 void Presentation::DrawComposited(plume::RenderCommandList *, plume::RenderTexture *, plume::RenderTexture *,
                                   uint32_t, uint32_t, uint32_t, uint32_t, ScalingFilter)

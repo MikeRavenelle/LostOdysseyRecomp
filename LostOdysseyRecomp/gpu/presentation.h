@@ -24,6 +24,7 @@ class Presentation
     std::unique_ptr<Impl> impl;
 
   public:
+    struct UiCompositionLease;
     Presentation();
     ~Presentation();
     bool Init(plume::RenderDevice *device);
@@ -48,9 +49,14 @@ class Presentation
     // intended for the final real/generated-frame presentation stage. Source
     // images finish SHADER_READ; target finishes COLOR_WRITE for the caller's
     // normal present transition. All three images must cover width x height.
-    bool DrawSeparatedUi(plume::RenderCommandList *commands, plume::RenderTexture *hudless,
-                         plume::RenderTexture *uiColorAndAlpha, plume::RenderTexture *target,
-                         uint32_t width, uint32_t height, bool toSwapchain = true);
+    // Keep the returned lease, source/target images, and this Presentation alive
+    // until the recorded GPU work completes; do not reinitialize Presentation
+    // while a recorded composition is pending. An empty lease means no draw was
+    // recorded. Each call has independent descriptors and framebuffer.
+    [[nodiscard]] std::shared_ptr<UiCompositionLease> DrawSeparatedUi(
+        plume::RenderCommandList *commands, plume::RenderTexture *hudless,
+        plume::RenderTexture *uiColorAndAlpha, plume::RenderTexture *target,
+        uint32_t width, uint32_t height, bool toSwapchain = true);
     // Present the scene + subsequently composited UI without applying AA again.
     // Same ownership/layout contract as Draw (source ends COPY_SOURCE).
     void DrawComposited(plume::RenderCommandList *commands, plume::RenderTexture *source,

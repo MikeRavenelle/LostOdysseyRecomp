@@ -90,12 +90,11 @@ void Scene::Continuation(RenderCommandList& list, VkImage swapImage, VkExtent2D 
     blit.dstOffsets[1] = {int32_t(extent.width), int32_t(extent.height), 1};
     vkCmdBlitImage(cmd, static_cast<VulkanTexture*>(hudless.get())->vk, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         swapImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
-    // The image returned by the Streamline swapchain proxy is an application
-    // source image, not the physical WSI image. Hand it to the hooked Present
-    // in TRANSFER_SRC so the DLSS-G pacer can consume/copy it before the proxy
-    // performs the real presentation transition. Transitioning this proxy image
-    // to PRESENT_SRC here races the pacer contract and was the stable Gate-1
-    // validation failure in the previous probe runs.
+    // Experimental handoff for the application-side Streamline proxy image.
+    // The pinned SDK trace copies this image as TRANSFER_SRC in its pacer, while
+    // the old host PRESENT_SRC transition produced layout validation failures.
+    // This candidate follows that observed input state; it is not an established
+    // SDK contract or proof of a validation-clean generated/displayed frame.
     before.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     before.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     before.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;

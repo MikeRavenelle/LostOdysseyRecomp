@@ -37,8 +37,8 @@
 
 规划执行顺序（开发执行安排，不虚构后项对前项的必然技术依赖；P0/P3/P4 为阶段标识，不混同为优先级）：
 
-1. [~] **P0：**共同时序契约已实现；独立 Streamline／NGX 探针已加入宿主代理图像 layout 修正候选，但 Gate 1 仍需 validation-clean 实机重跑与外部显示证据，尚未通过。
-2. [~] **P3：**已实现 provider-neutral present lease 与最终阶段 straight-alpha HUDless／UI 合成底座；生产者资源所有权接线、真实 provider／Reflex、resize／模式切换实机验证与正式启用 FG 仍待完成。
+1. [~] **P0：**共同时序契约已实现；PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) 在 2026-09-26 核对时仍为 OPEN，head 为 `a15c4a9`，5 个 CI 检查成功。独立 Streamline／NGX 探针包含宿主代理图像 layout 修正候选，但当前后台 `--no-activate` 运行没有生成区间，并因后台环境不可用退出 77；Gate 1 仍需 validation-clean 实机重跑与外部显示证据，尚未通过。
+2. [~] **P3：**已实现 provider-neutral present lease 与最终阶段 straight-alpha HUDless／UI 合成底座；本地后续改动增加每次调用的 独立资源租约来持有描述符和 framebuffer，并明确要求调用方将纹理与 Presentation 保留到 GPU 完成，以及可选 UI pipeline 的延迟初始化。RTX 5080 D3D12 与 Windows Vulkan 的 `--separated-ui-only` 定向检查已通过，但生产者资源所有权接线、真实 provider／Reflex、resize／模式切换实机验证与正式启用 FG 仍待完成。
 3. [ ] **P4：**Windows Vulkan 固定 2× DLSS 插帧，包括 DLSS／DLAA／FSR 组合与安全暂停／恢复。
 4. [ ] **独立 FSR 插帧：**独立目标，不预设 API、平台和倍率。
 5. [ ] **D3D12 DLSS 插帧：**D3D12 后端 DLSS 插帧规划目标，独立于 Windows Vulkan P4 里程碑。
