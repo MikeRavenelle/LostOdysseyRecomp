@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <utility>
 
 namespace gpu::frame_generation {
 

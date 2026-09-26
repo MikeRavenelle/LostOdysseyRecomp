@@ -27,6 +27,9 @@ jobs:
           cmake -S tools/tests/sr_hybrid -B out/hybrid-cpu -DCMAKE_BUILD_TYPE=Release
           cmake --build out/hybrid-cpu --config Release --parallel 2
           ctest --test-dir out/hybrid-cpu -C Release -V
+          cmake -S tools/tests/frame_generation_present -B out/fg-present-cpu -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/fg-present-cpu --config Release --parallel 2
+          ctest --test-dir out/fg-present-cpu -C Release -V
       - name: ASan and UBSan
         if: runner.os == 'Linux'
         run: |
