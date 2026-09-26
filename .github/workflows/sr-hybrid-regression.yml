@@ -59,7 +59,7 @@ jobs:
       - name: Compile production renderer boundary and actual GPU fixtures
         run: |
           cmake -S tools/tests/motion_replay -B out/hybrid-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release -DLO_ENABLE_DLSS=OFF -DLO_ENABLE_FSR=OFF
-          cmake --build out/hybrid-gpu --target sr_hybrid_motion_gpu_test motion_renderer_compile motion_replay_gpu_test temporal_aa_regression temporal_frame_inputs_test native_dlss_p2_routing_test motion_vector_test LoNativeDlssRendererTest LoDlssEvaluateCaptureContractTest --parallel 2
+          cmake --build out/hybrid-gpu --target sr_hybrid_motion_gpu_test frame_generation_snapshot_gpu_test motion_renderer_compile motion_replay_gpu_test temporal_aa_regression temporal_frame_inputs_test native_dlss_p2_routing_test motion_vector_test LoNativeDlssRendererTest LoDlssEvaluateCaptureContractTest --parallel 2
       - name: Execute Vulkan, renderer and capture regressions
         shell: bash
         run: |
@@ -70,7 +70,7 @@ jobs:
           mkdir -p out/vulkan-settings
           printf 'khronos_validation.debug_action = VK_DBG_LAYER_ACTION_LOG_MSG\nkhronos_validation.report_flags = error\n' > out/vulkan-settings/vk_layer_settings.txt
           export VK_LAYER_SETTINGS_PATH="$PWD/out/vulkan-settings"
-          ctest --test-dir out/hybrid-gpu -V -R '^(sr_hybrid_motion_gpu|motion_gpu|motion_cpu|temporal_aa_legacy|temporal_frame_inputs|native_dlss_p2_routing|LoNativeDlssRendererTest|hybrid_capture_metadata)$' 2>&1 | tee out/hybrid-vulkan.log
+          ctest --test-dir out/hybrid-gpu -V -R '^(sr_hybrid_motion_gpu|frame_generation_snapshot_gpu|frame_generation_snapshot_renderer|motion_gpu|motion_cpu|temporal_aa_legacy|temporal_frame_inputs|native_dlss_p2_routing|LoNativeDlssRendererTest|hybrid_capture_metadata)$' 2>&1 | tee out/hybrid-vulkan.log
           if grep -E 'Validation Error|VUID-' out/hybrid-vulkan.log; then exit 1; fi
       - name: Compile both SDK adapters with pinned production headers
         run: |

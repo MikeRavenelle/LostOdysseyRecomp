@@ -386,8 +386,13 @@ public:
         std::printf("NATIVE_CASE quality=%u input=%ux%u output=%ux%u failure=%u pixels=%zu alpha_mismatches=0\n",
             unsigned(quality), plan.width, plan.height, outputWidth, outputHeight, injectedFailure, pixels.size());
     }
-    void Run(gpu::dlss::SrStatus outcome, unsigned restoreReason) {
+    void Run(gpu::dlss::SrStatus outcome, unsigned restoreReason, unsigned snapshotCheck = 0) {
         auto& r = R(); ++r.frame;
+        if (snapshotCheck) {
+            r.fgSnapshotRequestedFrame = snapshotCheck == 1 ? ~0ull : r.frame;
+            r.fgSnapshotAttempted = false;
+            r.fgInputSnapshot.reset();
+        }
         const RenderTargetKey key{0, 3, 1280, 0, false};
         auto base = Texture(4, 4, plume::RenderFormat::R16G16B16A16_FLOAT);
         // Padded guest height, so next-frame height alignment does not request growth.
@@ -400,6 +405,13 @@ public:
         LocalImageDrain imageDrain{device.get()};
         gpu::temporal::TemporalFrameInputs inputs{};
         inputs.plan = r.activePlan; inputs.currentInputsComplete = true;
+        if (snapshotCheck) {
+            inputs.renderFrameId = r.frame;
+            inputs.temporalEpoch = 7;
+            Clear(*depth, plume::RenderColor(.5f, 0, 0, 0));
+            Clear(*motion, plume::RenderColor(.25f, .5f, 0, 0));
+            Clear(*invalid, plume::RenderColor(0, 0, 0, 0));
+        }
         inputs.depthConvention = (restoreReason & 1) ? gpu::temporal::DepthConvention::Reversed : gpu::temporal::DepthConvention::Forward;
         inputs.motionState = gpu::temporal::MotionState::Tracked;
         inputs.color = {original->texture.get(), {4,4}, 0,0,4,4};
@@ -426,7 +438,36 @@ public:
         VendorFixture vendor; vendor.outcome = outcome;
         const bool applied = r.RecordSceneCopyDlssUsing(vendor, color, raster);
         Require(applied == (outcome == gpu::dlss::SrStatus::Executable) && vendor.calls == 1, "production SR route result");
+        auto snapshot = r.fgInputSnapshot;
+        if (snapshotCheck) {
+            Require(bool(snapshot) == (snapshotCheck >= 2 && applied), "snapshot only records requested accepted frame");
+            if (snapshot) {
+                Require(snapshot->inputs.renderFrameId == r.frame && snapshot->inputs.temporalEpoch == 7,
+                    "snapshot retains real-frame identity");
+                Require(!snapshot->producerSerial && !snapshot->producerCompleted && !snapshot->producerDiscarded,
+                    "recorded snapshot is not yet submitted or completed");
+                Require(snapshot->inputs.color.texture != inputs.color.texture &&
+                    snapshot->inputs.depth.texture != inputs.depth.texture, "snapshot owns distinct allocations");
+            }
+        }
+        if (snapshotCheck == 3) {
+            fixture::rejectSubmit = true;
+            Require(!r.Flush(), "snapshot checked submission failure");
+            Require(snapshot && snapshot->producerDiscarded && !snapshot->producerCompleted &&
+                !snapshot->producerSerial && !r.fgInputSnapshot && !r.Gpu().fgInputSnapshot,
+                "unsubmitted snapshot discarded without publication");
+            return;
+        }
         Require(r.Flush(), "three-list Flush");
+        if (snapshot) {
+            Require(snapshot->producerSerial != 0 && !snapshot->producerCompleted,
+                "checked submit records serial but not completion");
+            fixture::rejectWaitOnce = true;
+            Require(!r.WaitForGpu() && !snapshot->producerCompleted,
+                "failed fence wait preserves pending snapshot");
+            Require(r.WaitForGpu() && snapshot->producerCompleted && !snapshot->producerDiscarded,
+                "successful fence wait completes retained snapshot");
+        }
         Require(fixture::lastListCount == (applied ? 3u : 2u), "failed isolated list excluded");
         Require(r.sceneCopyPromotion.activeMapping && r.sceneCopyPromotion.active == color, "mapping survives Flush");
         constexpr uint64_t fallback = 0x38003a0038003400ull;
@@ -1313,13 +1354,22 @@ int main(int argc, char** argv) {
         const bool fsrFallbackOnly = argc == 2 && std::string_view(argv[1]) == "--fsr-fallback-only";
         const bool planIdentity = argc == 2 && std::string_view(argv[1]) == "--plan-identity";
         const bool evaluateCapture = argc == 2 && std::string_view(argv[1]) == "--evaluate-capture-only";
-        if (argc > 1 && !native && !extentOnly && !statusOnly && !planIdentity && !evaluateCapture && !fsrScratchOnly && !fsrFallbackOnly) {
-            std::fprintf(stderr, "usage: %s [--native|--extent-only|--status-only|--plan-identity|--evaluate-capture-only|--fsr-scratch-only]\n", argv[0]);
+        const bool fgSnapshotOnly = argc == 2 && std::string_view(argv[1]) == "--fg-snapshot-only";
+        if (argc > 1 && !native && !extentOnly && !statusOnly && !planIdentity && !evaluateCapture && !fsrScratchOnly && !fsrFallbackOnly && !fgSnapshotOnly) {
+            std::fprintf(stderr, "usage: %s [--native|--extent-only|--status-only|--plan-identity|--evaluate-capture-only|--fsr-scratch-only|--fsr-fallback-only|--fg-snapshot-only]\n", argv[0]);
             return 2;
         }
         std::setvbuf(stdout, nullptr, _IONBF, 0);
         Harness harness;
         harness.Init(native, std::filesystem::absolute(argv[0]).parent_path());
+        if (fgSnapshotOnly) {
+            harness.Run(gpu::dlss::SrStatus::Executable, 0, 1);
+            harness.Run(gpu::dlss::SrStatus::Executable, 0, 2);
+            harness.Run(gpu::dlss::SrStatus::Failed, 0, 2);
+            harness.Run(gpu::dlss::SrStatus::Executable, 0, 3);
+            std::puts("PASS: requested-frame snapshots, checked submit/fence retirement and rejection; no NGX or gameplay claim");
+            return 0;
+        }
         if (native) {
             using Q = gpu::upscaling::DlssQuality;
             harness.NativeRun(Q::Quality, 1280, 720, true);

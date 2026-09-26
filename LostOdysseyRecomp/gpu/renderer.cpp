@@ -36,6 +36,9 @@
 #include "fsr_alpha_postprocess_gpu.h"
 #include "fsr_alpha_propagation_gpu.h"
 #include "presentation.h"
+#if defined(LO_GPU_PLUME)
+#include "frame_generation_snapshot.h"
+#endif
 #include <settings/config.h>
 #include <hid/hid.h>
 #include <hid/controller_atlas_glyphs.h>
@@ -457,6 +460,7 @@ namespace gpu::renderer
                 std::vector<std::shared_ptr<FsrAlphaEquality>> fsrAlphaEqualities;
                 std::vector<std::shared_ptr<fsr_alpha::MaskLease>> fsrAlphaBridgeUses;
                 std::vector<std::shared_ptr<FsrAlphaBridgeDiagnostic>> fsrAlphaBridgeDiagnostics;
+                std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
 #endif
                 // Copied at srApplied. Flush must not read activePlan; resolution
                 // changes replace that plan before they submit.
@@ -590,6 +594,17 @@ namespace gpu::renderer
             const temporal::MotionOptions motionOptions = temporal::MotionOptions::Environment();
             std::unique_ptr<temporal::MotionReplayGPU> motionReplay;
 #if defined(LO_GPU_PLUME)
+            // Diagnostic-only, one requested real frame. No allocation/copy on
+            // the default path; this is not a provider-ready or HUDless claim.
+            uint64_t fgSnapshotRequestedFrame = [] {
+                const char* value = getenv("LO_FG_SNAPSHOT_FRAME");
+                if (!value || !*value || *value == '-') return ~0ull;
+                char* end = nullptr;
+                const auto result = std::strtoull(value, &end, 10);
+                return end && *end == '\0' ? result : ~0ull;
+            }();
+            bool fgSnapshotAttempted = false;
+            std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
             const bool fsrAlphaReplayEnabled = [] {
                 const char* value = getenv("LO_FSR_ALPHA_REPLAY");
                 return !value || std::string_view(value) != "0";
@@ -2729,6 +2744,21 @@ namespace gpu::renderer
                 if (rasterTarget == fallback.get()) rasterTarget = color;
                 Gpu().retiredTextures.push_back(std::move(fallback));
                 promotion.srApplied = true;
+                if (!fgSnapshotAttempted && fgSnapshotRequestedFrame == frame) {
+                    fgSnapshotAttempted = true;
+                    // The input is a real Vulkan texture here. Its storage
+                    // format must not be inferred from the color transfer curve.
+                    const auto sourceFormat = static_cast<VulkanTexture*>(promotion.inputs.color.texture)->desc.format;
+                    auto snapshot = frame_generation::RecordProducerSnapshot(device, commandList,
+                        promotion.inputs, sourceFormat, promotion.scratch->texture.get(),
+                        promotion.scratch->format, {activePlan.output.width, activePlan.output.height});
+                    if (snapshot) {
+                        Gpu().fgInputSnapshot = snapshot;
+                        fgInputSnapshot = std::move(snapshot);
+                    }
+                    LOG_INFO("renderer: FG input snapshot frame={} recorded={} ui=unavailable provider_ready=0",
+                        frame, bool(fgInputSnapshot));
+                }
                 if (activePlan.requestedUpscaler == upscaling::Upscaler::Fsr && (promotion.inputs.resetHistory || frame % 120 == 0)) {
                     const auto projection = fsr::DeriveProjection(promotion.inputs.cameraViewProjection,
                         double(promotion.inputs.color.width) / promotion.inputs.color.height);
@@ -3110,6 +3140,13 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     << ",\"submission_serial\":" << event.submissionSerial << "}\n";
             }
 #endif
+            void DiscardFgInputSnapshot(GpuSlot& slot)
+            {
+                if (!slot.fgInputSnapshot) return;
+                slot.fgInputSnapshot->producerDiscarded = true;
+                if (fgInputSnapshot == slot.fgInputSnapshot) fgInputSnapshot.reset();
+                slot.fgInputSnapshot.reset();
+            }
             bool RecycleSlot(uint32_t i)
             {
                 auto& s = gpuSlots[i];
@@ -3120,6 +3157,14 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     if (!video::WaitForGpuFence(s.fence.get())) return false;
                 }
                 s.submitted = false;
+#if defined(LO_GPU_PLUME)
+                if (s.fgInputSnapshot) {
+                    s.fgInputSnapshot->producerCompleted = true;
+                    LOG_INFO("renderer: FG input snapshot frame={} completed_serial={} ui=unavailable provider_ready=0",
+                        s.fgInputSnapshot->inputs.renderFrameId, s.fgInputSnapshot->producerSerial);
+                    s.fgInputSnapshot.reset();
+                }
+#endif
                 for (const auto& e : s.evaluateCaptures) if (e->checkedSubmit) e->completed = true;
                 s.evaluateCaptures.clear();
                 if (s.timingQueries) {
@@ -3231,6 +3276,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 if (video::GpuWorkStopped()) {
 #if defined(LO_GPU_PLUME)
                     if (!Gpu().submitted) {
+                        DiscardFgInputSnapshot(Gpu());
                         Gpu().fsrAlphaCaptures.clear();
                         Gpu().fsrAlphaEqualities.clear();
                         Gpu().fsrAlphaBridgeDiagnostics.clear();
@@ -3259,6 +3305,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 if (timingQueries) commandList->writeTimestamp(timingQueries, 1);
                 if (!video::EndGpuCommands(commandList)) {
 #if defined(LO_GPU_PLUME)
+                    DiscardFgInputSnapshot(Gpu());
                     Gpu().fsrAlphaCaptures.clear();
                     Gpu().fsrAlphaEqualities.clear();
                     Gpu().fsrAlphaBridgeDiagnostics.clear();
@@ -3298,6 +3345,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     queue->executeCommandLists(lists, listCount, nullptr, 0, nullptr, 0, fence);
                 if (!submitted) {
 #if defined(LO_GPU_PLUME)
+                    DiscardFgInputSnapshot(Gpu());
                     Gpu().fsrAlphaCaptures.clear();
                     Gpu().fsrAlphaEqualities.clear();
                     Gpu().fsrAlphaBridgeDiagnostics.clear();
@@ -3320,6 +3368,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     return false;
                 }
 #if defined(LO_GPU_PLUME)
+                if (Gpu().fgInputSnapshot) Gpu().fgInputSnapshot->producerSerial = submissionSerial;
                 for (const auto& use : Gpu().fsrAlphaBatches)
                     use->submissionSerial = submissionSerial;
                 for (const auto& capture : Gpu().fsrAlphaCaptures)
