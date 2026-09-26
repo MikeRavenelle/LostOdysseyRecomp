@@ -37,7 +37,7 @@
 
 规划执行顺序（开发执行安排，不虚构后项对前项的必然技术依赖；P0/P3/P4 为阶段标识，不混同为优先级）：
 
-1. [~] **P0：**共同时序契约已实现；PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) 在 2026-09-26 核对时仍为 OPEN，head 为 `a15c4a9`，5 个 CI 检查成功。独立 Streamline／NGX 探针包含宿主代理图像 layout 修正候选，但当前后台 `--no-activate` 运行没有生成区间，并因后台环境不可用退出 77；Gate 1 仍需 validation-clean 实机重跑与外部显示证据，尚未通过。
+1. [~] **P0：**共同时序契约已实现；PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) 已推进至 `6cbfea1`，该 head 的 5 个检查已在 CI 运行 [36279285907](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36279285907) 与 [36279285954](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36279285954) 中通过。前台探针在 48 帧中产生 33 个 FG-on `actual_presents=2` 区间，但记录了有界 SDK validation hazards，并以 exit 1 结束且清理失败。本次未观察到旧的宿主代理 layout mismatch，且相同 SDK clone/layout 类别在旧证据中也出现，不能宣称新回归或单一已确认原因。尚无外部显示证据。Gate 1 仍未通过，剩余工作是 SDK hazard 与 clone layout 归因。
 2. [~] **P3：**已实现 provider-neutral present lease 与最终阶段 straight-alpha HUDless／UI 合成底座；本地后续改动增加每次调用的 独立资源租约来持有描述符和 framebuffer，并明确要求调用方将纹理与 Presentation 保留到 GPU 完成，以及可选 UI pipeline 的延迟初始化。RTX 5080 D3D12 与 Windows Vulkan 的 `--separated-ui-only` 定向检查已通过，但生产者资源所有权接线、真实 provider／Reflex、resize／模式切换实机验证与正式启用 FG 仍待完成。
 3. [ ] **P4：**Windows Vulkan 固定 2× DLSS 插帧，包括 DLSS／DLAA／FSR 组合与安全暂停／恢复。
 4. [ ] **独立 FSR 插帧：**独立目标，不预设 API、平台和倍率。
