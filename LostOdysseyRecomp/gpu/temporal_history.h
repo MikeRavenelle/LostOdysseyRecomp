@@ -405,7 +405,11 @@ public:
         // CaptureDepth copies the R32 resolve unchanged. SceneObservation's
         // reviewed camera/depth contract is d=1 near, d=0 far (reversed Z).
         result.depthConvention=DepthConvention::Reversed;
-        if (current.camera) { result.cameraViewProjection=current.camera->VP(); result.cameraValid=true; }
+        if (current.camera) {
+            result.cameraViewProjection=current.camera->VP();
+            result.cameraRaster=current.camera->Raster();
+            result.cameraValid=true;
+        }
         result.motion={motionView_.velocity,{width_,height_},0,0,width_,height_};
         result.motionInvalidity={motionView_.reactive,{width_,height_},0,0,width_,height_};
         result.jitter=current.jitter; result.colorEncoding=current.colorEncoding; result.currentInputsComplete=current.inputsComplete;

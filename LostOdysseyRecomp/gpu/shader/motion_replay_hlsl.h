@@ -110,7 +110,10 @@ inline std::string Pixel(const TranslatedShader* ps) {
     std::string wrapper = "\nstruct MvOutput { float2 velocity : SV_Target0; float2 depths : SV_Target1; uint tag : SV_Target2; };\n";
     wrapper += "MvOutput main(in float4 p : SV_Position";
     for (unsigned i = 0; i < 16; ++i) wrapper += ", in float4 i" + std::to_string(i) + " : TEXCOORD" + std::to_string(i);
-    wrapper += ", in bool face : SV_IsFrontFace, in float4 previousClip : TEXCOORD16, in float4 currentClip : TEXCOORD17) {\n";
+    // D3D12 links interpolants by packed signature register. Keep the two
+    // appended clips adjacent to TEXCOORD0..15; SV_IsFrontFace consumes its own
+    // input register and would otherwise shift TEXCOORD16/17 past the VS slots.
+    wrapper += ", in float4 previousClip : TEXCOORD16, in float4 currentClip : TEXCOORD17, in bool face : SV_IsFrontFace) {\n";
     if (ps) {
         const auto targets = ps->colorTargetsWritten ? ps->colorTargetsWritten : 1;
         for (unsigned i = 0; i < 4; ++i) if (targets & (1u << i)) wrapper += "    float4 ignored" + std::to_string(i) + ";\n";

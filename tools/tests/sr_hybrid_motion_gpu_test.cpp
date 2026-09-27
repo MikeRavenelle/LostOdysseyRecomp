@@ -13,6 +13,9 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+namespace plume { std::unique_ptr<RenderInterface> CreateD3D12Interface(); }
+#endif
 using namespace plume;
 using namespace gpu;
 namespace {
@@ -35,9 +38,25 @@ class Fixture {
     std::unique_ptr<RenderTexture> depth_, velocity_, invalidity_, color_;
     temporal::SrHybridMotionGPU hybrid_;
     uint64_t serial_=0,frame_=0;
+    bool d3d12_=false;
     static constexpr uint32_t W=8,H=8,PitchBytes=256;
     void Submit() {
         cmd_->end();
+#ifdef _WIN32
+        if (d3d12_) {
+            auto* queue=static_cast<D3D12CommandQueue*>(queue_.get());
+            auto* fence=static_cast<D3D12CommandFence*>(fence_.get());
+            ID3D12CommandList* lists[]={static_cast<D3D12CommandList*>(cmd_.get())->d3d};
+            queue->d3d->ExecuteCommandLists(1,lists);
+            const uint64_t target=fence->fenceValue++;
+            Check(SUCCEEDED(queue->d3d->Signal(fence->d3d,target)),"D3D12 signal");
+            Check(SUCCEEDED(fence->d3d->SetEventOnCompletion(target,fence->fenceEvent)),"D3D12 fence event");
+            Check(WaitForSingleObject(fence->fenceEvent,30000)==WAIT_OBJECT_0,"D3D12 fence wait");
+            const auto completed=fence->d3d->GetCompletedValue();
+            Check(completed!=UINT64_MAX && completed>=target,"D3D12 fence completed");
+            return;
+        }
+#endif
         const auto* device=static_cast<VulkanDevice*>(device_.get());
         const auto* queue=static_cast<VulkanCommandQueue*>(queue_.get());
         const auto* cmd=static_cast<VulkanCommandList*>(cmd_.get());
@@ -74,14 +93,18 @@ class Fixture {
         cmd_->barriers(RenderBarrierStage::ALL,RenderTextureBarrier(output.reactive,RenderTextureLayout::SHADER_READ));
     }
 public:
-    Fixture() {
+    explicit Fixture(bool d3d12=false) : d3d12_(d3d12) {
         for(auto format:{xenos::ShaderBinaryFormat::Spirv,xenos::ShaderBinaryFormat::Dxil})
             for(bool pixel:{false,true}) {
                 auto shader=xenos::CompileHlsl(temporal::kSrHybridMotionShader,pixel?"pixel":"vertex",pixel?"ps_6_0":"vs_6_0",format);
                 if(!shader.ok)std::fprintf(stderr,"%s\n",shader.errors.c_str());
                 Check(shader.ok,"production shader compiles for SPIR-V and DXIL");
             }
-        api_=CreateVulkanInterface();Check(bool(api_),"Vulkan interface");device_=api_->createDevice();Check(bool(device_),"Vulkan device");
+        #ifdef _WIN32
+        if (d3d12_) api_=CreateD3D12Interface(); else
+#endif
+        api_=CreateVulkanInterface();
+        Check(bool(api_),"graphics interface");device_=api_->createDevice();Check(bool(device_),"graphics device");
         std::printf("DEVICE=%s\n",device_->getDescription().name.c_str());
         queue_=device_->createCommandQueue(RenderCommandListType::DIRECT);Check(bool(queue_),"queue");
         cmd_=queue_->createCommandList();fence_=device_->createCommandFence();
@@ -158,6 +181,7 @@ public:
             auto inputs=owner.CurrentInputs();Check(inputs.CompleteForConsumer()==expectedComplete,"owner missing-geometry recovery");
             if(expectedComplete) {
                 Check(inputs.motionState==temporal::MotionState::Hybrid && inputs.resetHistory==expectedReset,"owner reset and Hybrid state");
+                if (!d3d12_) {
                 Check(temporal::ValidSrHybridMask(inputs,static_cast<VulkanDevice*>(device_.get())),"native confidence region qualification");
                 cmd_->barriers(RenderBarrierStage::ALL,RenderTextureBarrier(inputs.motionInvalidity.texture,RenderTextureLayout::GENERAL));
                 Check(temporal::ValidSrHybridMask(inputs,static_cast<VulkanDevice*>(device_.get()),RenderTextureLayout::GENERAL),"NGX confidence accepts required GENERAL layout");
@@ -165,6 +189,7 @@ public:
                 cmd_->barriers(RenderBarrierStage::ALL,RenderTextureBarrier(inputs.motionInvalidity.texture,RenderTextureLayout::SHADER_READ));
                 Check(!temporal::ValidSrHybridMask(inputs,static_cast<VulkanDevice*>(device_.get()),RenderTextureLayout::GENERAL),"NGX confidence rejects untransitioned FSR layout");
                 auto stale=inputs;stale.motionInvalidity.width--;Check(!temporal::ValidSrHybridMask(stale,static_cast<VulkanDevice*>(device_.get())),"native confidence extent rejection");
+                }
             }
             cmd_->barriers(RenderBarrierStage::ALL,RenderTextureBarrier(depth_.get(),RenderTextureLayout::SHADER_READ));
             cmd_->barriers(RenderBarrierStage::ALL,RenderTextureBarrier(color_.get(),RenderTextureLayout::SHADER_READ));
@@ -179,9 +204,10 @@ public:
     }
 };
 }
-int main() {
+int main(int argc, char** argv) {
     try {
-        Fixture f;
+        const bool d3d12=argc>1 && std::string(argv[1])=="--d3d12";
+        Fixture f(d3d12);
         for(unsigned phase=0;phase<32;++phase) {
             const auto jitter=temporal::FrameJitter(phase+1,8,8);
             f.Pixels(false,false,0,0,jitter.pixelX,jitter.pixelY);
@@ -189,6 +215,6 @@ int main() {
         }
         f.Pixels(true,false,-.5f,0);f.Pixels(true,true,-.5f,0);f.Pixels(false,false,0,.25f,0,0,-1);
         f.PoolAndInvalidDepth();f.HistoryOwnerRecovery();
-        std::printf("PASS: %u hybrid Vulkan/owner checks; no NGX execution or game quality claim\n",checks);return 0;
+        std::printf("PASS: %u hybrid %s/owner checks; no NGX execution or game quality claim\n",checks,d3d12?"D3D12":"Vulkan");return 0;
     } catch(const std::exception& e) {std::fprintf(stderr,"FAIL after %u checks: %s\n",checks,e.what());return 1;}
 }

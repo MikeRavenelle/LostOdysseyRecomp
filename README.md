@@ -21,7 +21,7 @@ Optional diagnostics are off by default and can be disabled in Settings. See [Pr
 
 ### Upscaling (DLSS & FSR)
 
-NVIDIA DLSS (Super Resolution & DLAA) and AMD FSR 3.1 are supported as experimental upscalers on Windows and Linux; technical details and validation boundaries are documented in [development status](docs/STATUS.md). When DLSS or DLAA is unavailable or disabled, a saved TAA selection falls back to SMAA while preserving other anti-aliasing choices.
+Windows supports experimental DLSS/FSR upscaling on Direct3D 12 and Vulkan; Linux supports the Vulkan path. When object motion is unavailable, camera/depth reconstruction can provide a bounded hybrid motion fallback. When DLSS or DLAA is unavailable or disabled, a saved TAA selection falls back to SMAA while preserving other anti-aliasing choices. Broader scenes, mixed-DPI/fullscreen behavior and player acceptance remain open; see [development status](docs/STATUS.md).
 
 ### Automatic PlayStation controller prompts
 
@@ -33,14 +33,14 @@ The recomp automatically detects the most recently active gamepad via SDL and up
 
 ## Roadmap
 
-The **v0.7.1** release delivers the in-game disc and DLC re-importer and standalone Linux Flatpak packaging (delivered early from v0.8.0 planning), building on the performance optimizations, PlayStation controller prompts, v1 Mod API, and native DLSS/DLAA and FSR upscaling from v0.7.0. Planned roadmap targets for **v0.8.0** include DLSS Frame Generation (fixed 2× DLSS FG on Windows Vulkan, alongside D3D12 DLSS FG), dynamic Multi-Frame Generation (dynamic MFG, with target APIs, platforms, or generation multipliers not predetermined), independent FSR Frame Generation, native independent 120 FPS candidate evaluation (`LO_EXPERIMENTAL_120=1`, evaluating native presentation pacing), removal of the legacy PM4 packet translation layer, Linux AArch64, macOS AArch64 (Apple Silicon), and experimental Android support. All remaining v0.8.0 targets represent uncompleted roadmap planning rather than current implementation, test verification, user acceptance, or release delivery; development sequencing is tracked in the [roadmap](docs/ROADMAP.md).
+The **v0.7.2** release candidate builds on the v0.7.1 disc/DLC re-importer and standalone Linux Flatpak packaging, as well as the performance optimizations, PlayStation controller prompts, v1 Mod API, and native DLSS/DLAA and FSR upscaling from v0.7.0. Planned roadmap targets for **v0.8.0** include DLSS Frame Generation (fixed 2× DLSS FG on Windows Vulkan, alongside D3D12 DLSS FG), dynamic Multi-Frame Generation (dynamic MFG, with target APIs, platforms, or generation multipliers not predetermined), independent FSR Frame Generation, native independent 120 FPS candidate evaluation (`LO_EXPERIMENTAL_120=1`, evaluating native presentation pacing), removal of the legacy PM4 packet translation layer, Linux AArch64, macOS AArch64 (Apple Silicon), and experimental Android support. The v0.7.2 candidate adds bounded Windows D3D12 DLSS/FSR SR, DLAA sizing recovery, and camera/depth hybrid motion when native object motion is unavailable. It is awaiting CI and publication; broader scenes and player acceptance remain open. All remaining v0.8.0 targets represent uncompleted roadmap planning rather than current implementation, test verification, user acceptance, or release delivery; development sequencing is tracked in the [roadmap](docs/ROADMAP.md).
 
 Past release notes and detailed changes are recorded in the [changelog](CHANGELOG.md).
 
 ## Start playing
 
 ### Windows
-1. **Download and extract** the Windows release ZIP (`LostOdysseyRecomp-windows-x64-v0.7.1.zip`) from the [latest release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) to a writable folder.
+1. **Download and extract** the prepared v0.7.2 candidate ZIP (`LostOdysseyRecomp-windows-x64-v0.7.2.zip`) from the [latest release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) after CI and publication complete, then place it in a writable folder.
 2. **Run `LostOdysseyRecomp.exe`** and import your game files when prompted. The importer accepts an extracted folder, `default.xex`, an XDVDFS ISO or a GOD container.
 3. **Choose your language and graphics settings.** The game continues after setup and shader preparation.
 
@@ -49,12 +49,12 @@ Past release notes and detailed changes are recorded in the [changelog](CHANGELO
   ```bash
   flatpak --system install flathub org.freedesktop.Platform//26.08
   ```
-  Download the standalone `.flatpak` bundle (`LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`) and install:
+  Download the prepared v0.7.2 standalone `.flatpak` bundle (`LostOdysseyRecomp-linux-x64-v0.7.2.flatpak`) after CI and publication complete, then install:
   ```bash
-  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.1.flatpak
+  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.2.flatpak
   flatpak run io.github.freefrank.LostOdysseyRecomp
   ```
-- **AppImage**: Download `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage`, make it executable (`chmod +x`), and run directly.
+- **AppImage**: After CI and publication complete, download `LostOdysseyRecomp-linux-x64-v0.7.2.AppImage`, make it executable (`chmod +x`), and run directly.
 
 No Python or Visual Studio installation is needed for the release package. Later launches reuse the shader cache. Keep your save and profile folders when updating.
 
@@ -83,13 +83,13 @@ See the [installation guide](docs/INSTALLING.md) for accepted disc versions, fil
 | Game importer | Folder, XEX, ISO and GOD input; originals stay untouched, and staged copies check final writes before publication |
 | First-launch setup | Language and graphics settings before game initialization |
 | Language settings | English, Japanese, Korean, Traditional and Simplified Chinese interface options; game language selection |
-| Graphics settings | Auto/manual internal resolution (config/legacy fallback), 16:9 / 21:9 resolution presets with Widescreen toggle, Off/FXAA/SMAA/experimental TAA, upscaler options (Off/DLSS with Quality/Balanced/Performance/DLAA), Standard/High filtering, 30/60 FPS and output/display controls; fullscreen and mixed DPI need more testing |
+| Graphics settings | Auto/manual internal resolution (config/legacy fallback), 16:9 / 21:9 resolution presets with Widescreen toggle, Off/FXAA/SMAA/experimental TAA, upscaler options (Off/DLSS/FSR 3.1 with quality controls), Standard/High filtering, 30/60 FPS and output/display controls; fullscreen, mixed DPI and broader upscaler scene coverage need more testing |
 | Settings menu | Original game fonts, scrollable overflowing lists and menu styling; one-click Graphics save/apply, Start/Enter focus-jump to Save without saving, and Now/Later restart choices |
 | Shader preparation | Bundled portable Vulkan shader pack (.lospv), memory-adaptive parallel compilation, interactive skip, and cache reuse |
 | CPU use | Reduced unnecessary polling and reuse of rendering work |
 | Input and debug | Controller and keyboard input; English/Simplified Chinese in-game overlay debug menu (F1 or LB+RB) with capture, map information and same-map POI teleport |
 
-Published packages import game discs and supported DLC with **Files** or **Folder** in `LostOdysseyRecomp.exe`. In v0.7.1, **Gameplay → Import discs & DLC** allows reopening the importer to replace selected discs and DLC. Official v0.7.1 releases provide Windows ZIP, Linux AppImage, and standalone Linux Flatpak packages. See the [installation guide](docs/INSTALLING.md#automatic-content-import), [build instructions](docs/BUILDING.md#packaging-flatpak), and [development status](docs/STATUS.md) for validation limits.
+Release packages import game discs and supported DLC with **Files** or **Folder** in `LostOdysseyRecomp.exe`. In v0.7.1, **Gameplay → Import discs & DLC** allows reopening the importer to replace selected discs and DLC. The prepared v0.7.2 package is planned to provide Windows ZIP, Linux AppImage, and standalone Linux Flatpak packages. See the [installation guide](docs/INSTALLING.md#automatic-content-import), [build instructions](docs/BUILDING.md#packaging-flatpak), and [development status](docs/STATUS.md) for validation limits.
 
 Validation progress and remaining work are tracked in the [Maintainer Project](https://github.com/users/freefrank/projects/3).
 

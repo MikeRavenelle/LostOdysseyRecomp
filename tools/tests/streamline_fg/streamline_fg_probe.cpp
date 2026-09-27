@@ -2,6 +2,8 @@
 #include "probe_vulkan_dispatch.h"
 #include "streamline_runtime.h"
 #include "ngx_lifecycle_capture.h"
+#include "probe_options.h"
+#include "input_completion.h"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -203,13 +205,17 @@ struct App {
     VkSemaphore acquire{};
     std::vector<VkSemaphore> present;
     VkFence fence{};
+    VkFence inputQueueFence{}; // Submitted AFTER hooked Present, never the render fence.
+    bool inputQueueFencePending{};
     VkDebugUtilsMessengerEXT validationMessenger{};
     PFN_vkDestroyDebugUtilsMessengerEXT destroyValidationMessenger{};
-    std::atomic<unsigned> validationErrors{};
+    // May outlive App if an unproven drain requires process-lifetime quarantine.
+    std::unique_ptr<std::atomic<unsigned>> validationErrors = std::make_unique<std::atomic<unsigned>>(0);
     const sl::ViewportHandle viewport{0u};
     uint64_t serial{};
     bool fgEnabled{};
     bool noActivate{};
+    bool explicitInputWait{};
     bool fgResourceUsed{};
     bool fgOptionsAwaitPresent{};
     bool fgUnavailableInBackground{};
@@ -222,8 +228,16 @@ struct App {
     uint32_t generatedIntervals{};
     bool finalCleanupOk = true;
     bool cleanedUp{};
+    unsigned sessionValidationErrors{};
+    unsigned sessionSlErrors{};
+    InputCompletion inputCompletion;
+    uint32_t explicitInputFrames{}, explicitInputWaits{};
+    uint32_t sdkNonzeroPointObservations{}, bootstrapReadyWaits{};
+    uint64_t lastSdkPointValue{};
+    bool explicitInputCoverageMissing{};
     const std::filesystem::path output = std::filesystem::current_path();
-    explicit App(bool disableActivation) : window(disableActivation), noActivate(disableActivation) {}
+    explicit App(ProbeOptions options)
+        : window(options.noActivate), noActivate(options.noActivate), explicitInputWait(options.explicitInputWait) {}
     ~App() { Cleanup(); }
     void DiscardPendingUse() {
         if (!ngx || !pendingUseId) return;
@@ -239,9 +253,13 @@ struct App {
         (void)queue.release();
         (void)device.release(); (void)render.release(); (void)hooks.release(); (void)ngx.release();
         sl.AbandonAfterDrainFailure();
+        // The retained messenger may still call back before process termination.
+        // Quarantine its counter too; a pointer into the destroyed App is unsafe.
+        (void)validationErrors.release();
         window.AbandonAfterDrainFailure();
         finalCleanupOk = false;
         std::printf("LIFECYCLE_GPU_OBJECTS_ABANDONED reason=%s\n", reason);
+        std::puts("LIFECYCLE_CLEANUP_OK=0");
     }
     void InstallValidationMonitor() {
         auto instance = static_cast<VulkanInterface*>(render.get())->instance;
@@ -255,7 +273,7 @@ struct App {
         info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
             VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
         info.pfnUserCallback = ValidationMessage;
-        info.pUserData = &validationErrors;
+        info.pUserData = validationErrors.get();
         VK(create(instance, &info, nullptr, &validationMessenger), "vkCreateDebugUtilsMessengerEXT");
         std::puts("VALIDATION_MONITOR=installed");
     }
@@ -277,8 +295,84 @@ struct App {
         for (auto semaphore : present) vkDestroySemaphore(gpu->vk, semaphore, nullptr);
         present.clear();
     }
+    void WaitForFgInputs(const char* stage) {
+        if (!explicitInputWait || inputCompletion.Idle()) return;
+        Check(device != nullptr, "FG input completion device unavailable");
+        auto* gpu = static_cast<VulkanDevice*>(device.get());
+        if (inputCompletion.Ownership() == InputCompletion::State::QueuePending) {
+            Check(inputQueueFencePending && inputQueueFence,
+                "FG bootstrap has no post-Present queue fence");
+            const auto result = vkWaitForFences(gpu->vk, 1, &inputQueueFence, VK_TRUE, 10'000'000'000ull);
+            // Keep the pending marker and its resources on a failed wait. Cleanup
+            // may retry the same completion; it must not fabricate retirement.
+            VK(result, "FG protected presenting-queue wait");
+            Check(inputCompletion.QueueWaitFinished(true), "FG protected queue ownership changed during wait");
+            inputQueueFencePending = false;
+            const bool bootstrapReady = inputCompletion.CanEnableExplicit();
+            if (bootstrapReady) ++bootstrapReadyWaits;
+            std::printf("FG_INPUT_QUEUE_WAIT stage=%s frame=%llu epoch=%llu result=complete bootstrap_ready=%d\n",
+                stage, static_cast<unsigned long long>(inputCompletion.Frame()),
+                static_cast<unsigned long long>(inputCompletion.Epoch()), int(bootstrapReady));
+            return;
+        }
+        Check(inputCompletion.Ownership() == InputCompletion::State::TimelinePending,
+            "FG input ownership unresolved; tagged resources cannot be reused or destroyed");
+        Check(vkWaitSemaphores != nullptr, "FG input timeline wait unavailable");
+        const auto point = inputCompletion.PendingPoint();
+        VkSemaphore semaphore{};
+        static_assert(sizeof(semaphore) == sizeof(point.fence));
+        std::memcpy(&semaphore, &point.fence, sizeof(semaphore));
+        VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+        wait.semaphoreCount = 1; wait.pSemaphores = &semaphore; wait.pValues = &point.value;
+        const auto result = vkWaitSemaphores(gpu->vk, &wait, 10'000'000'000ull);
+        VK(result, "FG input processing timeline wait");
+        Check(inputCompletion.TimelineWaitFinished(true), "FG timeline ownership changed during wait");
+        ++explicitInputWaits;
+        std::printf("FG_INPUT_WAIT stage=%s frame=%llu epoch=%llu value=%llu result=complete\n", stage,
+            static_cast<unsigned long long>(inputCompletion.Frame()),
+            static_cast<unsigned long long>(inputCompletion.Epoch()), static_cast<unsigned long long>(point.value));
+    }
+    void RecordInputQueueCompletion() {
+        if (!explicitInputWait || !fgEnabled ||
+            inputCompletion.Ownership() != InputCompletion::State::QueuePending) return;
+        Check(inputQueueFence && !inputQueueFencePending, "FG bootstrap fence is already pending");
+        auto* gpu = static_cast<VulkanDevice*>(device.get());
+        auto result = vkResetFences(gpu->vk, 1, &inputQueueFence);
+        if (result == VK_SUCCESS) {
+            // eBlockPresentingClientQueue orders this tail marker after SDK work.
+            // The earlier render fence does NOT cover the hooked Present. No
+            // WaitIdle is introduced, and the default probe records no marker.
+            const VkSubmitInfo marker{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            result = vkQueueSubmit(static_cast<VulkanCommandQueue*>(queue.get())->queue->vk,
+                1, &marker, inputQueueFence);
+        }
+        if (result != VK_SUCCESS) {
+            inputCompletion.OrderingSubmitFailed();
+            VK(result, "FG post-Present queue marker submission");
+        }
+        inputQueueFencePending = true;
+    }
+    InputCompletion::Observation ObserveInputCompletion(uint32_t frame, const sl::DLSSGState& state) {
+        const bool valid = state.status == sl::DLSSGStatus::eOk && state.numFramesToGenerateMax >= 1;
+        const auto observation = inputCompletion.Observe(frame, swap.epoch,
+            valid,
+            {reinterpret_cast<uintptr_t>(state.inputsProcessingCompletionFence),
+                state.lastPresentInputsProcessingCompletionFenceValue});
+        if (valid && observation != InputCompletion::Observation::Invalid &&
+            state.inputsProcessingCompletionFence && state.lastPresentInputsProcessingCompletionFenceValue) {
+            ++sdkNonzeroPointObservations;
+            lastSdkPointValue = state.lastPresentInputsProcessingCompletionFenceValue;
+        }
+        std::printf("FG_INPUT_FENCE_STATE frame=%u epoch=%u mode=%s fence_nonnull=%d value=%llu observation=%u\n",
+            frame, swap.epoch,
+            inputCompletion.EffectiveMode() == InputCompletion::Mode::ExplicitTimeline ? "explicit" : "bootstrap_queue",
+            int(state.inputsProcessingCompletionFence != nullptr),
+            static_cast<unsigned long long>(state.lastPresentInputsProcessingCompletionFenceValue), unsigned(observation));
+        return observation;
+    }
     void Drain() {
         if (!device) return;
+        WaitForFgInputs("boundary_drain");
         auto* gpu = static_cast<VulkanDevice*>(device.get());
         if (inFlight) {
             VK(vkWaitForFences(gpu->vk, 1, &fence, VK_TRUE, 10'000'000'000ull), "host submit fence");
@@ -289,11 +383,13 @@ struct App {
         std::printf("BOUNDARY_DRAIN serial=%llu\n", static_cast<unsigned long long>(serial));
         Memory("boundary");
     }
-    void Mode(bool enabled) {
+    void SetModeOptions(bool enabled, InputCompletion::Mode mode) {
         sl::DLSSGOptions options{};
         options.mode = enabled ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
         options.numFramesToGenerate = 1;
-        options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
+        options.queueParallelismMode = mode == InputCompletion::Mode::ExplicitTimeline
+            ? sl::DLSSGQueueParallelismMode::eBlockNoClientQueues
+            : sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
         options.numBackBuffers = uint32_t(swap.images.size());
         options.colorWidth = swap.extent.width; options.colorHeight = swap.extent.height;
         options.colorBufferFormat = swap.format;
@@ -308,7 +404,27 @@ struct App {
         SL(sl.DLSSGSetOptions(viewport, options), "slDLSSGSetOptions");
         fgEnabled = enabled;
         fgOptionsAwaitPresent = true;
-        std::printf("FG_MODE=%s fixed2x=1 block_presenting_client_queue=1\n", enabled ? "on" : "off");
+        if (!explicitInputWait)
+            std::printf("FG_MODE=%s fixed2x=1 block_presenting_client_queue=1\n", enabled ? "on" : "off");
+        else
+            std::printf("FG_MODE=%s fixed2x=1 block_no_client_queues=%d explicit_requested=1\n",
+                enabled ? "on" : "off", int(mode == InputCompletion::Mode::ExplicitTimeline));
+    }
+    void Mode(bool enabled) {
+        WaitForFgInputs("before_mode_change");
+        Check(inputCompletion.Idle(), "cannot change mode with unretired FG inputs");
+        // Do not enter unprotected queue mode before this enabled generation has
+        // produced a usable SDK completion signal under queue-blocking safety.
+        SetModeOptions(enabled, InputCompletion::Mode::PresentQueue);
+        Check(inputCompletion.ResetMode(), "FG mode reset requires retired inputs");
+    }
+    void MaybeEnableExplicitInputs() {
+        if (!explicitInputWait || !fgEnabled || !inputCompletion.CanEnableExplicit() ||
+            validationErrors->load() || sl.ErrorCount()) return;
+        Check(vkWaitSemaphores != nullptr, "explicit input completion unsupported by Vulkan loader");
+        SetModeOptions(true, InputCompletion::Mode::ExplicitTimeline);
+        Check(inputCompletion.EnableExplicit(), "FG input bootstrap was not completed");
+        std::printf("FG_INPUT_EXPLICIT_ENABLED next_frame=%u epoch=%u\n", lastFrameId + 1, swap.epoch);
     }
     void ClearTags() {
         if (!sl.SetTagForFrame || !serial) return;
@@ -324,6 +440,14 @@ struct App {
     void Cleanup() noexcept {
         if (cleanedUp) return;
         cleanedUp = true;
+        sessionValidationErrors = validationErrors->load();
+        sessionSlErrors = sl.ErrorCount();
+        std::printf("SESSION_VALIDATION_ERRORS=%u\nSESSION_SL_ERRORS=%u\n",
+            sessionValidationErrors, sessionSlErrors);
+        if (explicitInputWait && inputCompletion.Ownership() == InputCompletion::State::Unresolved) {
+            AbandonGpuObjects("FG_input_ownership_unresolved");
+            return;
+        }
         const auto nativeErrorsBefore = NgxLifecycleErrors();
         const auto step = [this](const char* name, auto action) {
             try { action(); }
@@ -332,6 +456,13 @@ struct App {
                 std::fprintf(stderr, "CLEANUP_FAILURE stage=%s reason=%s\n", name, ex.what());
             }
         };
+        if (device && explicitInputWait && !inputCompletion.Idle()) {
+            bool inputsRetired = false;
+            step("retire_fg_inputs", [this, &inputsRetired] {
+                WaitForFgInputs("cleanup_retry"); inputsRetired = inputCompletion.Idle();
+            });
+            if (!inputsRetired) { AbandonGpuObjects("FG_input_wait_failed"); return; }
+        }
         DiscardPendingUse();
         if (device && fgEnabled && sl.DLSSGSetOptions)
             step("request_fg_off", [this] { Mode(false); });
@@ -367,12 +498,14 @@ struct App {
         scene.reset();
         if (device) { DestroyPresentSemaphores(); swap.Destroy(); }
         if (ngx && device) step("native_session_shutdown", [this] { ngx->ShutdownAfterGpuDrain(); });
+        if (device && inputQueueFence) vkDestroyFence(static_cast<VulkanDevice*>(device.get())->vk, inputQueueFence, nullptr);
         if (device && fence) vkDestroyFence(static_cast<VulkanDevice*>(device.get())->vk, fence, nullptr);
         if (device && acquire) vkDestroySemaphore(static_cast<VulkanDevice*>(device.get())->vk, acquire, nullptr);
         prefix.reset(); isolated.reset(); continuation.reset(); queue.reset();
         if (!sl.Shutdown()) finalCleanupOk = false;
-        if (sl.ErrorCount()) {
-            std::fprintf(stderr, "CLEANUP_SL_ERRORS=%u (inspect Streamline log)\n", sl.ErrorCount());
+        const auto cleanupSlErrors = sl.ErrorCount() - sessionSlErrors;
+        if (cleanupSlErrors) {
+            std::fprintf(stderr, "CLEANUP_SL_ERRORS=%u (inspect Streamline log)\n", cleanupSlErrors);
             finalCleanupOk = false;
         }
         if (NgxLifecycleErrors() != nativeErrorsBefore) {
@@ -386,8 +519,9 @@ struct App {
             validationMessenger = {};
         }
         render.reset(); hooks.reset(); ngx.reset();
-        if (validationErrors.load()) {
-            std::fprintf(stderr, "VALIDATION_ERRORS=%u\n", validationErrors.load());
+        const auto cleanupValidationErrors = validationErrors->load() - sessionValidationErrors;
+        if (cleanupValidationErrors) {
+            std::fprintf(stderr, "CLEANUP_VALIDATION_ERRORS=%u\n", cleanupValidationErrors);
             finalCleanupOk = false;
         }
         if (!window.Close()) finalCleanupOk = false;
@@ -424,6 +558,8 @@ struct App {
     void Frame(uint32_t frame, bool capture) {
         const auto start = std::chrono::steady_clock::now();
         auto* gpu = static_cast<VulkanDevice*>(device.get());
+        WaitForFgInputs("before_frame_reuse");
+        MaybeEnableExplicitInputs();
         Check(scene && scene->Ready(), "scene resources unavailable");
         Check(queue && prefix && isolated && continuation, "single DIRECT queue/list unavailable");
         Check(!pendingUseId, "previous native NGX use was not settled");
@@ -452,7 +588,7 @@ struct App {
         pendingUseId = attempt.useId;
         Check(attempt.status == gpu::dlss::SrStatus::Executable && attempt.useId, "native NGX SR create/evaluate failed");
         scene->Continuation(*continuation, swap.images.at(image), swap.extent, capture);
-        std::printf("HOST_SWAP_FINAL_LAYOUT_RECORDED epoch=%u frame=%u index=%u handle=0x%llx layout=PRESENT_SRC_KHR\n",
+        std::printf("HOST_SWAP_FINAL_LAYOUT_RECORDED epoch=%u frame=%u index=%u handle=0x%llx layout=TRANSFER_SRC_OPTIMAL owner=streamline_present_proxy\n",
             swap.epoch, frame, image, static_cast<unsigned long long>(ImageHandle(swap.images[image])));
         sl::Resource resources[] = {{sl::ResourceType::eTex2d, nullptr}, {sl::ResourceType::eTex2d, nullptr},
             {sl::ResourceType::eTex2d, nullptr}, {sl::ResourceType::eTex2d, nullptr}};
@@ -480,7 +616,12 @@ struct App {
         info.waitSemaphoreCount = 1; info.pWaitSemaphores = &present[image];
         info.swapchainCount = 1; info.pSwapchains = &swap.swapchain; info.pImageIndices = &image;
         mark(sl::PCLMarker::ePresentStart);
-        VK(vkQueuePresentKHR(static_cast<VulkanCommandQueue*>(queue.get())->queue->vk, &info), "one hooked present");
+        if (explicitInputWait && fgEnabled)
+            Check(inputCompletion.BeginPresent(frame, swap.epoch), "FG input frame/epoch overlaps pending work");
+        const auto presented = vkQueuePresentKHR(static_cast<VulkanCommandQueue*>(queue.get())->queue->vk, &info);
+        if (explicitInputWait && fgEnabled) inputCompletion.PresentReturned(presented == VK_SUCCESS);
+        VK(presented, "one hooked present");
+        RecordInputQueueCompletion();
         fgOptionsAwaitPresent = false;
         sceneFirstFrame = false;
         mark(sl::PCLMarker::ePresentEnd);
@@ -491,6 +632,29 @@ struct App {
             state.numFramesToGenerateMax, state.minWidthOrHeight,
             static_cast<unsigned long long>(state.lastPresentInputsProcessingCompletionFenceValue),
             static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count()));
+        if (explicitInputWait && fgEnabled) {
+            auto observation = ObserveInputCompletion(frame, state);
+            // GetState consumes interval counters. Accumulate diagnostic counts
+            // over retries; never count an extra query as another real frame.
+            uint32_t queries = 1;
+            uint64_t actualPresents = state.numFramesActuallyPresented;
+            while (observation == InputCompletion::Observation::Missing && queries < 32) {
+                Sleep(2);
+                state = {};
+                SL(sl.DLSSGGetState(viewport, state, nullptr), "deferred FG state on present thread");
+                ++queries;
+                actualPresents += state.numFramesActuallyPresented;
+                observation = ObserveInputCompletion(frame, state);
+            }
+            Check(observation != InputCompletion::Observation::Invalid,
+                "invalid, stale or regressed FG input completion state");
+            Check(observation != InputCompletion::Observation::Missing,
+                "FG input completion signal unavailable after bounded same-frame query; resources retained");
+            if (observation == InputCompletion::Observation::Timeline) ++explicitInputFrames;
+            if (queries > 1) std::printf("FG_INPUT_DEFERRED frame=%u queries=%u actual_presents_total=%llu\n",
+                frame, queries, static_cast<unsigned long long>(actualPresents));
+            state.numFramesActuallyPresented = uint32_t(std::min(actualPresents, uint64_t(UINT32_MAX)));
+        }
         if (fgEnabled && state.numFramesActuallyPresented > 1 && state.status == sl::DLSSGStatus::eOk) ++generatedIntervals;
         if (!fgEnabled && state.numFramesActuallyPresented != 1)
             Fail("FG off must present exactly one real frame");
@@ -575,6 +739,8 @@ int Run(App& app) {
     VK(vkCreateSemaphore(gpu->vk, &semaphore, nullptr, &app.acquire), "acquire semaphore");
     VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     VK(vkCreateFence(gpu->vk, &fence, nullptr, &app.fence), "host submit fence");
+    if (app.explicitInputWait)
+        VK(vkCreateFence(gpu->vk, &fence, nullptr, &app.inputQueueFence), "FG post-Present ordering fence");
     if (!app.swap.Create(*gpu, app.window.handle, 1920, 1080, reason)) { std::printf("UNAVAILABLE=%s\n", reason.c_str()); return 77; }
     app.CreatePresentSemaphores();
     auto reflex = sl::ReflexOptions{}; reflex.mode = sl::ReflexMode::eLowLatency;
@@ -612,6 +778,9 @@ int Run(App& app) {
     const auto frames = [&](bool fg, uint32_t n) {
         app.Mode(fg);
         const auto generatedBefore = app.generatedIntervals;
+        const auto explicitBefore = app.explicitInputFrames;
+        const auto pointBefore = app.sdkNonzeroPointObservations;
+        const auto bootstrapBefore = app.bootstrapReadyWaits;
         for (uint32_t i = 0; i < n; ++i) {
             if (std::chrono::steady_clock::now() - start > std::chrono::seconds(120)) Fail("probe wall timeout");
             if (fg && !app.noActivate && !app.window.Activate()) {
@@ -629,6 +798,20 @@ int Run(App& app) {
             }
             const auto id = frame++;
             app.Frame(id, id % 7 == 0);
+        }
+        if (fg && app.explicitInputWait && app.explicitInputFrames == explicitBefore) {
+            app.explicitInputCoverageMissing = true;
+            const auto pointCount = app.sdkNonzeroPointObservations - pointBefore;
+            const auto validationErrors = app.validationErrors->load();
+            const auto slErrors = app.sl.ErrorCount();
+            std::printf("FG_INPUT_EXPLICIT_UNAVAILABLE=coverage_missing blocked_by_session_errors=%d "
+                "missing_completion_signal=%d sdk_nonzero_point_observations=%u "
+                "bootstrap_ready_waits=%u last_phase_point_value=%llu "
+                "session_validation_errors=%u session_sl_errors=%u\n",
+                int(validationErrors || slErrors), int(pointCount == 0), pointCount,
+                app.bootstrapReadyWaits - bootstrapBefore,
+                static_cast<unsigned long long>(pointCount ? app.lastSdkPointValue : 0),
+                validationErrors, slErrors);
         }
         if (fg && !app.noActivate && app.generatedIntervals == generatedBefore)
             Fail("no generated presents during this FG-on interval");
@@ -660,15 +843,19 @@ int Run(App& app) {
         return 77;
     }
     Check(app.generatedIntervals >= 2, "SDK did not report actual generated presents in at least two intervals");
+    if (app.explicitInputWait && (app.explicitInputCoverageMissing || !app.explicitInputWaits)) {
+        std::puts("UNAVAILABLE=explicit input completion not exercised in every FG-on phase; queue-blocking fallback only");
+        return 77;
+    }
     return 0;
 }
-int Execute(bool noActivate) {
-    App app(noActivate);
+int Execute(ProbeOptions options) {
+    App app(options);
     int result = 1;
     try { result = Run(app); }
     catch (const std::exception& ex) { std::fprintf(stderr, "FAIL=%s\n", ex.what()); }
     app.Cleanup();
-    if (!app.finalCleanupOk) return 1;
+    if (!app.finalCleanupOk || app.sessionValidationErrors || app.sessionSlErrors) return 1;
     if (result == 0) {
         std::printf("PASS=actual native NGX SR + Streamline fixed2x FG reported generated presents, generated_intervals=%u\n", app.generatedIntervals);
         std::puts("EXTERNAL_DISPLAY_EVIDENCE=not_collected; physical displayed-frame acceptance pending");
@@ -678,12 +865,13 @@ int Execute(bool noActivate) {
 }
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    if (argc > 2 || (argc == 2 && std::strcmp(argv[1], "--no-activate") != 0)) {
-        std::fprintf(stderr, "USAGE=%s [--no-activate]\n", argv[0]);
+    const auto options = probe::ParseProbeOptions(argc, argv);
+    if (!options) {
+        std::fprintf(stderr, "USAGE=%s [--no-activate] [--explicit-input-wait]\n", argv[0]);
         return 1;
     }
     const auto dpiAware = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     std::printf("WINDOW_DPI_AWARENESS_SET=%d last_error=%lu\n", int(dpiAware), dpiAware ? 0 : GetLastError());
-    try { return Execute(argc == 2); }
+    try { return Execute(*options); }
     catch (const std::exception& ex) { std::fprintf(stderr, "FAIL=%s\n", ex.what()); return 1; }
 }

@@ -11,6 +11,10 @@
 #include <cstdlib>
 #include <stdexcept>
 
+// The standalone fixture has no settings/status logger. Capability publication
+// and the production stop path remain real.
+namespace gpu::frame_plan { void NoteCurrentDlssStatus() {} }
+
 namespace gpu::video {
 void ConfigureSubmissionProbe(plume::RenderCommandQueue* queue, int32_t submitFault, int32_t waitFault, bool resetStop);
 }
@@ -65,9 +69,9 @@ int main()
         auto list = queue->createCommandList();
         auto fence = device->createCommandFence();
         Require(bool(queue && list && fence), "queue, list, and fence");
+        gpu::video::ConfigureSubmissionProbe(queue.get(), -3, 0, true);
         Require(gpu::video::BeginGpuCommands(list.get()) && gpu::video::EndGpuCommands(list.get()), "empty command buffer");
 
-        gpu::video::ConfigureSubmissionProbe(queue.get(), -3, 0, true);
         Require(!gpu::upscaling::PublishedDeviceCapability().gpuWorkStopped, "probe reset publishes not stopped");
         const plume::RenderCommandList* lists[] = {list.get()};
         uint64_t serial = 7;

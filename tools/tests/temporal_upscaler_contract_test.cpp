@@ -18,6 +18,10 @@ int main() {
         !CanQueryNgxSizing({3, 0, 720}), "FSR and invalid extents never query NGX");
     BackendDeviceSnapshot device{backend::Backend::Vulkan, 3, true, true};
     Require(device.Available(Upscaler::Dlss) && !device.Available(Upscaler::Fsr), "FSR capability independent of DLSS");
+    device.backend = backend::Backend::D3D12;
+    Require(device.Available(Upscaler::Dlss) && !device.Available(Upscaler::Fsr), "D3D12 uses actual per-provider capability");
+    device.fsrAvailable = true;
+    Require(device.Available(Upscaler::Fsr), "D3D12 FSR can execute independently");
     device.gpuWorkStopped = true;
     Require(!device.Available(Upscaler::Dlss), "device stop invalidates provider capability");
 

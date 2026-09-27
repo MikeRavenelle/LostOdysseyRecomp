@@ -112,6 +112,7 @@ struct TemporalFrameInputs {
     DepthConvention depthConvention = DepthConvention::Unknown;
     float preExposure = 1.0f, exposureScale = 1.0f;
     Matrix cameraViewProjection{};
+    Viewport cameraRaster{};
     bool cameraValid = false;
     float frameTimeDeltaMilliseconds = 0.0f;
     MotionState motionState = MotionState::Unavailable;

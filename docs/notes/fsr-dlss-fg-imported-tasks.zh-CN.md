@@ -69,10 +69,10 @@ OpenCode 只读核对信息：数据库为 `C:/Users/freefrank/.local/share/open
 
 P2 已据设计启动原始 alpha 收集切片，草稿尚未构建／验收。设计记录：[fsr-p2-mask-design.md](../../out/streamline-fg-p0/fsr-p2-mask-design.md)，新 architect 计划包括 alpha replay 与后处理传播。尚无完整 opaque-only/composited 对，P2 检查框保持未完成。
 
-### P3：FG 生产输入与呈现基础设施（未启动）
+### P3：FG 生产输入与呈现基础设施（基础已实现，生产接线待续）
 
-- [ ] `IMP-P3-PRESENT`：把已证明的 hook 方案接入主程序，完成 HUDless/UI、present lease 与真实帧 Reflex token；可先保持 FG 关闭，先证明输入和资源回收。
-- [ ] `IMP-P3-LIFETIME`：验证 resize、最小化、模式切换、退出和关闭 FG 时的资源所有权、同步与无额外每帧等待。
+- [ ] `IMP-P3-PRESENT`：基础层已落地 provider-neutral present lease 与最终 straight-alpha HUDless/UI 合成；仍需把真实 producer 所有权、hook/provider 与真实帧 Reflex token 接入主程序。FG 继续保持关闭，避免把基础接口误记为已启用插帧。
+- [ ] `IMP-P3-LIFETIME`：lease 队列已定义“未提交可取消、已提交仅按 provider completion serial 回收、drain 后统一释放”的无每帧 wait 契约；仍需实机验证 resize、最小化、模式切换、退出和关闭 FG。
 - 依赖：P0 共存和清理证据；不能让两套 SDK 同时接管 SR。
 
 ### P4：DLSS FG 2×（未启动）

@@ -5,6 +5,9 @@
 #include "dlss_ngx.h"
 #include "dlss_evaluate_capture.h"
 #include "sr_hybrid_mask.h"
+#if defined(_WIN32) && defined(LO_GPU_PLUME)
+#include <plume_d3d12.h>
+#endif
 
 #if defined(LO_GPU_PLUME)
 #include "temporal_frame_inputs.h"
@@ -324,6 +327,7 @@ bool Controller::QueryDeviceExtensions(VkInstance instance, VkPhysicalDevice dev
 }
 
 void Controller::ProbeOnce(const plume::VulkanInterface& vulkanInterface, const plume::VulkanDevice& device) {
+    if (backend_ == Backend::D3D12) return;
     if (probeAttempted_) return;
     probeAttempted_ = true;
     if (report_.deviceName.empty()) report_.deviceName = device.physicalDeviceProperties.deviceName;
@@ -372,6 +376,7 @@ void Controller::ProbeOnce(const plume::VulkanInterface& vulkanInterface, const 
     // The retained context is only used by a later persistent EnsureSession.
     sessionInterface_ = &vulkanInterface;
     sessionDevice_ = &device;
+    backend_ = Backend::Vulkan;
     sessionInstance_ = vulkanInterface.instance;
     DiscoveryInfo info(applicationDataPath_, runtimePath_);
     auto result = NVSDK_NGX_VULKAN_Init_with_ProjectID(kProjectId, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "LostOdysseyRecomp",
@@ -470,6 +475,7 @@ upscaling::OutputSizing Controller::QueryOutputSizing(const plume::VulkanInterfa
         }
     };
     if (!key.outputWidth || !key.outputHeight) { setAll(upscaling::SizingState::Error); return sizing; }
+    if (backend_ == Backend::D3D12) { setAll(upscaling::SizingState::Error); return sizing; }
 #if !defined(LO_DLSS_SDK)
     setAll(upscaling::SizingState::Unavailable);
     return sizing;
@@ -648,6 +654,7 @@ upscaling::OutputSizing Controller::QueryOutputSizing(const plume::VulkanInterfa
 }
 
 SrStatus Controller::EnsureSession(const plume::VulkanDevice& device) {
+    if (backend_ == Backend::D3D12) return SrStatus::NeedsReconfigure;
 #if !defined(LO_DLSS_SDK)
     (void)device;
     return SrStatus::Bypass;
@@ -763,6 +770,7 @@ SrStatus Controller::AllocateParameters() {
 SrAttempt Controller::RecordIsolated(plume::VulkanCommandList& isolatedCommandList, const SrConfig& config,
     const temporal::TemporalFrameInputs& inputs, plume::VulkanTexture& output, EvaluateCapture* capture) {
     SrAttempt attempt;
+    if (backend_ == Backend::D3D12) return attempt;
 #if !defined(LO_DLSS_SDK)
     (void)isolatedCommandList; (void)config; (void)inputs; (void)output;
     if (capture) { capture->stage = "sdk_disabled"; capture->reason = "sdk_disabled"; }
@@ -973,8 +981,18 @@ void Controller::ReleaseFeatureAfterGpuDrain() {
     if (!srUses_.Empty()) return;
 #if defined(LO_DLSS_SDK)
     if (feature_) {
-        const auto result = NVSDK_NGX_VULKAN_ReleaseFeature(static_cast<NVSDK_NGX_Handle*>(feature_));
+        const auto result =
+#if defined(_WIN32)
+            backend_ == Backend::D3D12 ? NVSDK_NGX_D3D12_ReleaseFeature(static_cast<NVSDK_NGX_Handle*>(feature_)) :
+#endif
+            NVSDK_NGX_VULKAN_ReleaseFeature(static_cast<NVSDK_NGX_Handle*>(feature_));
         RecordCall("ReleaseFeature", int32_t(result), NVSDK_NGX_FAILED(result));
+#if defined(_WIN32)
+        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+            sessionFailed_ = true;
+            return; // Retain a failed-release handle for a later drained cleanup.
+        }
+#endif
         feature_ = nullptr;
     }
 #endif
@@ -986,20 +1004,54 @@ void Controller::ReleaseFeatureAfterGpuDrain() {
 void Controller::ShutdownAfterGpuDrain() {
     if (!srUses_.Empty()) return;
     ReleaseFeatureAfterGpuDrain();
+#if defined(_WIN32)
+    if (backend_ == Backend::D3D12 && feature_) return;
+#endif
 #if defined(LO_DLSS_SDK)
     if (featureParameters_) {
-        const auto result = NVSDK_NGX_VULKAN_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(featureParameters_));
+        const auto result =
+#if defined(_WIN32)
+            backend_ == Backend::D3D12 ? NVSDK_NGX_D3D12_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(featureParameters_)) :
+#endif
+            NVSDK_NGX_VULKAN_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(featureParameters_));
         RecordCall("DestroyFeatureParameters", int32_t(result), NVSDK_NGX_FAILED(result));
+#if defined(_WIN32)
+        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+            sessionFailed_ = true;
+            return;
+        }
+#endif
         featureParameters_ = nullptr;
     }
     if (capabilityParameters_) {
-        const auto result = NVSDK_NGX_VULKAN_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(capabilityParameters_));
+        const auto result =
+#if defined(_WIN32)
+            backend_ == Backend::D3D12 ? NVSDK_NGX_D3D12_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(capabilityParameters_)) :
+#endif
+            NVSDK_NGX_VULKAN_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(capabilityParameters_));
         RecordCall("DestroyCapabilityParameters", int32_t(result), NVSDK_NGX_FAILED(result));
+#if defined(_WIN32)
+        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+            sessionFailed_ = true;
+            return;
+        }
+#endif
         capabilityParameters_ = nullptr;
     }
-    if (sessionInitialized_ && sessionDevice_) {
-        const auto result = NVSDK_NGX_VULKAN_Shutdown1(sessionDevice_->vk);
+    if (sessionInitialized_) {
+        const auto result =
+#if defined(_WIN32)
+            backend_ == Backend::D3D12 && sessionDeviceD3D12_
+                ? NVSDK_NGX_D3D12_Shutdown1(sessionDeviceD3D12_->d3d) :
+#endif
+            sessionDevice_ ? NVSDK_NGX_VULKAN_Shutdown1(sessionDevice_->vk) : NVSDK_NGX_Result_Fail;
         RecordCall("Session_Shutdown1", int32_t(result), NVSDK_NGX_FAILED(result));
+#if defined(_WIN32)
+        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+            sessionFailed_ = true;
+            return;
+        }
+#endif
     }
 #endif
     sessionInitialized_ = false;
@@ -1007,7 +1059,11 @@ void Controller::ShutdownAfterGpuDrain() {
     sessionRetryable_ = false;
     sessionInterface_ = nullptr;
     sessionDevice_ = nullptr;
+#if defined(_WIN32)
+    sessionDeviceD3D12_ = nullptr;
+#endif
     sessionInstance_ = VK_NULL_HANDLE;
+    backend_ = Backend::None;
 }
 } // namespace gpu::dlss
 #endif

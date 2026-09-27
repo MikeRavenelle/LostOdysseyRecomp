@@ -47,10 +47,12 @@ namespace gpu::video
     // Shutdown only: device loss authorizes disposal, not successful completion.
     // An unprovable drain terminates without running native resource destructors.
     void DrainGpuForShutdown();
-    // Uses the backend's native Vulkan queue path so the result is observable.
-    // submissionSerial advances only after vkQueueSubmit returns VK_SUCCESS.
+    // Native queue submission. The serial advances only after the backend's
+    // checked submission and fence signal succeed. D3D12 may execute commands
+    // before a later Signal failure; that case requires retaining their uses.
     bool SubmitRendererBatch(const plume::RenderCommandList* const* lists, uint32_t count,
-        plume::RenderCommandFence* fence, uint64_t& submissionSerial, int32_t& rawVkResult);
+        plume::RenderCommandFence* fence, uint64_t& submissionSerial, int32_t& rawResult,
+        bool* executionMayBeInFlight = nullptr);
 #endif
 
     // Finite startup transaction: window -> device/caps -> presentation -> renderer.

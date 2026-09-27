@@ -117,8 +117,8 @@ void CheckDefaultAndMenu()
     const auto running = DescribeDlssRuntime(initial, {}, nullptr);
     Require(running.phase == DlssEffectPhase::Inactive && !gpu::upscaling::IsDlssConsumer(running.consumer),
         "no plan is not an active DLSS consumer");
-    Require(ClassifyDlssMenu(running, Upscaler::Dlss, DlssQuality::Quality, Backend::D3D12) == DlssMenuStatus::NeedsVulkanRestart,
-        "DLSS on the committed D3D12 device needs a Vulkan restart");
+    Require(ClassifyDlssMenu(running, Upscaler::Dlss, DlssQuality::Quality, Backend::D3D12) == DlssMenuStatus::TemporaryFallback,
+        "an uninitialized D3D12 device waits for capability");
     Require(ClassifyDlssMenu(running, Upscaler::Dlss, DlssQuality::Quality, Backend::Vulkan) == DlssMenuStatus::BackendChangePending,
         "an edited Vulkan backend is not detected until it is the committed device");
 }
@@ -219,6 +219,23 @@ void CheckEnableCycle()
         !effect.execution, "turning DLSS on again uses the cached ready sizing and waits for a submission");
 }
 
+void CheckD3D12Execution()
+{
+    const auto device = Device(Backend::D3D12, 30, true, true);
+    auto sizing = ReadySizing(30, 2560, 1440, 1707, 960);
+    PlannerState planner;
+    const auto plan = planner.Begin(Input(Upscaler::Dlss, device, &sizing));
+    Require(plan.consumer == TemporalConsumer::DlssSr && plan.width == 1707 && plan.height == 960,
+        "capable D3D12 device uses NGX sizing");
+    auto effect = DescribeDlssRuntime(device, planner.Observe(), &sizing);
+    Require(effect.phase == DlssEffectPhase::AwaitingExecution, "D3D12 capability alone does not claim execution");
+    Require(planner.ReportExecution({plan, 1, 7, gpu::frame_plan::DlssExecutionOutcome::Submitted}), "D3D12 accepted submission is recorded");
+    effect = DescribeDlssRuntime(device, planner.Observe(), &sizing);
+    Require(effect.phase == DlssEffectPhase::Active &&
+        ClassifyDlssMenu(effect, Upscaler::Dlss, DlssQuality::Quality, Backend::D3D12) == DlssMenuStatus::Active,
+        "D3D12 submitted output is shown as active without a Vulkan restart");
+}
+
 void CheckFallbackStates()
 {
     const auto output = gpu::upscaling::OutputRegion{{2560, 1440}, 0, 0, 2560, 1440};
@@ -228,10 +245,10 @@ void CheckFallbackStates()
     SizingCache d3dCache;
     const auto d3dPlan = d3dPlanner.Begin(Input(Upscaler::Dlss, d3d, nullptr));
     auto effect = ReadEffect(d3dPlanner, d3dCache);
-    Require(!gpu::upscaling::IsDlssConsumer(d3dPlan.consumer) && effect.phase == DlssEffectPhase::NeedsVulkanRestart,
-        "a DLSS request on D3D12 is a restart requirement, not an active consumer");
-    Require(ClassifyDlssMenu(effect, Upscaler::Dlss, DlssQuality::Quality, Backend::D3D12) == DlssMenuStatus::NeedsVulkanRestart,
-        "the committed D3D12 backend tells the menu to switch to Vulkan and restart");
+    Require(!gpu::upscaling::IsDlssConsumer(d3dPlan.consumer) && effect.phase == DlssEffectPhase::DeviceUnavailable,
+        "D3D12 without DLSS capability is device unavailable");
+    Require(ClassifyDlssMenu(effect, Upscaler::Dlss, DlssQuality::Quality, Backend::D3D12) == DlssMenuStatus::DeviceUnavailable,
+        "the menu reports missing D3D12 device capability");
     Require(ClassifyDlssMenu(effect, Upscaler::Dlss, DlssQuality::Dlaa, Backend::Vulkan) == DlssMenuStatus::BackendChangePending,
         "choosing Vulkan in the editor does not permanently disable DLSS before restart");
 
@@ -245,7 +262,7 @@ void CheckFallbackStates()
     staleDlss.plan.height = 960;
     staleDlss.plan.output = output;
     auto ready = ReadySizing(3, output.width, output.height, 1707, 960);
-    Require(DescribeDlssRuntime(d3d, staleDlss, &ready).phase == DlssEffectPhase::NeedsVulkanRestart,
+    Require(DescribeDlssRuntime(d3d, staleDlss, &ready).phase == DlssEffectPhase::DeviceUnavailable,
         "a stale DLSS consumer on D3D12 is not reported as enabled");
 
     const auto unavailable = Device(Backend::Vulkan, 4, true, false);
@@ -381,6 +398,7 @@ int main()
     CheckDefaultAndMenu();
     CheckSnapshotConsistency();
     CheckEnableCycle();
+    CheckD3D12Execution();
     CheckFallbackStates();
     CheckPlanObservationConsistency();
     CheckPublicationSource();

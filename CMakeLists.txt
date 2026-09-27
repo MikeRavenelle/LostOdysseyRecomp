@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(LostOdysseyRecomp VERSION 0.7.1 LANGUAGES C CXX)
+project(LostOdysseyRecomp VERSION 0.7.2 LANGUAGES C CXX)
 include(GNUInstallDirs)
 # Source version, not a release/commit or clean-checkout assertion.
 # Capture before nested projects can replace PROJECT_VERSION in their scope.
@@ -23,6 +23,7 @@ endif()
 # an explicit LO_TARGET_ARCH comes later on the command line and wins.
 include(cmake/LoOptimization.cmake)
 include(cmake/LoDlss.cmake)
+include(cmake/LoStreamline.cmake)
 include(cmake/LoFsr.cmake)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 

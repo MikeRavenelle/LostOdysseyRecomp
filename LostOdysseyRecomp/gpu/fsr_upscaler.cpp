@@ -3,6 +3,7 @@
 #include "dlss_evaluate_capture.h"
 #include "fsr_mask_policy.h"
 #include "sr_hybrid_mask.h"
+#include "fsr_upscaler_d3d12_backend.h"
 
 #if defined(LO_GPU_PLUME)
 #include <plume_vulkan.h>
@@ -446,6 +447,23 @@ Controller::~Controller() {
 #endif
 }
 
+Status Controller::EnsureSession(plume::D3D12Device& device, const Config& config) {
+#if defined(LO_HAS_FSR_D3D12) && LO_HAS_FSR_D3D12
+    if (impl_->device) return Status::NeedsReconfigure;
+    if (!dx12_) dx12_ = std::make_unique<D3D12Backend>();
+    return dx12_->EnsureSession(device, config);
+#else
+    (void)device; (void)config;
+    return Status::Unavailable;
+#endif
+}
+
+Attempt Controller::RecordIsolated(plume::D3D12CommandList& commands, const Config& config,
+    const temporal::TemporalFrameInputs& inputs, const FrameMetadata& frame,
+    plume::D3D12Texture& output, dlss::EvaluateCapture* capture) {
+    return dx12_ ? dx12_->RecordIsolated(commands, config, inputs, frame, output, capture) : Attempt{};
+}
+
 std::optional<resolution::Size> RecommendedRenderSize(resolution::Size output,
     upscaling::FsrQuality quality) {
     if (!output.width || !output.height || !upscaling::KnownFsrQuality(quality)) return std::nullopt;
@@ -461,6 +479,7 @@ std::optional<resolution::Size> RecommendedRenderSize(resolution::Size output,
 
 Status Controller::EnsureSession(plume::VulkanDevice& device, const Config& config) {
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
+    if (dx12_ && dx12_->HasFeatureState()) return Status::NeedsReconfigure;
     const auto started = std::chrono::steady_clock::now();
     if (!device.vk || !device.physicalDevice || !config.renderWidth || !config.renderHeight ||
         !config.outputWidth || !config.outputHeight || !config.deviceEpoch ||
@@ -857,6 +876,7 @@ Attempt Controller::RecordIsolated(plume::VulkanCommandList& commands, const Con
 }
 
 void Controller::OnBatchSubmitted(uint64_t useId, uint64_t serial) {
+    if (dx12_) dx12_->OnBatchSubmitted(useId, serial);
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
     if (!useId || !serial || serial <= impl_->completed) return;
     for (auto& use : impl_->uses) if (use.id == useId && !use.serial) {
@@ -869,6 +889,7 @@ void Controller::OnBatchSubmitted(uint64_t useId, uint64_t serial) {
 #endif
 }
 void Controller::OnBatchDiscarded(uint64_t useId) {
+    if (dx12_) dx12_->OnBatchDiscarded(useId);
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
     auto it = std::find_if(impl_->uses.begin(), impl_->uses.end(),
         [useId](const Impl::Use& use) { return use.id == useId && !use.serial; });
@@ -885,6 +906,7 @@ void Controller::OnBatchDiscarded(uint64_t useId) {
 #endif
 }
 void Controller::ReleaseCompletedThrough(uint64_t serial) {
+    if (dx12_) dx12_->ReleaseCompletedThrough(serial);
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
     impl_->completed = std::max(impl_->completed, serial);
     auto it = impl_->uses.begin();
@@ -902,19 +924,23 @@ void Controller::ReleaseCompletedThrough(uint64_t serial) {
 }
 bool Controller::HasFeatureState() const {
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
-    return impl_->device != nullptr || !impl_->uses.empty();
+    return impl_->device != nullptr || !impl_->uses.empty() || (dx12_ && dx12_->HasFeatureState());
 #else
-    return false;
+    return dx12_ && dx12_->HasFeatureState();
 #endif
 }
-const Diagnostics& Controller::LastDiagnostics() const { return impl_->diagnostics; }
+const Diagnostics& Controller::LastDiagnostics() const {
+    return dx12_ && dx12_->HasFeatureState() ? dx12_->LastDiagnostics() : impl_->diagnostics;
+}
 void Controller::ReleaseFeatureAfterGpuDrain() {
+    if (dx12_) dx12_->ReleaseFeatureAfterGpuDrain();
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
     if (impl_->uses.empty()) impl_->Destroy();
 #endif
 }
 void Controller::ShutdownAfterGpuDrain() { ReleaseFeatureAfterGpuDrain(); }
 void Controller::AbandonUsesAfterDeviceLoss() {
+    if (dx12_) dx12_->AbandonUsesAfterDeviceLoss();
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
     // The caller still owns a live VkDevice; after loss, no submitted work can
     // complete successfully. Tear down before that device is destroyed.

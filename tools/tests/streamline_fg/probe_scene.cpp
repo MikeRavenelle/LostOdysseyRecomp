@@ -90,11 +90,16 @@ void Scene::Continuation(RenderCommandList& list, VkImage swapImage, VkExtent2D 
     blit.dstOffsets[1] = {int32_t(extent.width), int32_t(extent.height), 1};
     vkCmdBlitImage(cmd, static_cast<VulkanTexture*>(hudless.get())->vk, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         swapImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+    // Experimental handoff for the application-side Streamline proxy image.
+    // The pinned SDK trace copies this image as TRANSFER_SRC in its pacer, while
+    // the old host PRESENT_SRC transition produced layout validation failures.
+    // This candidate follows that observed input state; it is not an established
+    // SDK contract or proof of a validation-clean generated/displayed frame.
     before.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    before.dstAccessMask = 0;
+    before.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     before.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    before.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &before);
+    before.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &before);
     list.end();
 }
 void Scene::Tags(sl::Resource (&resources)[4], sl::ResourceTag (&tags)[4]) const {

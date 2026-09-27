@@ -8,6 +8,10 @@ set(LO_ENABLE_FSR ON CACHE BOOL "" FORCE)
 set(LO_REQUIRE_FSR ON CACHE BOOL "" FORCE)
 set(LO_FSR_SDK_ROOT "${LO_REPO_ROOT}/.cache/deps/fidelityfx-sdk-v1.1.4" CACHE PATH "")
 set(LO_FSR_SHADER_DIR "${LO_REPO_ROOT}/out/fsr-shaders-vk" CACHE PATH "")
+if(WIN32)
+    set(LO_FSR_DX12_SHADER_DIR "${LO_REPO_ROOT}/out/fsr-dx12-shaders" CACHE PATH "")
+    set(LO_FSR_DX12_ADAPTER_DIR "${LO_REPO_ROOT}/out/fsr-dx12-adapter" CACHE PATH "")
+endif()
 include("${LO_REPO_ROOT}/cmake/LoFsr.cmake")
 add_subdirectory("${LO_REPO_ROOT}/thirdparty/plume" plume)
 
@@ -18,7 +22,8 @@ endif()
 
 add_executable(LoFsrAdapterGpuTest EXCLUDE_FROM_ALL
     fsr_adapter_gpu_test.cpp
-    "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp")
+    "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
+    "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler_d3d12.cpp")
 target_compile_features(LoFsrAdapterGpuTest PRIVATE cxx_std_20)
 target_compile_definitions(LoFsrAdapterGpuTest PRIVATE LO_GPU_PLUME=1 NOMINMAX)
 target_include_directories(LoFsrAdapterGpuTest PRIVATE "${LO_REPO_ROOT}/LostOdysseyRecomp")
@@ -32,7 +37,8 @@ add_test(NAME LoFsrMaskPolicyTest COMMAND LoFsrMaskPolicyTest)
 add_test(NAME LoFsrAdapterP2 COMMAND LoFsrAdapterGpuTest --p2-only)
 add_executable(LoFsrCrossSubmitGpuTest EXCLUDE_FROM_ALL
     fsr_cross_submit_gpu_test.cpp
-    "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp")
+    "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
+    "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler_d3d12.cpp")
 target_compile_features(LoFsrCrossSubmitGpuTest PRIVATE cxx_std_20)
 target_compile_definitions(LoFsrCrossSubmitGpuTest PRIVATE LO_GPU_PLUME=1 NOMINMAX)
 target_include_directories(LoFsrCrossSubmitGpuTest PRIVATE "${LO_REPO_ROOT}/LostOdysseyRecomp")
@@ -61,6 +67,16 @@ target_compile_definitions(LoFsrColorRoundtripGpuTest PRIVATE NOMINMAX)
 target_include_directories(LoFsrColorRoundtripGpuTest PRIVATE "${LO_FSR_SHADER_DIR}")
 target_link_libraries(LoFsrColorRoundtripGpuTest PRIVATE plume)
 if(WIN32)
+    add_executable(LoFsrD3D12AdapterGpuTest EXCLUDE_FROM_ALL
+        fsr_d3d12_adapter_gpu_test.cpp
+        "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
+        "${LO_REPO_ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler_d3d12.cpp")
+    target_compile_features(LoFsrD3D12AdapterGpuTest PRIVATE cxx_std_20)
+    target_compile_definitions(LoFsrD3D12AdapterGpuTest PRIVATE LO_GPU_PLUME=1 NOMINMAX)
+    target_include_directories(LoFsrD3D12AdapterGpuTest PRIVATE "${LO_REPO_ROOT}/LostOdysseyRecomp")
+    target_link_libraries(LoFsrD3D12AdapterGpuTest PRIVATE plume d3d12 dxgi)
+    lo_enable_fsr(LoFsrD3D12AdapterGpuTest)
+    add_test(NAME LoFsrD3D12AdapterGpuTest COMMAND LoFsrD3D12AdapterGpuTest)
     target_compile_options(LoFsrCrossSubmitGpuTest PRIVATE /utf-8)
     target_link_libraries(LoFsrCrossSubmitGpuTest PRIVATE d3d12 dxgi)
     target_compile_options(LoFsrRasterEdgeGpuTest PRIVATE /utf-8)

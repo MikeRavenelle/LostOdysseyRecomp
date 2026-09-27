@@ -2,9 +2,9 @@ name: SR hybrid regression
 on:
   push:
     branches: [main, fix/issue-64-hybrid-motion]
-    paths: ['LostOdysseyRecomp/gpu/**', 'tools/tests/*test.cpp', 'tools/tests/motion_replay/**', 'tools/tests/sr_hybrid/**', '.github/workflows/sr-hybrid-regression.yml']
+    paths: ['LostOdysseyRecomp/gpu/**', 'tools/tests/*test.cpp', 'tools/tests/frame_generation_handoff_renderer.inc', 'tools/tests/motion_replay/**', 'tools/tests/sr_hybrid/**', '.github/workflows/sr-hybrid-regression.yml']
   pull_request:
-    paths: ['LostOdysseyRecomp/gpu/**', 'tools/tests/*test.cpp', 'tools/tests/motion_replay/**', 'tools/tests/sr_hybrid/**', '.github/workflows/sr-hybrid-regression.yml']
+    paths: ['LostOdysseyRecomp/gpu/**', 'tools/tests/*test.cpp', 'tools/tests/frame_generation_handoff_renderer.inc', 'tools/tests/motion_replay/**', 'tools/tests/sr_hybrid/**', '.github/workflows/sr-hybrid-regression.yml']
 permissions:
   contents: read
 concurrency:
@@ -27,6 +27,9 @@ jobs:
           cmake -S tools/tests/sr_hybrid -B out/hybrid-cpu -DCMAKE_BUILD_TYPE=Release
           cmake --build out/hybrid-cpu --config Release --parallel 2
           ctest --test-dir out/hybrid-cpu -C Release -V
+          cmake -S tools/tests/frame_generation_present -B out/fg-present-cpu -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/fg-present-cpu --config Release --parallel 2
+          ctest --test-dir out/fg-present-cpu -C Release -V
       - name: ASan and UBSan
         if: runner.os == 'Linux'
         run: |
@@ -43,7 +46,7 @@ jobs:
       - name: Install public compiler and software Vulkan dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ninja-build libx11-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools spirv-tools libzstd-dev
+          sudo apt-get install -y ninja-build libx11-dev libvulkan-dev mesa-vulkan-drivers libsdl2-dev vulkan-validationlayers glslang-tools spirv-tools libzstd-dev
           git submodule update --init --depth 1 thirdparty/plume tools/XenosRecomp tools/XenonRecomp thirdparty/unordered_dense
           git -C thirdparty/plume apply ../../tools/patches/plume-lostodyssey.patch
           git -C thirdparty/plume submodule update --init --depth 1 contrib/volk contrib/Vulkan-Headers contrib/VulkanMemoryAllocator
@@ -55,8 +58,8 @@ jobs:
           tar -xzf out/dxc.tar.gz -C out/dxc
       - name: Compile production renderer boundary and actual GPU fixtures
         run: |
-          cmake -S tools/tests/motion_replay -B out/hybrid-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release -DLO_ENABLE_DLSS=OFF -DLO_ENABLE_FSR=OFF
-          cmake --build out/hybrid-gpu --target sr_hybrid_motion_gpu_test motion_renderer_compile motion_replay_gpu_test temporal_aa_regression temporal_frame_inputs_test native_dlss_p2_routing_test motion_vector_test LoNativeDlssRendererTest LoDlssEvaluateCaptureContractTest --parallel 2
+          cmake -S tools/tests/motion_replay -B out/hybrid-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release -DLO_ENABLE_DLSS=OFF -DLO_ENABLE_FSR=OFF -DLO_P2_VIDEO_COMPILE_CHECK=ON
+          cmake --build out/hybrid-gpu --target sr_hybrid_motion_gpu_test frame_generation_snapshot_gpu_test motion_renderer_compile p2_video_compile motion_replay_gpu_test temporal_aa_regression temporal_frame_inputs_test native_dlss_p2_routing_test motion_vector_test LoNativeDlssRendererTest LoDlssEvaluateCaptureContractTest --parallel 2
       - name: Execute Vulkan, renderer and capture regressions
         shell: bash
         run: |
@@ -67,7 +70,7 @@ jobs:
           mkdir -p out/vulkan-settings
           printf 'khronos_validation.debug_action = VK_DBG_LAYER_ACTION_LOG_MSG\nkhronos_validation.report_flags = error\n' > out/vulkan-settings/vk_layer_settings.txt
           export VK_LAYER_SETTINGS_PATH="$PWD/out/vulkan-settings"
-          ctest --test-dir out/hybrid-gpu -V -R '^(sr_hybrid_motion_gpu|motion_gpu|motion_cpu|temporal_aa_legacy|temporal_frame_inputs|native_dlss_p2_routing|LoNativeDlssRendererTest|hybrid_capture_metadata)$' 2>&1 | tee out/hybrid-vulkan.log
+          ctest --test-dir out/hybrid-gpu -V -R '^(sr_hybrid_motion_gpu|frame_generation_snapshot_gpu|frame_generation_snapshot_renderer|frame_generation_handoff_renderer|motion_gpu|motion_cpu|temporal_aa_legacy|temporal_frame_inputs|native_dlss_p2_routing|LoNativeDlssRendererTest|hybrid_capture_metadata)$' 2>&1 | tee out/hybrid-vulkan.log
           if grep -E 'Validation Error|VUID-' out/hybrid-vulkan.log; then exit 1; fi
       - name: Compile both SDK adapters with pinned production headers
         run: |

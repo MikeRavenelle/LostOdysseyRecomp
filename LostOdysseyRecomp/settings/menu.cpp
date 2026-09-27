@@ -274,8 +274,6 @@ std::wstring DlssNotice()
             execution->plan.geometryEpoch == running.geometryEpoch;
         if (running.device.gpuWorkStopped)
             fsrText = FsrFallbackSentence(gpu::frame_plan::DlssEffectReason::GpuWorkStopped);
-        else if (running.device.backend != gpu::backend::Backend::Vulkan)
-            fsrText = Tr(L"FSR needs Vulkan and a restart.", L"FSR 需要 Vulkan，並在重新啟動後才會使用。");
         else if (!running.device.deviceReady)
             fsrText = Tr(L"FSR: graphics device is not ready.", L"FSR：圖形裝置尚未就緒。");
         else if (!running.device.fsrAvailable)
@@ -321,9 +319,6 @@ std::wstring DlssNotice()
         appliedQuality = gpu::upscaling::NormalizeDlssQuality(running.plannedQuality);
     if (runningDlss && edit.upscaler != gpu::upscaling::Upscaler::Dlss)
         text += std::wstring(L" ") + (edit.upscaler == gpu::upscaling::Upscaler::Fsr ? Tr(L"The FSR choice is not applied yet.", L"FSR 選項尚未套用。") : Tr(L"The Off choice is not applied yet.", L"關閉選項尚未套用。"));
-    else if (!runningDlss && edit.upscaler == gpu::upscaling::Upscaler::Dlss && !backendPending &&
-             running.device.backend != gpu::backend::Backend::Vulkan)
-        text += std::wstring(L" ") + Tr(L"DLSS needs Vulkan and a restart.", L"DLSS 需要 Vulkan，並在重新啟動後才會使用。");
     else if (!runningDlss && edit.upscaler == gpu::upscaling::Upscaler::Dlss && !backendPending)
         text += std::wstring(L" ") + Tr(L"The DLSS choice is not applied yet.", L"DLSS 選項尚未套用。");
     else if (runningDlss && edit.upscaler == gpu::upscaling::Upscaler::Dlss && appliedQuality &&
@@ -542,8 +537,8 @@ void Publish(uint8_t *base, uint32_t config)
             break;
         case GraphicsRow::AntiAliasing:
             if (edit.upscaler == gpu::upscaling::Upscaler::Fsr)
-                next.help = Tr(L"FSR 3.1 needs Vulkan and an FSR-enabled build. Unsupported scenes use normal rendering.",
-                              L"FSR 3.1 需要 Vulkan 與包含 FSR 的版本。不支援的場景使用常規渲染。");
+                next.help = Tr(L"FSR 3.1 needs D3D12 or Vulkan and an FSR-enabled build. Unsupported scenes use normal rendering.",
+                              L"FSR 3.1 需要 D3D12 或 Vulkan 與包含 FSR 的版本。不支援的場景使用常規渲染。");
             else if (edit.upscaler == gpu::upscaling::Upscaler::Dlss)
                 next.help = Tr(L"Saves the DLSS preference. The status line shows the latest DLSS result.",
                               L"儲存 DLSS 偏好。狀態列顯示最新的 DLSS 結果。");

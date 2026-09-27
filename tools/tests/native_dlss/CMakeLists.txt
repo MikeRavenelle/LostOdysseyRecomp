@@ -199,6 +199,20 @@ if(WIN32)
 endif()
 lo_enable_dlss(LoNativeDlssExecutionTest)
 
+if(WIN32)
+    add_executable(LoNativeDlssD3D12ExecutionTest EXCLUDE_FROM_ALL
+        native_dlss_d3d12_execution_test.cpp
+        ${LO_NATIVE_DLSS_ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp
+        ${LO_NATIVE_DLSS_ROOT}/LostOdysseyRecomp/gpu/dlss_ngx_d3d12.cpp)
+    target_include_directories(LoNativeDlssD3D12ExecutionTest PRIVATE
+        ${LO_NATIVE_DLSS_ROOT}/LostOdysseyRecomp
+        ${LO_NATIVE_DLSS_ROOT}/thirdparty/plume)
+    target_compile_features(LoNativeDlssD3D12ExecutionTest PRIVATE cxx_std_20)
+    target_compile_definitions(LoNativeDlssD3D12ExecutionTest PRIVATE LO_GPU_PLUME=1 NOMINMAX)
+    target_link_libraries(LoNativeDlssD3D12ExecutionTest PRIVATE plume d3d12 dxgi)
+    lo_enable_dlss(LoNativeDlssD3D12ExecutionTest)
+endif()
+
 
 if(UNIX)
     if(PLUME_SDL_VULKAN_ENABLED)
@@ -233,4 +247,8 @@ if(BUILD_TESTING)
     add_test(NAME LoNativeDlssReportTest COMMAND LoNativeDlssReportTest)
     add_test(NAME LoNativeDlssExecutionTest COMMAND LoNativeDlssExecutionTest)
     set_tests_properties(LoNativeDlssExecutionTest PROPERTIES SKIP_RETURN_CODE 77)
+    if(WIN32)
+        add_test(NAME LoNativeDlssD3D12ExecutionTest COMMAND LoNativeDlssD3D12ExecutionTest)
+        set_tests_properties(LoNativeDlssD3D12ExecutionTest PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 endif()

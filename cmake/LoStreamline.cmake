@@ -1,4 +1,5 @@
-# Standalone FG probe only. SDK files are supplied locally and never fetched at configure time.
+# SDK files are supplied locally and never fetched at configure time.
+option(LO_ENABLE_STREAMLINE_FG "Build experimental Windows Vulkan DLSS frame generation" OFF)
 set(LO_STREAMLINE_SDK_ROOT "" CACHE PATH "Extracted official NVIDIA Streamline v2.14.1 SDK")
 function(lo_streamline_probe target)
     if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -16,4 +17,24 @@ function(lo_streamline_probe target)
     endif()
     target_include_directories(${target} PRIVATE "${LO_STREAMLINE_SDK_ROOT}/include")
     target_compile_definitions(${target} PRIVATE LO_STREAMLINE_SDK_VERSION="2.14.1")
+endfunction()
+
+function(lo_enable_streamline_fg target)
+    if(LO_ENABLE_STREAMLINE_FG)
+        if(NOT LO_BUILD_GPU OR NOT LO_DLSS_SDK_AVAILABLE)
+            message(FATAL_ERROR "Experimental Streamline FG requires the GPU backend and native DLSS SDK")
+        endif()
+        lo_streamline_probe(${target})
+        # 2.14.1's C++23 branch aliases a function as a type. Keep the pinned
+        # SDK untouched and fix the two dependent headers in the build tree.
+        set(_compat "${CMAKE_CURRENT_BINARY_DIR}/streamline-compat")
+        file(MAKE_DIRECTORY "${_compat}")
+        file(READ "${LO_STREAMLINE_SDK_ROOT}/include/sl_pcl.h" _pcl)
+        string(REPLACE "using to_underlying = std::to_underlying;" "using std::to_underlying;" _pcl "${_pcl}")
+        file(WRITE "${_compat}/sl_pcl.h" "${_pcl}")
+        configure_file("${LO_STREAMLINE_SDK_ROOT}/include/sl_reflex.h" "${_compat}/sl_reflex.h" COPYONLY)
+        target_include_directories(${target} BEFORE PRIVATE "${_compat}")
+        target_compile_definitions(${target} PRIVATE LO_ENABLE_STREAMLINE_FG=1)
+        target_link_libraries(${target} PRIVATE wintrust crypt32)
+    endif()
 endfunction()

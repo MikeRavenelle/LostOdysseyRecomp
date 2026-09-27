@@ -21,7 +21,7 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 
 ### 超分辨率（DLSS 与 FSR）
 
-Windows 与 Linux 支持实验性的 NVIDIA DLSS（超分辨率与 DLAA）和 AMD FSR 3.1 超分辨率选项，技术细节与验证边界详见[开发状态](docs/STATUS.md)。当 DLSS 或 DLAA 不可用或被禁用时，已保存的 TAA 选择自动回退至 SMAA，其余抗锯齿选择保持不变。
+Windows 在 Direct3D 12 与 Vulkan 上提供实验性的 DLSS/FSR 超分，Linux 使用 Vulkan 路径。对象运动不可用时，可使用相机／深度重建提供有界的 hybrid motion 回退。当 DLSS 或 DLAA 不可用或被禁用时，已保存的 TAA 选择自动回退至 SMAA，其余抗锯齿选择保持不变。更广场景、混合 DPI／全屏行为和玩家验收仍待完成，详见[开发状态](docs/STATUS.md)。
 
 ### 自动 PlayStation 手柄按键提示
 
@@ -33,14 +33,14 @@ Windows 与 Linux 支持实验性的 NVIDIA DLSS（超分辨率与 DLAA）和 AM
 
 ## 路线图
 
-**v0.7.1** 版本已发布，交付了游戏内光盘与 DLC 重新导入以及官方 Linux Flatpak 独立打包（自 v0.8.0 规划提前交付），并承接了 v0.7.0 的性能优化、PlayStation 手柄按键提示、v1 图像 Mod API 以及原生 DLSS/DLAA 和 FSR 超分辨率。已规划至 **v0.8.0** 的路线图目标包括 DLSS 插帧（保留 Windows Vulkan 下固定 2× DLSS FG，并纳入 D3D12 DLSS FG）、动态多帧生成（动态 MFG；目标 API、平台或生成倍率不作预先设定）、独立 FSR 插帧、原生独立 120 FPS 候选评估（`LO_EXPERIMENTAL_120=1`，评估原生呈现节奏）、移除既有 PM4 数据包转换层、Linux AArch64、macOS AArch64（Apple Silicon）以及实验性 Android 支持。上述其余内容均属于未完成路线图规划，不宣称当前已有实现、测试验证、用户验收或发布交付；开发顺序见[路线图](docs/ROADMAP.zh-CN.md)。
+**v0.7.2** 发布候选承接 v0.7.1 的游戏内光盘与 DLC 重新导入、官方 Linux Flatpak 独立打包，以及 v0.7.0 的性能优化、PlayStation 手柄按键提示、v1 图像 Mod API 和原生 DLSS/DLAA 与 FSR 超分辨率。已规划至 **v0.8.0** 的路线图目标包括 DLSS 插帧（保留 Windows Vulkan 下固定 2× DLSS FG，并纳入 D3D12 DLSS FG）、动态多帧生成（动态 MFG；目标 API、平台或生成倍率不作预先设定）、独立 FSR 插帧、原生独立 120 FPS 候选评估（`LO_EXPERIMENTAL_120=1`，评估原生呈现节奏）、移除既有 PM4 数据包转换层、Linux AArch64、macOS AArch64（Apple Silicon）以及实验性 Android 支持。v0.7.2 候选新增有界的 Windows D3D12 DLSS/FSR 超分、DLAA 尺寸恢复，以及原生物体运动不可用时的相机／深度 hybrid motion；当前等待 CI 和发布，更广场景与玩家验收仍待完成。上述其余内容均属于未完成路线图规划，不宣称当前已有实现、测试验证、用户验收或发布交付；开发顺序见[路线图](docs/ROADMAP.zh-CN.md)。
 
 历史版本发布说明与详细变更记录见[更新日志](CHANGELOG.md)。
 
 ## 开始游戏
 
 ### Windows
-1. 从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** Windows 发布包（`LostOdysseyRecomp-windows-x64-v0.7.1.zip`），放在可写入的文件夹中。
+1. CI 和发布完成后，从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** v0.7.2 候选 Windows 包（`LostOdysseyRecomp-windows-x64-v0.7.2.zip`），放在可写入的文件夹中。
 2. **运行 `LostOdysseyRecomp.exe` 并按提示导入游戏文件**。支持已提取文件夹、`default.xex`、XDVDFS ISO 或 GOD 容器。
 3. **选择语言和图形设置**，设置与着色器预编译完成后继续进入游戏。
 
@@ -49,12 +49,12 @@ Windows 与 Linux 支持实验性的 NVIDIA DLSS（超分辨率与 DLAA）和 AM
   ```bash
   flatpak --system install flathub org.freedesktop.Platform//26.08
   ```
-  从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`）并执行安装：
+  CI 和发布完成后，从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载 v0.7.2 独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.2.flatpak`）并执行安装：
   ```bash
-  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.1.flatpak
+  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.2.flatpak
   flatpak run io.github.freefrank.LostOdysseyRecomp
   ```
-- **AppImage**：下载 `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
+- **AppImage**：CI 和发布完成后下载 `LostOdysseyRecomp-linux-x64-v0.7.2.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
 
 发布包不需要安装 Python 或 Visual Studio。后续启动会复用着色器缓存；更新程序时请保留存档和档案文件夹。
 
@@ -83,7 +83,7 @@ Windows 与 Linux 支持实验性的 NVIDIA DLSS（超分辨率与 DLAA）和 AM
 | 游戏导入器 | 支持文件夹、XEX、ISO 和 GOD；原始资源不改动，暂存复制会在发布前检查最终写入结果 |
 | 首次启动设置 | 游戏初始化前选择语言和图形选项 |
 | 语言设置 | 英语、日语、韩语、繁体中文、简体中文界面，以及游戏语言选择 |
-| 图形设置 | Auto／手动内部分辨率（配置文件／兼容回退）、含宽屏开关的 16:9 / 21:9 分辨率预设、Off／FXAA／SMAA／实验性 TAA、缩放技术选项（关／DLSS，含质量／平衡／性能／DLAA）、标准／高质量滤波、30／60 FPS 及输出／显示控制；全屏和跨 DPI 仍需更多测试 |
+| 图形设置 | Auto／手动内部分辨率（配置文件／兼容回退）、含宽屏开关的 16:9 / 21:9 分辨率预设、Off／FXAA／SMAA／实验性 TAA、缩放技术选项（关／DLSS／FSR 3.1，含画质档位）、标准／高质量滤波、30／60 FPS 及输出／显示控制；全屏、跨 DPI 和更广超分场景仍需更多测试 |
 | 设置菜单 | 原版字体、支持长列表滚动的菜单风格；图形设置单击保存并应用，支持按 Start/Enter 聚焦“保存”且不立即保存，需要重启时选择 Now/Later |
 | 着色器预编译 | 内置便携式 Vulkan 着色器包（.lospv）、多线程自适应编译、即时跳过与缓存复用 |
 | CPU 使用率 | 减少不必要的轮询，复用渲染计算 |
