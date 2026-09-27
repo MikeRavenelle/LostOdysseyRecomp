@@ -1,4 +1,4 @@
-name: Validate and apply P0 P4 development patch
+name: Finalize reviewed P0 P4 development changes
 on:
   push:
     branches: [fix/p0-shutdown-p4-continuity-20260927]
@@ -6,35 +6,7 @@ on:
 permissions:
   contents: read
 jobs:
-  contracts:
-    if: github.repository == 'freefrank/LostOdysseyRecomp'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Apply checksum-verified source patch
-        run: python tools/fg-p0-p4-patch/apply.py
-      - name: Configure GPU-free contracts
-        run: cmake -S tools/tests/streamline_fg -B build/fg-contracts -DLO_STREAMLINE_FG_CPU_ONLY=ON
-      - name: Build
-        run: cmake --build build/fg-contracts --config Release --parallel 2
-      - name: Test
-        run: ctest --test-dir build/fg-contracts -C Release --output-on-failure
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: p0-p4-contracts-${{ matrix.os }}
-          path: build/fg-contracts/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-          retention-days: 7
-  publish:
-    needs: contracts
+  finalize:
     if: github.repository == 'freefrank/LostOdysseyRecomp' && github.ref == 'refs/heads/fix/p0-shutdown-p4-continuity-20260927'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -42,12 +14,43 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Apply validated source and fast-forward development branch
+        with:
+          fetch-depth: 2
+      - name: Apply bounded review adjustment and documentation links
         shell: bash
         run: |
-          python tools/fg-p0-p4-patch/apply.py
+          test "$(git rev-parse HEAD^)" = "adcbbb886273b4473789fae180754610fa6efb5e"
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          def blob(text):
+              data = text.encode('utf-8')
+              return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+          p = Path('LostOdysseyRecomp/gpu/streamline_vulkan_dispatch.cpp')
+          text = p.read_text(encoding='utf-8')
+          assert blob(text) == '64ee3dca069e77c3f93e3276b91f473fa7a18b05'
+          start = text.index('    featureSupported_ = true;', text.index('bool VulkanDispatch::QueryDevice'))
+          end = text.index("    // Plume's volkLoadInstance", start)
+          probe = text[start:end]
+          text = text[:start] + text[end:]
+          anchor = '    proxyCreateDevice_ = reinterpret_cast<PFN_vkCreateDevice>'
+          assert text.count(anchor) == 1
+          text = text.replace(anchor, probe + anchor, 1)
+          assert blob(text) == '54d4e253b5f7e941c33ab1a1970c5e9d55e9de70'
+          p.write_text(text, encoding='utf-8')
+          additions = [
+              ('docs/notes/v0.8.0-p0-p1-p4-development.zh-CN.md', '21552ed9628a745d6b950084828fb9624bdfef7c', '\n\n## 2026-09-27 P0/P4后续实现\n\n未提交输入取消、GPU owner退出清理、NGX清理错误传播、FSR+FG上游接线、实际adapter probe与连续性统计已补入开发分支。实现范围和9/9 CPU合同验证见[本轮记录](v0.8.0-p0-p4-cleanup-continuity-20260927.md)。现有单场景连续启用证据保留；新代码仍需Windows构建、native失败注入、三种组合和真实窗口/路线验证。P0 Gate 1及P4全程/显示验收状态不变。\n'),
+              ('docs/notes/v0.8.0-fg-checked-completion-20260927.md', 'c5c95928edd115198d087db4550e25aeb08f525d', '\n\n## 后续代码补齐入口\n\n上述“余项”记录的是本批实现与当时验证状态。后续开发已补取消通知、SDL关闭/设置重启的GPU owner清理、NGX错误传播、FSR+FG生产接线、adapter probe与连续性统计，见[2026-09-27 P0/P4后续记录](v0.8.0-p0-p4-cleanup-continuity-20260927.md)。本文件的运行数据、单场景证据和Gate 1未通过结论保持不变；新代码未继承旧binary的运行验收。\n')
+          ]
+          for name, expected, extra in additions:
+              p = Path(name)
+              text = p.read_text(encoding='utf-8')
+              assert blob(text) == expected, name
+              p.write_text(text + extra, encoding='utf-8')
+          PY
+          git add LostOdysseyRecomp/gpu/streamline_vulkan_dispatch.cpp docs/notes/v0.8.0-p0-p1-p4-development.zh-CN.md docs/notes/v0.8.0-fg-checked-completion-20260927.md
+          git diff --cached --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(fg): enforce cancellation and owner shutdown, wire FSR continuity'
+          git commit -m 'fix(fg): enumerate adapters before probe and link bounded validation notes'
           git push origin HEAD:refs/heads/fix/p0-shutdown-p4-continuity-20260927
-          echo "Applied commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
