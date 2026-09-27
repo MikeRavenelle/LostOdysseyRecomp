@@ -25,12 +25,12 @@ One record of completed changes, with unpublished work separated from verified r
 ### English
 
 - Issue #70 DX12/Vulkan groundwork adds DX12 graphics/compute native root signature and root descriptor table de-duplication with lifecycle invalidation, plus opt-in `LO_RENDER_TIMING` counters and `Diagnostic`/`Lightweight` capture modes. Runtime, NGX/FSR, AF, root-binding, local DX12/Vulkan substitute-scene, and patch-application checks passed within their documented bounds; no optimization A/B, stable 60 FPS, player acceptance, or Issue #70 resolution is claimed. See the [Issue #70 note](docs/notes/issue-70-dx12-vulkan-optimization.md).
-- Delivery automation: Release packaging workflow permits uploading missing assets to existing public releases without clobbering existing files, with PowerShell failure checking (commit `0d92b2b` on `main`). The planned v0.7.3 GitHub Release contains only the Windows ZIP, Linux AppImage, and stable Linux Flatpak; checksum and source records remain CI or local internal validation artifacts.
+- Delivery automation: Release packaging workflow permits uploading missing assets to existing public releases without clobbering existing files, with PowerShell failure checking (commit `0d92b2b` on `main`). GitHub Release v0.7.3 was published at 2026-09-27T18:01:05Z from tag commit `fd139e3c0407309de0cd3d4e5724c59d4363e4ab`; its three public assets are the Windows ZIP, Linux AppImage, and stable Linux Flatpak, each returning HTTP 200. Release CI [36335854660](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36335854660) passed; checksum/source records remain internal CI or local evidence, with no runtime archive or standalone checksum/source attachment.
 
 ### 简体中文
 
 - Issue #70 DX12/Vulkan 优化基础：新增 DX12 graphics/compute 原生 root signature 与 root descriptor table 去重及生命周期失效，并提供可选的 `LO_RENDER_TIMING` 计数与 `Diagnostic`/`Lightweight` 采集模式。runtime、NGX/FSR、AF、root binding、本机 DX12/Vulkan 替代场景及补丁应用检查已在记录范围内通过；不宣称优化前后 A/B、稳定 60 FPS、玩家验收或 Issue #70 已解决。详见[Issue #70 记录](docs/notes/issue-70-dx12-vulkan-optimization.md)。
-- 交付流程自动化：发布工作流支持在不覆盖已有文件的前提下向现有公开 Release 补充缺失资产，并增加 PowerShell 失败检查（`main` 分支提交 `0d92b2b`）。计划中的 v0.7.3 GitHub Release 仅包含 Windows ZIP、Linux AppImage 和 stable Linux Flatpak；checksum 与来源记录保留为 CI 或本地内部校验产物。
+- 交付流程自动化：发布工作流支持在不覆盖已有文件的前提下向现有公开 Release 补充缺失资产，并增加 PowerShell 失败检查（`main` 分支提交 `0d92b2b`）。GitHub Release v0.7.3 已于 2026-09-27T18:01:05Z 从 tag commit `fd139e3c0407309de0cd3d4e5724c59d4363e4ab` 发布；公开资产仅为 Windows ZIP、Linux AppImage 和 stable Linux Flatpak，三者均返回 HTTP 200。Release CI [36335854660](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36335854660) 已通过；checksum／来源记录保留为 CI 或本地内部证据，不包含 runtime archive 或独立 checksum/source 附件。
 
 ## v0.7.2 — 2026-09-27
 

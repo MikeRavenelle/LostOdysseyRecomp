@@ -1,6 +1,8 @@
 # Issue #70 DX12/Vulkan optimization
 
-状态：v0.7.3 发布准备；首轮实现与限定验证完成，尚未完成发布，尚无用户验收，Issue #70 仍开放。
+状态：v0.7.3 已发布；首轮实现与限定验证完成，尚无用户验收，Issue #70 仍开放。
+
+v0.7.3 已于 2026-09-27T18:01:05Z 发布到 [GitHub Release](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3)，来源为 tag commit `fd139e3c0407309de0cd3d4e5724c59d4363e4ab`。Release CI [36335854660](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36335854660) 全部通过；公开 Release 恰好包含 Windows ZIP、Linux AppImage 和 stable Linux Flatpak，三个链接均返回 HTTP 200。runtime archive、独立 checksum 和 `release-source.json` 未作为公开附件；大小、摘要、Windows 版本/53 项来源清单及 Flatpak stable 重导出记录保留在 `out/releases/v0.7.3/` 内部证据中。
 
 本轮实现集中在 DX12 command list 的原生状态复用和渲染路径状态管理：Plume 对 graphics/compute 的原生 root signature 与 root descriptor table 请求进行去重，并在 descriptor heap、原生 root signature 变化、native `Reset`/`Close` 以及外部原生命令状态变化时统一失效缓存。video、NGX 和 FSR 的 native Reset/Close 生命周期同步进入该失效路径，避免沿用过期绑定。
 
