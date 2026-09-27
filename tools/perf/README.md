@@ -27,3 +27,49 @@ the summary file, independent of the shell's working directory:
 ```sh
 python tools/perf/analyze-city-comparison.py /path/to/run-a/drive-summary.json /path/to/run-b/drive-summary.json
 ```
+
+## DLSS FG game capture
+
+`run-fg-game.ps1` is the bounded foreground driver for the experimental Windows
+Vulkan DLSS SR + Streamline DLSS FG path. It copies `settings.ini`, `save`,
+`profile`, and `shaders` from the supplied baseline into a new output run,
+copies the executable and required DLLs, sets `LO_DLSS_FG=1` (or `0` with
+`-DisableFg`), mutes audio, uses an isolated shader cache, enters the Uhra route,
+and sends bounded movement/input pulses. It stops only the process it started;
+the script records executable identity, stdout/stderr, runtime log, termination
+state, and baseline metadata preservation.
+
+The game path must be built with `LO_ENABLE_STREAMLINE_FG=ON` and a local pinned
+Streamline SDK. The runtime flag is opt-in and defaults to off. A typical paired
+capture is:
+
+```powershell
+pwsh -File tools/perf/run-fg-game.ps1 `
+  -BuildDirectory 'C:\path\to\fg-build' `
+  -BaselineDirectory 'C:\path\to\baseline-install' `
+  -OutputDirectory 'C:\path\to\fg-on-run' `
+  -GameDirectory 'C:\path\to\game-data' `
+  -Seconds 120
+
+pwsh -File tools/perf/run-fg-game.ps1 `
+  -BuildDirectory 'C:\path\to\fg-build' `
+  -BaselineDirectory 'C:\path\to\baseline-install' `
+  -OutputDirectory 'C:\path\to\fg-off-run' `
+  -GameDirectory 'C:\path\to\game-data' `
+  -Seconds 120 -DisableFg
+```
+
+This is a capture harness, not an acceptance test. The 2026-09-27 bounded
+RTX 5080 Vulkan runs are retained under `out/fg-game-20260926/`: the first run
+hit a 150% DPI present/render-awareness and `OUT_OF_DATE` rebuild loop;
+`run02-dpi` then completed 100 seconds with 3,551 generated intervals and 8,111
+presents after the PMv2 opt-in fix. `run03-immediate` completed 100 seconds with VSync
+disabled, 4,162 generated intervals, 9,322 presents, SDK errors 0, and a valid
+desktop capture. The application log's SDK error count is not a validation-layer
+clean result. `run05-window-cycle` also completed 70 seconds with 2,599 generated
+intervals and 6,199 presents, but its AltEnter attempts produced no AltEnter or
+resize log, so it is not a WindowCycle pass. The driver only sends the shortcut;
+a pass requires runtime mode, resize, and recovery logs. These are bounded runtime results;
+they do not establish
+physical 120 FPS, complete image-quality coverage, provider acceptance, or UI
+separation. The UI separation path remains unavailable.

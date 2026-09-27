@@ -232,6 +232,8 @@ struct App {
     unsigned sessionSlErrors{};
     InputCompletion inputCompletion;
     uint32_t explicitInputFrames{}, explicitInputWaits{};
+    uint32_t sdkNonzeroPointObservations{}, bootstrapReadyWaits{};
+    uint64_t lastSdkPointValue{};
     bool explicitInputCoverageMissing{};
     const std::filesystem::path output = std::filesystem::current_path();
     explicit App(ProbeOptions options)
@@ -306,9 +308,11 @@ struct App {
             VK(result, "FG protected presenting-queue wait");
             Check(inputCompletion.QueueWaitFinished(true), "FG protected queue ownership changed during wait");
             inputQueueFencePending = false;
+            const bool bootstrapReady = inputCompletion.CanEnableExplicit();
+            if (bootstrapReady) ++bootstrapReadyWaits;
             std::printf("FG_INPUT_QUEUE_WAIT stage=%s frame=%llu epoch=%llu result=complete bootstrap_ready=%d\n",
                 stage, static_cast<unsigned long long>(inputCompletion.Frame()),
-                static_cast<unsigned long long>(inputCompletion.Epoch()), int(inputCompletion.CanEnableExplicit()));
+                static_cast<unsigned long long>(inputCompletion.Epoch()), int(bootstrapReady));
             return;
         }
         Check(inputCompletion.Ownership() == InputCompletion::State::TimelinePending,
@@ -354,6 +358,11 @@ struct App {
             valid,
             {reinterpret_cast<uintptr_t>(state.inputsProcessingCompletionFence),
                 state.lastPresentInputsProcessingCompletionFenceValue});
+        if (valid && observation != InputCompletion::Observation::Invalid &&
+            state.inputsProcessingCompletionFence && state.lastPresentInputsProcessingCompletionFenceValue) {
+            ++sdkNonzeroPointObservations;
+            lastSdkPointValue = state.lastPresentInputsProcessingCompletionFenceValue;
+        }
         std::printf("FG_INPUT_FENCE_STATE frame=%u epoch=%u mode=%s fence_nonnull=%d value=%llu observation=%u\n",
             frame, swap.epoch,
             inputCompletion.EffectiveMode() == InputCompletion::Mode::ExplicitTimeline ? "explicit" : "bootstrap_queue",
@@ -770,6 +779,8 @@ int Run(App& app) {
         app.Mode(fg);
         const auto generatedBefore = app.generatedIntervals;
         const auto explicitBefore = app.explicitInputFrames;
+        const auto pointBefore = app.sdkNonzeroPointObservations;
+        const auto bootstrapBefore = app.bootstrapReadyWaits;
         for (uint32_t i = 0; i < n; ++i) {
             if (std::chrono::steady_clock::now() - start > std::chrono::seconds(120)) Fail("probe wall timeout");
             if (fg && !app.noActivate && !app.window.Activate()) {
@@ -790,7 +801,17 @@ int Run(App& app) {
         }
         if (fg && app.explicitInputWait && app.explicitInputFrames == explicitBefore) {
             app.explicitInputCoverageMissing = true;
-            std::puts("FG_INPUT_EXPLICIT_UNAVAILABLE=phase used protected queue only; no SDK completion capability observed");
+            const auto pointCount = app.sdkNonzeroPointObservations - pointBefore;
+            const auto validationErrors = app.validationErrors->load();
+            const auto slErrors = app.sl.ErrorCount();
+            std::printf("FG_INPUT_EXPLICIT_UNAVAILABLE=coverage_missing blocked_by_session_errors=%d "
+                "missing_completion_signal=%d sdk_nonzero_point_observations=%u "
+                "bootstrap_ready_waits=%u last_phase_point_value=%llu "
+                "session_validation_errors=%u session_sl_errors=%u\n",
+                int(validationErrors || slErrors), int(pointCount == 0), pointCount,
+                app.bootstrapReadyWaits - bootstrapBefore,
+                static_cast<unsigned long long>(pointCount ? app.lastSdkPointValue : 0),
+                validationErrors, slErrors);
         }
         if (fg && !app.noActivate && app.generatedIntervals == generatedBefore)
             Fail("no generated presents during this FG-on interval");

@@ -92,6 +92,14 @@ int main(int argc, char* argv[])
         return 1;
 #endif
 #endif
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+    // SDK-created present threads inherit the process DPI default. Establish
+    // physical pixels before any installer/setup HWND, not only on SDL's thread.
+    const char* fgRequested = std::getenv("LO_DLSS_FG");
+    const bool fgDpiRequested = fgRequested && std::string_view(fgRequested) == "1";
+    const bool fgDpiSet = fgDpiRequested && SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    const DWORD fgDpiError = fgDpiRequested && !fgDpiSet ? GetLastError() : 0;
+#endif
 #ifdef _WIN32
     // The CRT's narrow argv can best-fit Unicode (for example acute -> prime)
     // before we see it. Decode the original Windows command line instead.
@@ -168,6 +176,9 @@ int main(int argc, char* argv[])
         else LOG_WARNING("could not open log file: {}", FileSystem::PathUtf8(logPath));
     }
     InstallCrashHandler();
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+    if (fgDpiRequested) LOG_INFO("DLSS FG: process physical-pixel awareness set={} error={}", fgDpiSet, fgDpiError);
+#endif
 #ifdef _WIN32
     timeBeginPeriod(1);
 #endif

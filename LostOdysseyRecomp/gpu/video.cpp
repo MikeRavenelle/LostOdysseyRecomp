@@ -18,6 +18,12 @@
 #include "presentation.h"
 #if defined(LO_GPU_PLUME)
 #include "frame_generation_present_bridge.h"
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+#include "streamline_runtime.h"
+#include "streamline_vulkan_dispatch.h"
+#include "dlss_frame_generation.h"
+#include "frame_generation_composite.h"
+#endif
 #endif
 #include "command_processor.h"
 #include "frame_plan.h"
@@ -254,6 +260,13 @@ namespace gpu::video
         // userdata until VulkanInterface destruction.
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
         std::unique_ptr<dlss::Controller> g_dlssController;
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        std::unique_ptr<dlss_fg::Runtime> g_fgRuntime;
+        std::unique_ptr<dlss_fg::VulkanDispatch> g_fgDispatch;
+        std::unique_ptr<dlss_fg::Session> g_fgSession;
+        std::atomic<bool> g_fgWindowSynchronization{false};
+        std::atomic<int> g_fgWindowChange{0}; // 0 idle, 1 requested, 2 GPU quiescent
+#endif
         std::unique_ptr<TemporalUpscaler> g_temporalUpscaler;
 #endif
         std::unique_ptr<plume::RenderInterface> g_interface;
@@ -462,6 +475,36 @@ namespace gpu::video
             g_commandList->barriers(plume::RenderBarrierStage::COPY,plume::RenderTextureBarrier(frame,plume::RenderTextureLayout::COPY_SOURCE));
             g_commandList->barriers(plume::RenderBarrierStage::COPY,plume::RenderTextureBarrier(g_presentedSnapshot.get(),plume::RenderTextureLayout::COPY_DEST));
             g_commandList->copyTexture(g_presentedSnapshot.get(),frame);
+        }
+
+        void PreparePresentImage(plume::RenderTexture* image) {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgSession) {
+                // The SL Vulkan proxy is copied by its present worker. This
+                // experimental path uses the layout validated by the P0 probe.
+                g_commandList->barriers(plume::RenderBarrierStage::COPY,
+                    plume::RenderTextureBarrier(image, plume::RenderTextureLayout::COPY_SOURCE));
+                return;
+            }
+#endif
+            g_commandList->barriers(plume::RenderBarrierStage::NONE,
+                plume::RenderTextureBarrier(image, plume::RenderTextureLayout::PRESENT));
+        }
+
+        void FgSubmitStart() {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgSession) g_fgSession->SubmitStart();
+#endif
+        }
+        void FgPresentStart() {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgSession) { g_fgSession->SubmitEnd(); g_fgSession->PresentStart(); }
+#endif
+        }
+        void FgPresented(bool accepted) {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgSession) g_fgSession->Presented(accepted);
+#endif
         }
 
         void RetainPresentCapture()
@@ -824,6 +867,12 @@ namespace gpu::video
     // rendering has stopped. The window/event thread is deliberately retained
     // between candidates; device children are destroyed before their parents.
     static void ResetGpu() {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        g_fgWindowSynchronization = false;
+        g_fgWindowChange = 0;
+        // FG releases its retained producer leases before renderer/device teardown.
+        g_fgSession.reset();
+#endif
         g_displayChanges.Reset();
 #ifdef LO_GPU_PLUME
         g_fgPresent.CancelAll(frame_generation::HandoffCancel::Shutdown);
@@ -856,6 +905,19 @@ namespace gpu::video
         g_swapChain.reset(); g_presentSemaphores.clear();
         g_releaseSemaphore.reset(); g_acquireSemaphore.reset();
         g_fence.reset(); g_commandList.reset(); g_queue.reset();
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        // Streamline owns Vulkan children; its shutdown requires a live device.
+        if (g_fgRuntime && !g_fgRuntime->Shutdown()) {
+            LOG_ERROR("DLSS FG: Streamline shutdown failed; ending process before device replacement");
+            std::fflush(nullptr); std::_Exit(EXIT_FAILURE);
+        }
+        if (g_fgDispatch) {
+            g_fgDispatch->RestoreDeviceHooks();
+            g_fgDispatch->RestoreCreationHooks();
+        }
+        g_fgDispatch.reset();
+        g_fgRuntime.reset();
+#endif
         g_device.reset(); g_interface.reset();
         g_submissionState = {};
         g_presentPending = false;
@@ -1000,7 +1062,22 @@ namespace gpu::video
             if (g_vulkan) {
                 g_dlssController = std::make_unique<dlss::Controller>(DlssApplicationDataPath(), DlssRuntimePath());
                 g_temporalUpscaler = std::make_unique<TemporalUpscaler>(*g_dlssController);
+#if defined(LO_ENABLE_STREAMLINE_FG)
+                const char* fg = std::getenv("LO_DLSS_FG");
+                if (fg && std::string_view(fg) == "1") {
+                    std::string reason;
+                    g_fgRuntime = std::make_unique<dlss_fg::Runtime>();
+                    if (!g_fgRuntime->Initialize(DlssRuntimePath(), reason)) {
+                        LOG_ERROR("DLSS FG: initialization unavailable: {}", reason);
+                        g_fgRuntime.reset();
+                    } else {
+                        g_fgDispatch = std::make_unique<dlss_fg::VulkanDispatch>(*g_fgRuntime, *g_dlssController);
+                    }
+                }
+                g_interface = plume::CreateVulkanInterface(g_fgDispatch ? g_fgDispatch->Hooks() : g_dlssController->ExtensionHooks());
+#else
                 g_interface = plume::CreateVulkanInterface(g_dlssController->ExtensionHooks());
+#endif
             } else {
                 g_temporalUpscaler.reset();
                 g_dlssController.reset();
@@ -1031,6 +1108,17 @@ namespace gpu::video
             }
             g_queue = g_device->createCommandQueue(plume::RenderCommandListType::DIRECT);
             if (!g_queue) return "graphics queue creation failed";
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgDispatch) {
+                std::string reason;
+                if (!g_fgDispatch->InstallDeviceHooks(static_cast<plume::VulkanInterface*>(g_interface.get())->instance,
+                    static_cast<plume::VulkanDevice*>(g_device.get())->vk, reason)) return reason;
+                g_fgSession = std::make_unique<dlss_fg::Session>(*g_fgRuntime,
+                    *static_cast<plume::VulkanDevice*>(g_device.get()), *static_cast<plume::VulkanCommandQueue*>(g_queue.get()));
+                if (!g_fgSession->Initialize()) return "DLSS FG presentation initialization failed";
+                g_fgWindowSynchronization = true;
+            }
+#endif
             g_commandList = g_queue->createCommandList();
             g_fence = g_device->createCommandFence();
             g_acquireSemaphore = g_device->createCommandSemaphore();
@@ -1042,6 +1130,16 @@ namespace gpu::video
             g_swapChain = g_queue->createSwapChain(plume::RenderSwapChainDesc(g_window, kSwapChainFormat, kSwapChainBuffers));
 #endif
             if (!g_swapChain || g_swapChain->isEmpty()) return "window surface/swapchain initialization failed";
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgSession) {
+                // Vulkan DLSS-G does not support VSync; guest frame pacing still
+                // limits real frames independently of the SDK's generated frames.
+                g_swapChain->setVsyncEnabled(false);
+                if (g_swapChain->needsResize() && !g_swapChain->resize()) return "DLSS FG immediate swapchain resize failed";
+                if (g_swapChain->isVsyncEnabled()) return "DLSS FG requires Vulkan immediate presentation support";
+                LOG_INFO("DLSS FG: Vulkan immediate presentation enabled");
+            }
+#endif
             if (g_vulkan && g_temporalUpscaler && settings::GetConfig().upscaler == upscaling::Upscaler::Dlss) {
                 const auto output = upscaling::ResolveOutputRegion({g_swapChain->getWidth(), g_swapChain->getHeight()});
                 const upscaling::SizingKey key{g_deviceEpoch.load(std::memory_order_acquire), output.width, output.height,
@@ -1282,6 +1380,13 @@ namespace gpu::video
         if (state.shortcutMode) config.windowMode = *state.shortcutMode;
         const bool reapply = g_reapplyWindow.exchange(false);
         if(reapply || !state.initialized || config.width!=state.applied.width || config.height!=state.applied.height || config.windowMode!=state.applied.windowMode) {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgWindowSynchronization && g_fgWindowChange.load() != 2) {
+                g_fgWindowChange = 1;
+                g_reapplyWindow = true;
+                return; // Presentation thread acknowledges before SDL changes the surface.
+            }
+#endif
             const auto ticket = g_displayChanges.WindowTicket(config.width, config.height, uint32_t(config.windowMode));
             // SDL operations remain on the message-owning thread. Hidden tests
             // must never change the user's desktop display mode.
@@ -1308,6 +1413,9 @@ namespace gpu::video
             state.applied=config; state.initialized=true;
             g_windowResizeRequested = true;
             g_displayChanges.WindowComplete(ticket, result == 0);
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            g_fgWindowChange = 0;
+#endif
         }
         debug_menu::Update();
         hid::PumpHostInput();
@@ -1447,6 +1555,12 @@ namespace gpu::video
     // or rasterizing UI. The returned ticket belongs to these prepared operations.
     static bool PreparePresentation(uint64_t& displayTicket, uint32_t& width, uint32_t& height)
     {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        if (g_fgSession && g_fgWindowChange.load() == 1) {
+            g_fgSession->Quiesce();
+            g_fgWindowChange = 2;
+        }
+#endif
         if (!g_available || !g_swapChain || GpuWorkStopped())
             return false;
         displayTicket = g_displayChanges.PresentationTicket();
@@ -1492,6 +1606,9 @@ namespace gpu::video
         // Empty is recoverable: minimized Vulkan surfaces may have zero extent.
         // Never return for isEmpty() before giving resize() a chance to recover.
         if (g_forceSwapResize || g_swapChain->isEmpty() || g_swapChain->needsResize()) {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgSession) g_fgSession->Quiesce();
+#endif
             g_fgPresent.CancelAll(frame_generation::HandoffCancel::DisplayChange);
             renderer::CancelFgHandoffs();
             if (!WaitForPresentGpu()) return false;
@@ -1531,6 +1648,9 @@ namespace gpu::video
         if (GpuWorkStopped() || (!g_available && !g_initializing) || !g_swapChain || g_swapChain->isEmpty())
             return false;
         g_fgPresent.CancelAll(frame_generation::HandoffCancel::AlternatePresent);
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        if (g_fgSession) g_fgSession->Prepare({}, width, height, 0, VK_FORMAT_UNDEFINED);
+#endif
         renderer::CancelFgHandoffs();
         DisplayCompletion completion(g_displayChanges, displayTicket);
         if (!width || !height || size_t(width) > std::numeric_limits<size_t>::max() / height ||
@@ -1593,7 +1713,7 @@ namespace gpu::video
             g_swapChain->getWidth(),g_swapChain->getHeight(),isMenu ? PresentationOptions{} : presentationOptions);
         RecordPresentedSnapshot(backBuffer);
         QueuePresentCapture(backBuffer, captureTicket);
-        g_commandList->barriers(plume::RenderBarrierStage::NONE, plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::PRESENT));
+        PreparePresentImage(backBuffer);
         if (!EndGpuCommands(g_commandList.get())) return false;
 
         const plume::RenderCommandList* lists[] = { g_commandList.get() };
@@ -1606,11 +1726,14 @@ namespace gpu::video
         const uint64_t d3dSignal = g_vulkan || !g_fence ? 0 : static_cast<plume::D3D12CommandFence *>(g_fence.get())->fenceValue;
 #endif
         g_captureCopy.d3dFenceValue = d3dSignal;
+        FgSubmitStart();
         const bool submitted = g_vulkan ? SubmitVulkan(lists, 1, &waitSemaphore, 1, &signalSemaphore, 1,
             g_fence.get(), &submissionSerial, &submitResult)
             : (g_queue->executeCommandLists(lists, 1, &waitSemaphore, 1, &signalSemaphore, 1, g_fence.get()), true);
         if (!submitted) { LOG_ERROR("video: present submit failed raw_vk={}", submitResult); ReadPresentCapture(captureResult, false, false, 0); return false; }
+        FgPresentStart();
         const bool presented = g_swapChain->present(imageIndex, &signalSemaphore, 1);
+        FgPresented(presented);
         if (presented) ++g_completedPresentCount;
         g_fgPresentSerial = submissionSerial;
         g_presentPending = true;
@@ -1736,6 +1859,19 @@ namespace gpu::video
                     return;
                 DisplayCompletion completion(g_displayChanges, displayTicket);
                 if (!WaitForPresentGpu()) return;
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+                frame_generation::CompositeHandoff composite;
+                double fgProducerWaitMs = 0.0;
+                if (g_fgSession) {
+                    const auto fgAcquireBegin = std::chrono::steady_clock::now();
+                    const bool matched = renderer::AcquireFgCompositeInputs(physicalAddress & 0x1FFFFFFF, composite) &&
+                        composite.ReadyForOrderedSubmission() && composite.outputWidth == sourceWidth && composite.outputHeight == sourceHeight &&
+                        sourceWidth == g_swapChain->getWidth() && sourceHeight == g_swapChain->getHeight();
+                    if (!matched || g_fgWindowChange.load() != 0) composite = {};
+                    fgProducerWaitMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - fgAcquireBegin).count();
+                }
+#endif
                 uint32_t imageIndex = 0;
                 if (!g_swapChain->acquireTexture(g_acquireSemaphore.get(), &imageIndex))
                 {
@@ -1756,6 +1892,13 @@ namespace gpu::video
                         id.allocation, id.generation, fgHandoff.packet->producer->producerSerial, fgHandoff.packet->resolveSerial);
                 }
                 if (!BeginGpuCommands(g_commandList.get())) return;
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+                if (g_fgSession) {
+                    auto* swap = static_cast<plume::VulkanSwapChain*>(g_swapChain.get());
+                    g_fgSession->Prepare(composite.producer, g_swapChain->getWidth(), g_swapChain->getHeight(),
+                        uint32_t(swap->textures.size()), swap->textures.front().imageFormat, g_commandList.get(), fgProducerWaitMs);
+                }
+#endif
                 if(g_presentation) {
                     const auto decision = frame_plan::ResolvePresentationDecision(&sourcePlan,
                         renderer::SceneAAApplied(physicalAddress & 0x1FFFFFFF), uint32_t(presentationOptions.antialiasing),
@@ -1782,19 +1925,22 @@ namespace gpu::video
                 const uint64_t d3dSignal = g_vulkan || !g_fence ? 0 : static_cast<plume::D3D12CommandFence *>(g_fence.get())->fenceValue;
 #endif
                 g_captureCopy.d3dFenceValue = d3dSignal;
-                g_commandList->barriers(plume::RenderBarrierStage::NONE, plume::RenderTextureBarrier(backBuffer, plume::RenderTextureLayout::PRESENT));
+                PreparePresentImage(backBuffer);
                 if (!EndGpuCommands(g_commandList.get())) return;
 
                 const plume::RenderCommandList* lists[] = { g_commandList.get() };
                 plume::RenderCommandSemaphore* waitSemaphore = g_acquireSemaphore.get();
                 plume::RenderCommandSemaphore* signalSemaphore = PresentSemaphore(imageIndex);
                 uint64_t submissionSerial = 0; int32_t submitResult = 0;
+                FgSubmitStart();
                 const bool submitted = g_vulkan ? SubmitVulkan(lists, 1, &waitSemaphore, 1, &signalSemaphore, 1,
                     g_fence.get(), &submissionSerial, &submitResult)
                     : (g_queue->executeCommandLists(lists, 1, &waitSemaphore, 1, &signalSemaphore, 1, g_fence.get()), true);
                 if (!submitted) { LOG_ERROR("video: GPU presentation submit failed raw_vk={}", submitResult); ReadPresentCapture(captureResult, false, false, 0); return; }
                 g_fgPresent.Submitted(g_deviceEpoch.load(), submissionSerial);
+                FgPresentStart();
                 const bool presented = g_swapChain->present(imageIndex, &signalSemaphore, 1);
+                FgPresented(presented);
                 if (!presented) {
                     g_fgPresent.CancelAll(frame_generation::HandoffCancel::DisplayChange);
                     renderer::CancelFgHandoffs();

@@ -1,4 +1,5 @@
 #include <gpu/frame_generation_snapshot.h>
+#include <gpu/frame_generation_composite.h>
 #include <plume_vulkan.h>
 
 #include <array>
@@ -47,7 +48,7 @@ void Run() {
         Check(bool(source[i]), "source allocation");
     }
     auto upload = device->createBuffer(RenderBufferDesc::UploadBuffer(10 * SliceBytes));
-    auto readback = device->createBuffer(RenderBufferDesc::ReadbackBuffer(10 * SliceBytes));
+    auto readback = device->createBuffer(RenderBufferDesc::ReadbackBuffer(12 * SliceBytes));
     Check(upload && readback, "staging allocation");
     auto* data = static_cast<uint8_t*>(upload->map()); Check(data != nullptr, "map upload");
     std::memset(data, 0, 10 * SliceBytes);
@@ -88,6 +89,12 @@ void Run() {
     Check(!gpu::frame_generation::RecordProducerSnapshot(device.get(), list.get(), invalid,
         Formats[0], source[4].get(), Formats[4], {SceneWidth, Height}),
         "missing motion rejected even with FG off");
+    invalid = inputs;
+    invalid.motionInvalidity.texture = nullptr;
+    Check(!gpu::frame_generation::RecordProducerSnapshot(device.get(), list.get(), invalid,
+        Formats[0], source[4].get(), Formats[4], {SceneWidth, Height},
+        gpu::frame_generation::SnapshotPurpose::CompositedBackbuffer),
+        "runtime capture still qualifies unused invalidity input");
 
     auto uploadSet = [&](size_t base) {
         for (size_t i = 0; i < source.size(); ++i) {
@@ -105,6 +112,8 @@ void Run() {
     auto snapshot = gpu::frame_generation::RecordProducerSnapshot(device.get(), list.get(),
         inputs, Formats[0], source[4].get(), Formats[4], {SceneWidth, Height});
     Check(bool(snapshot), "record five owned copies");
+    Check(snapshot->purpose == gpu::frame_generation::SnapshotPurpose::DiagnosticFiveImages &&
+        snapshot->inputsQualifiedAtCapture, "diagnostic five-image contract retained");
     Check(snapshot->ui == gpu::frame_generation::UiSeparation::Unavailable &&
         !snapshot->producerCompleted && !snapshot->producerDiscarded && !snapshot->producerSerial,
         "unavailable UI and pending producer state");
@@ -135,6 +144,32 @@ void Run() {
         snapshot->inputs.fsrMask.semantic == gpu::temporal::FsrMaskSemantic::Unknown &&
         inputs.color.texture == source[0].get() && inputs.fsrMask.provenance.capturedColor == source[0].get(),
         "metadata retained, borrowed views cleared, original inputs untouched");
+    gpu::frame_plan::FramePlan compositePlan{};
+    compositePlan.output = {{2560, 1440}, 0, 0, 2560, 1440};
+    compositePlan.requestedUpscaler = gpu::upscaling::Upscaler::Dlss;
+    compositePlan.consumer = gpu::upscaling::TemporalConsumer::DlssSr;
+    auto runtimeInputs = inputs;
+    runtimeInputs.plan = compositePlan;
+    runtimeInputs.cameraValid = true;
+    runtimeInputs.cameraRaster = {0, 0, double(Width), double(Height)};
+    runtimeInputs.frameTimeDeltaMilliseconds = 16.0f;
+    auto runtime = gpu::frame_generation::RecordProducerSnapshot(device.get(), list.get(),
+        runtimeInputs, Formats[0], source[4].get(), Formats[4], {SceneWidth, Height},
+        gpu::frame_generation::SnapshotPurpose::CompositedBackbuffer);
+    Check(bool(runtime) && runtime->purpose == gpu::frame_generation::SnapshotPurpose::CompositedBackbuffer &&
+        runtime->inputsQualifiedAtCapture, "runtime input qualification before two-image capture");
+    Check(runtime->depth.Complete() && runtime->motion.Complete() &&
+        runtime->depth.region.texture != source[1].get() &&
+        runtime->motion.region.texture != source[2].get() &&
+        !runtime->sourceColor.region.texture && !runtime->sourceColor.lifetime &&
+        !runtime->motionInvalidity.region.texture && !runtime->motionInvalidity.lifetime &&
+        !runtime->sceneColorCandidate.region.texture && !runtime->sceneColorCandidate.lifetime &&
+        !runtime->inputs.color.texture && !runtime->inputs.motionInvalidity.texture &&
+        !runtime->inputs.materialInstability.texture &&
+        !runtime->inputs.fsrMask.sceneContribution.texture &&
+        runtime->inputs.depth.texture == runtime->depth.region.texture &&
+        runtime->inputs.motion.texture == runtime->motion.region.texture,
+        "runtime owns only depth and motion and clears borrowed views");
     uploadSet(5); // Reuse the source allocations before the same batch completes.
     for (size_t i = 0; i < leases.size(); ++i) {
         RenderTexture* images[] = {leases[i]->region.texture, source[i].get()};
@@ -149,6 +184,17 @@ void Run() {
                 RenderTextureBarrier(images[group], RenderTextureLayout::SHADER_READ));
         }
     }
+    for (size_t i = 0; i < 2; ++i) {
+        auto* image = i == 0 ? runtime->depth.region.texture : runtime->motion.region.texture;
+        const size_t sourceIndex = i + 1;
+        list->barriers(RenderBarrierStage::COPY,
+            RenderTextureBarrier(image, RenderTextureLayout::COPY_SOURCE));
+        list->copyTextureRegion(RenderTextureCopyLocation::PlacedFootprint(readback.get(),
+                Formats[sourceIndex], Width, Height, 1, Pitch / PixelBytes[sourceIndex],
+                (10 + i) * SliceBytes), RenderTextureCopyLocation::Subresource(image));
+        list->barriers(RenderBarrierStage::ALL,
+            RenderTextureBarrier(image, RenderTextureLayout::SHADER_READ));
+    }
     list->end();
     auto& vkDevice = static_cast<VulkanDevice&>(*device);
     auto& vkQueue = static_cast<VulkanCommandQueue&>(*queue);
@@ -161,9 +207,63 @@ void Run() {
     Check(vkQueueSubmit(vkQueue.queue->vk, 1, &submit, vkFence.vk) == VK_SUCCESS,
         "submit snapshot batch");
     snapshot->producerSerial = 1;
+    runtime->producerSerial = 1;
     Check(vkWaitForFences(vkDevice.vk, 1, &vkFence.vk, VK_TRUE, UINT64_MAX) == VK_SUCCESS,
         "snapshot producer fence");
     snapshot->producerCompleted = true;
+    runtime->producerCompleted = true;
+    const gpu::frame_generation::CompositeResolveGeometry validResolve{
+        {2560, 1472}, {2560, 1440}, 0, 0, 2560, 1440};
+    Check(validResolve.Matches(compositePlan), "padded SR source and exact output resolve");
+    auto invalidResolve = validResolve;
+    invalidResolve.writeHeight = 1439;
+    Check(!invalidResolve.Matches(compositePlan), "incomplete output resolve rejected");
+    invalidResolve = validResolve;
+    invalidResolve.sourceAllocation.height = 1439;
+    Check(!invalidResolve.Matches(compositePlan), "insufficient SR source extent rejected");
+    invalidResolve = validResolve;
+    invalidResolve.targetAllocation.height = 1472;
+    Check(!invalidResolve.Matches(compositePlan), "unselected output padding rejected");
+
+    runtime->resolveSourceAllocation = 117;
+    gpu::frame_generation::CompositeHandoff handoff{};
+    handoff.producer = runtime;
+    handoff.plan = compositePlan;
+    handoff.frame = runtime->inputs.renderFrameId;
+    handoff.historyEpoch = runtime->inputs.temporalEpoch;
+    handoff.sourceAllocation = runtime->resolveSourceAllocation;
+    handoff.resolveOrdinal = 23;
+    handoff.targetAllocation = 44;
+    handoff.outputWidth = 2560;
+    handoff.outputHeight = 1440;
+    Check(!handoff.ReadyForOrderedSubmission() && !handoff.Ready(),
+        "unsubmitted final resolve cannot enter FG");
+    handoff.resolveSubmissionSerial = 1;
+    handoff.resolveOnPresentQueue = true;
+    runtime->producerOnPresentQueue = true;
+    runtime->producerCompleted = false;
+    Check(handoff.ReadyForOrderedSubmission() && !handoff.Ready(),
+        "ordered submitted inputs need no CPU fence completion");
+    runtime->producerCompleted = true;
+    Check(!handoff.Ready(), "CPU-ready path still waits for final resolve fence");
+    handoff.resolveCompleted = true;
+    Check(handoff.Ready(), "completed composited backbuffer with unavailable UI is usable");
+    runtime->producerSerial = 2;
+    Check(!handoff.ReadyForOrderedSubmission(), "producer cannot submit after final resolve");
+    runtime->producerSerial = 1;
+    runtime->producerWaitFailed = true;
+    Check(!handoff.ReadyForOrderedSubmission() && !handoff.Ready(), "failed producer wait rejected");
+    runtime->producerWaitFailed = false;
+    runtime->lineageCanceled = true;
+    Check(!handoff.ReadyForOrderedSubmission() && !handoff.Ready(), "canceled producer rejected");
+    runtime->lineageCanceled = false;
+    handoff.resolveDiscarded = true;
+    Check(!handoff.ReadyForOrderedSubmission() && !handoff.Ready(), "failed resolve submit rejected");
+    handoff.resolveDiscarded = false;
+    runtime->inputs.motionState = gpu::temporal::MotionState::Unavailable;
+    Check(!handoff.Ready(), "missing motion state rejected");
+    runtime->inputs.motionState = gpu::temporal::MotionState::Hybrid;
+    Check(handoff.Ready(), "real hybrid motion retained without claiming tracked coverage");
     const auto* observed = static_cast<const uint8_t*>(readback->map());
     Check(observed != nullptr, "map readback");
     for (size_t group = 0; group < 2; ++group)
@@ -174,6 +274,15 @@ void Run() {
                         uint8_t((group == 0 ? 11 : 119) + (group * 5 + i) * 17 +
                             y * 7 + (x / PixelBytes[i]) * 3 + x % PixelBytes[i]),
                         "snapshot retains initial pixels while reused sources contain new pixels");
+    for (size_t i = 0; i < 2; ++i) {
+        const size_t sourceIndex = i + 1;
+        for (uint32_t y = 0; y < Height; ++y)
+            for (uint32_t x = 0; x < Width * PixelBytes[sourceIndex]; ++x)
+                Check(observed[(10 + i) * SliceBytes + y * Pitch + x] ==
+                    uint8_t(11 + sourceIndex * 17 + y * 7 +
+                        (x / PixelBytes[sourceIndex]) * 3 + x % PixelBytes[sourceIndex]),
+                    "runtime depth and motion retain original pixels after source reuse");
+    }
     readback->unmap();
     std::printf("snapshot GPU copies and source overwrite passed on %s\n",
         device->getDescription().name.c_str());

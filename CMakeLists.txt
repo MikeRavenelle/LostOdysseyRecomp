@@ -23,6 +23,7 @@ endif()
 # an explicit LO_TARGET_ARCH comes later on the command line and wins.
 include(cmake/LoOptimization.cmake)
 include(cmake/LoDlss.cmake)
+include(cmake/LoStreamline.cmake)
 include(cmake/LoFsr.cmake)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 

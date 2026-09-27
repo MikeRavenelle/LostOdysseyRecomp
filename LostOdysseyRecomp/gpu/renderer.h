@@ -1,5 +1,5 @@
 #pragma once
-namespace gpu::frame_generation { struct ResolvedHandoff; }
+namespace gpu::frame_generation { struct ResolvedHandoff; struct CompositeHandoff; }
 
 #include <cstdint>
 #include <filesystem>
@@ -81,6 +81,9 @@ namespace gpu::renderer
     // nullptr when nothing was resolved there.
     plume::RenderTexture* AcquireResolvedSurface(uint32_t physicalAddress, uint32_t& width, uint32_t& height, uint32_t& format,
         frame_plan::FramePlan* sourcePlan = nullptr, frame_generation::ResolvedHandoff* handoff = nullptr);
+    // Opt-in DLSS-G input from the exact current full resolve. Waits for the
+    // producer fence only after a matching composited backbuffer is selected.
+    bool AcquireFgCompositeInputs(uint32_t physicalAddress, frame_generation::CompositeHandoff& handoff);
     // Diagnostic invalidation only. Submitted copies retain their GPU-slot owners.
     void CancelFgHandoffs();
     // Same renderer/presentation thread, after XE_SWAP Flush and acquisition.

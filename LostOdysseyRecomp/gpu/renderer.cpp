@@ -39,6 +39,7 @@
 #if defined(LO_GPU_PLUME)
 #include "frame_generation_snapshot.h"
 #include "frame_generation_handoff.h"
+#include "frame_generation_composite.h"
 #include "frame_generation_ui_diagnostic.h"
 #endif
 #include <settings/config.h>
@@ -468,6 +469,7 @@ namespace gpu::renderer
                 std::vector<std::shared_ptr<FsrAlphaBridgeDiagnostic>> fsrAlphaBridgeDiagnostics;
                 std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
                 std::vector<std::shared_ptr<frame_generation::ResolvePacket>> fgResolvePackets;
+                std::vector<std::shared_ptr<frame_generation::CompositeHandoff>> fgCompositeResolves;
                 std::vector<std::shared_ptr<frame_generation::ui_diagnostic::Capture>> fgUiUses;
                 bool fgUiFinalCopy = false;
 #endif
@@ -579,6 +581,7 @@ namespace gpu::renderer
                 bool sourcePlanValid = false;
                 uint64_t fgOwner = 0, fgEpoch = 0, fgSourceAllocation = 0, fgSourceGeneration = 0;
                 std::weak_ptr<frame_generation::ResolvePacket> fgPacket;
+                std::weak_ptr<frame_generation::CompositeHandoff> fgComposite;
 
             };
             // Keyed by destination address, one entry per destination format: the
@@ -617,6 +620,16 @@ namespace gpu::renderer
             bool fgSnapshotAttempted = false;
             std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
             frame_generation::ResolveHandoffPool fgHandoffPool;
+            const bool fgCompositeEnabled = [] {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+                const char* value = getenv("LO_DLSS_FG");
+                return value && std::string_view(value) == "1";
+#else
+                return false;
+#endif
+            }();
+            uint64_t fgCompositeAttemptedFrame = ~0ull;
+            std::shared_ptr<frame_generation::CompositeHandoff> fgCompositeHandoff;
             const uint64_t fgUiRequestedFrame = [] {
                 const char* value = getenv("LO_FG_UI_FRAME");
                 if (!value || !*value || *value == '-') return ~0ull;
@@ -2771,25 +2784,33 @@ namespace gpu::renderer
                 Gpu().retiredTextures.push_back(std::move(fallback));
                 promotion.srApplied = true;
                 RecordFgUiScene(*color);
-                if (!fgSnapshotAttempted && fgSnapshotRequestedFrame == frame) {
-                    fgSnapshotAttempted = true;
+                const bool diagnosticSnapshot = !fgSnapshotAttempted && fgSnapshotRequestedFrame == frame;
+                const bool compositeSnapshot = fgCompositeEnabled && fgCompositeAttemptedFrame != frame &&
+                    activePlan.requestedUpscaler == upscaling::Upscaler::Dlss &&
+                    activePlan.consumer == upscaling::TemporalConsumer::DlssSr;
+                if (diagnosticSnapshot || compositeSnapshot) {
+                    if (diagnosticSnapshot) fgSnapshotAttempted = true;
+                    if (compositeSnapshot) fgCompositeAttemptedFrame = frame;
                     // The input is a real Vulkan texture here. Its storage
                     // format must not be inferred from the color transfer curve.
                     const auto sourceFormat = static_cast<VulkanTexture*>(promotion.inputs.color.texture)->desc.format;
                     auto snapshot = frame_generation::RecordProducerSnapshot(device, commandList,
                         promotion.inputs, sourceFormat, promotion.scratch->texture.get(),
-                        promotion.scratch->format, {activePlan.output.width, activePlan.output.height});
+                        promotion.scratch->format, {activePlan.output.width, activePlan.output.height},
+                        diagnosticSnapshot ? frame_generation::SnapshotPurpose::DiagnosticFiveImages :
+                            frame_generation::SnapshotPurpose::CompositedBackbuffer);
                     if (snapshot) {
                         snapshot->lineageOwner = fgHandoffPool.Owner();
                         snapshot->resolveSourceAllocation = color->allocationSerial;
                         snapshot->resolveSourceGeneration = color->fgWriteGeneration;
-                        color->fgSnapshot = snapshot;
+                        if (diagnosticSnapshot) color->fgSnapshot = snapshot;
                         Gpu().fgInputSnapshot = snapshot;
                         fgInputSnapshot = std::move(snapshot);
                     }
-                    LOG_INFO("renderer: FG input snapshot frame={} recorded={} source={}:{} submitted_draws={} capture_draw={} ui=unavailable provider_ready=0",
-                        frame, bool(fgInputSnapshot), color->allocationSerial, color->fgWriteGeneration,
-                        drawsThisFrame, debugCaptureDir.empty() ? -1 : int64_t(debugDraw) - 1);
+                    if (diagnosticSnapshot)
+                        LOG_INFO("renderer: FG input snapshot frame={} recorded={} source={}:{} submitted_draws={} capture_draw={} ui=unavailable provider_ready=0",
+                            frame, bool(fgInputSnapshot), color->allocationSerial, color->fgWriteGeneration,
+                            drawsThisFrame, debugCaptureDir.empty() ? -1 : int64_t(debugDraw) - 1);
                 }
                 if (activePlan.requestedUpscaler == upscaling::Upscaler::Fsr && (promotion.inputs.resetHistory || frame % 120 == 0)) {
                     const auto projection = fsr::DeriveProjection(promotion.inputs.cameraViewProjection,
@@ -3316,6 +3337,11 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             }
             void DiscardFgInputSnapshot(GpuSlot& slot)
             {
+                for (const auto& p : slot.fgCompositeResolves) {
+                    p->resolveDiscarded = true;
+                    if (fgCompositeHandoff == p) fgCompositeHandoff.reset();
+                }
+                slot.fgCompositeResolves.clear();
                 for (const auto& p : slot.fgResolvePackets) {
                     p->resolveDiscarded = true;
                     p->Cancel(frame_generation::HandoffCancel::SubmitFailure);
@@ -3323,7 +3349,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 slot.fgResolvePackets.clear();
                 if (slot.fgInputSnapshot) {
                     slot.fgInputSnapshot->producerDiscarded = true;
-                    if (fgInputSnapshot == slot.fgInputSnapshot) fgInputSnapshot.reset();
+                    if (fgInputSnapshot == slot.fgInputSnapshot) {
+                        fgInputSnapshot.reset();
+                        fgCompositeHandoff.reset();
+                    }
                     slot.fgInputSnapshot.reset();
                 }
                 fgHandoffPool.Collect();
@@ -3337,6 +3366,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     ScopedTimer timer{ tFlush, cpuTimingEnabled };
                     if (!video::WaitForGpuFence(s.fence.get())) {
                         if (s.fgInputSnapshot) s.fgInputSnapshot->producerWaitFailed = true;
+                        for (auto& p : s.fgCompositeResolves) p->resolveWaitFailed = true;
                         for (auto& p : s.fgResolvePackets) p->resolveWaitFailed = true;
                         for (auto& capture : s.fgUiUses) {
                             capture->waitFailed = true;
@@ -3347,11 +3377,19 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 }
                 s.submitted = false;
 #if defined(LO_GPU_PLUME)
+                for (auto& p : s.fgCompositeResolves) {
+                    p->resolveCompleted = true;
+                    p->resolveWaitFailed = false;
+                }
+                s.fgCompositeResolves.clear();
                 if (s.fgInputSnapshot) {
                     s.fgInputSnapshot->producerCompleted = true;
                     s.fgInputSnapshot->producerWaitFailed = false;
-                    LOG_INFO("renderer: FG input snapshot frame={} completed_serial={} ui=unavailable provider_ready=0",
-                        s.fgInputSnapshot->inputs.renderFrameId, s.fgInputSnapshot->producerSerial);
+                    const auto snapshotFrame = s.fgInputSnapshot->inputs.renderFrameId;
+                    if (snapshotFrame == fgSnapshotRequestedFrame ||
+                        (fgCompositeEnabled && snapshotFrame % 120 == 0))
+                        LOG_INFO("renderer: FG input snapshot frame={} completed_serial={} ui=unavailable provider_ready=0",
+                            snapshotFrame, s.fgInputSnapshot->producerSerial);
                     s.fgInputSnapshot.reset();
                 }
 #endif
@@ -3448,6 +3486,8 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 fgHandoffPool.Advance(frame, temporalEpoch, activePlan);
                 if (fgInputSnapshot && fgInputSnapshot->inputs.renderFrameId != frame)
                     fgInputSnapshot.reset(); // submitted slots / exact resolve packets retain their own copies
+                if (fgCompositeHandoff && fgCompositeHandoff->frame != frame)
+                    fgCompositeHandoff.reset();
                 if (video::GpuWorkStopped() || !RecycleSlot(gpuSlot)) return false;
                 BindGpuSlot();
                 if (!listOpen)
@@ -3589,7 +3629,17 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     return false;
                 }
 #if defined(LO_GPU_PLUME)
-                if (Gpu().fgInputSnapshot) Gpu().fgInputSnapshot->producerSerial = submissionSerial;
+                const bool orderedPresentQueue = vulkan && queue && queue == video::GetQueue() &&
+                    device == video::GetDevice();
+                if (Gpu().fgInputSnapshot) {
+                    Gpu().fgInputSnapshot->producerSerial = submissionSerial;
+                    Gpu().fgInputSnapshot->producerOnPresentQueue = orderedPresentQueue;
+                }
+                for (auto& p : Gpu().fgCompositeResolves) {
+                    p->resolveSubmissionSerial = submissionSerial;
+                    p->resolveOnPresentQueue = orderedPresentQueue &&
+                        p->plan.deviceEpoch == activePlan.deviceEpoch;
+                }
                 for (auto& p : Gpu().fgResolvePackets) p->resolveSerial = submissionSerial;
                 if (Gpu().fgUiFinalCopy)
                     for (const auto& capture : Gpu().fgUiUses) {
@@ -8855,6 +8905,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             void CancelFgSnapshots(frame_generation::HandoffCancel reason)
             {
                 if (fgInputSnapshot) fgInputSnapshot->lineageCanceled = true;
+                fgCompositeHandoff.reset();
                 for (auto& slot : gpuSlots)
                     if (slot.fgInputSnapshot) slot.fgInputSnapshot->lineageCanceled = true;
                 fgHandoffPool.CancelAll(reason);
@@ -8864,7 +8915,45 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 if (auto old = rs.fgPacket.lock(); old && !old->selected)
                     old->Cancel(frame_generation::HandoffCancel::Superseded);
                 rs.fgPacket.reset();
+                rs.fgComposite.reset();
                 rs.fgOwner = rs.fgEpoch = rs.fgSourceAllocation = rs.fgSourceGeneration = 0;
+            }
+            void RecordFgCompositeResolve(HostTexture& source, ResolvedSurface& rs)
+            {
+                if (!fgCompositeEnabled || !fgInputSnapshot || !rs.tex || !rs.sourcePlanValid ||
+                    fgInputSnapshot->producerDiscarded || fgInputSnapshot->lineageCanceled ||
+                    !fgInputSnapshot->inputs.cameraValid ||
+                    !std::isfinite(fgInputSnapshot->inputs.frameTimeDeltaMilliseconds) ||
+                    fgInputSnapshot->inputs.frameTimeDeltaMilliseconds <= 0.0f ||
+                    rs.sourcePlan.requestedUpscaler != upscaling::Upscaler::Dlss ||
+                    rs.sourcePlan.consumer != upscaling::TemporalConsumer::DlssSr ||
+                    fgInputSnapshot->inputs.renderFrameId != frame ||
+                    fgInputSnapshot->inputs.temporalEpoch != temporalEpoch ||
+                    fgInputSnapshot->inputs.plan != rs.sourcePlan ||
+                    fgInputSnapshot->resolveSourceAllocation != source.allocationSerial ||
+                    !frame_generation::CompositeResolveGeometry{
+                        {source.width, source.height}, {rs.tex->width, rs.tex->height},
+                        rs.writeX, rs.writeY, rs.writeWidth, rs.writeHeight}.Matches(rs.sourcePlan))
+                    return;
+                std::shared_ptr<frame_generation::CompositeHandoff> packet;
+                try { packet = std::make_shared<frame_generation::CompositeHandoff>(); }
+                catch (const std::bad_alloc&) { return; }
+                packet->producer = fgInputSnapshot;
+                packet->plan = rs.sourcePlan;
+                packet->frame = frame;
+                packet->historyEpoch = temporalEpoch;
+                packet->sourceAllocation = source.allocationSerial;
+                packet->resolveOrdinal = rs.writeOrdinal;
+                packet->targetAllocation = rs.tex->allocationSerial;
+                packet->outputWidth = rs.tex->width;
+                packet->outputHeight = rs.tex->height;
+                // The current slot owns the final resolve command until its
+                // checked batch submit (or discard) establishes a queue serial.
+                if (Gpu().fgCompositeResolves.size() >= 4) return;
+                try { Gpu().fgCompositeResolves.push_back(packet); }
+                catch (const std::bad_alloc&) { return; }
+                fgCompositeHandoff = packet;
+                rs.fgComposite = packet;
             }
             void RecordFgResolve(HostTexture& source, ResolvedSurface& rs)
             {
@@ -8980,6 +9069,26 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     if (!video::GpuWorkStopped() && candidate.Matches()) *handoff = std::move(candidate);
                 }
                 return rs->tex->texture.get();
+            }
+            bool AcquireFgCompositeForPresent(uint32_t address, frame_generation::CompositeHandoff& out)
+            {
+                out = {};
+                if (!fgCompositeEnabled || listOpen || !vulkan ||
+                    queue != video::GetQueue() || device != video::GetDevice() ||
+                    PlanSuppressed() || video::GpuWorkStopped()) return false;
+                auto* rs = NewestResolved(address & 0x1FFFFFFF);
+                auto packet = rs ? rs->fgComposite.lock() : nullptr;
+                if (!packet || fgCompositeHandoff != packet || !rs->tex ||
+                    rs->frame + 1 != frame ||
+                    rs->writeOrdinal != packet->resolveOrdinal ||
+                    rs->tex->allocationSerial != packet->targetAllocation ||
+                    packet->plan.deviceEpoch != activePlan.deviceEpoch ||
+                    rs->sourcePlan != packet->plan || !rs->sourcePlanValid ||
+                    rs->tex->width != packet->outputWidth || rs->tex->height != packet->outputHeight ||
+                    !packet->ReadyForOrderedSubmission())
+                    return false;
+                out = *packet;
+                return true;
             }
 
             // ---- resolve --------------------------------------------------------------------
@@ -9187,6 +9296,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 rs.sourcePlanValid = fullResolved&&activePlan.cpuSerial!=0;
                 if (rs.sourcePlanValid) rs.sourcePlan = activePlan;
                 RecordFgResolve(color, rs);
+                RecordFgCompositeResolve(color, rs);
                 RecordFgUiFinal(color, rs, destBase);
                 if (taa_collection::Enabled())
                     rs.tex->bindingProducer.Copy(color.bindingProducer, taa_collection::ConsentEpoch(), frame,
@@ -10081,6 +10191,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
         return g_renderer ? g_renderer->AcquireResolvedForPresent(physicalAddress, width, height, format,
             sourcePlan, handoff) : nullptr;
     }
+    bool AcquireFgCompositeInputs(uint32_t physicalAddress, frame_generation::CompositeHandoff& handoff)
+    {
+        return g_renderer && g_renderer->AcquireFgCompositeForPresent(physicalAddress, handoff);
+    }
     void CancelFgHandoffs()
     {
         if (g_renderer) g_renderer->CancelFgSnapshots(frame_generation::HandoffCancel::DisplayChange);
@@ -10353,6 +10467,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
     bool SceneAAApplied(uint32_t) { return false; }
     plume::RenderTexture* AcquireResolvedSurface(uint32_t, uint32_t&, uint32_t&, uint32_t&,
         frame_plan::FramePlan*, frame_generation::ResolvedHandoff*) { return nullptr; }
+    bool AcquireFgCompositeInputs(uint32_t, frame_generation::CompositeHandoff&) { return false; }
     void CancelFgHandoffs() {}
     bool ReadbackResolvedSurface(uint32_t, std::vector<uint32_t>&, uint32_t&, uint32_t&) { return false; }
     std::vector<uint32_t> GetResolvedAddresses() { return {}; }
