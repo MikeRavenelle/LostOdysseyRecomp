@@ -4,6 +4,8 @@
 #include "frame_generation_snapshot.h"
 #include "dlss_fg_depth.h"
 #include "dlss_fg_completion.h"
+#include "dlss_fg_host_use.h"
+#include "dlss_fg_policy.h"
 
 namespace gpu::dlss_fg {
 // Presentation-thread owner. The first implementation serializes input reuse
@@ -17,6 +19,8 @@ public:
         uint32_t width, uint32_t height, uint32_t buffers, VkFormat format,
         plume::RenderCommandList* commands = nullptr, double producerWaitMs = 0.0);
     void SubmitStart();
+    void HostSubmitted(bool success, uint64_t serial, int32_t nativeResult);
+    void CancelUnsubmitted(plume::RenderCommandList* commands);
     void SubmitEnd();
     void PresentStart();
     void Presented(bool accepted);
@@ -29,6 +33,8 @@ private:
     void Mark(sl::PCLMarker marker);
     void DrainInputs();
     void SignalInputCompletion();
+    void ObserveInputs(bool enabled, bool reset, Interruption reason);
+    void LogContinuity();
     [[noreturn]] void FailClosed(const char* operation, int32_t nativeResult = 0);
     Runtime& runtime_;
     plume::VulkanDevice& device_;
@@ -38,9 +44,12 @@ private:
     sl::DLSSGOptions options_{};
     VkFence completion_ = VK_NULL_HANDLE;
     PresentQueueCompletion inputCompletion_;
+    HostInputUse hostUse_;
     std::shared_ptr<frame_generation::ProducerSnapshot> retained_;
     temporal::Matrix previousVP_{};
     temporal::Viewport previousRaster_{};
+    frame_plan::FramePlan previousPlan_{};
+    Continuity continuity_;
     DepthRemapper depth_;
     uint64_t previousFrame_ = 0, previousEpoch_ = 0;
     upscaling::Upscaler previousProvider_ = upscaling::Upscaler::Off;

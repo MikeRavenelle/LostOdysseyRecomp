@@ -62,6 +62,18 @@ bool VulkanDispatch::QueryInstance(std::vector<VkExtensionProperties>& ext, std:
 bool VulkanDispatch::QueryDevice(VkInstance instance, VkPhysicalDevice physical,
     std::vector<VkExtensionProperties>& ext, std::string& reason) {
     if (native_.queryDevice && !native_.queryDevice(native_.userData, instance, physical, ext, reason)) return false;
+    featureSupported_ = true;
+    sl::AdapterInfo adapter{};
+    adapter.vkPhysicalDevice = physical;
+    for (const auto feature : Runtime::kFeatures) {
+        const auto result = sl_.IsFeatureSupported(feature, adapter);
+        std::printf("FG_FEATURE_PROBE feature=%u result=%d\n", unsigned(feature), int(result));
+        featureSupported_ &= result == sl::Result::eOk;
+    }
+    if (!featureSupported_) {
+        std::puts("FG_UNAVAILABLE=adapter_feature_probe SR_DEVICE=native FG_DEVICE_HOOKS=off");
+        return true;
+    }
     for (auto& req : requirements_)
         for (uint32_t j = 0; j < req.vkNumDeviceExtensions; ++j) Append(ext, req.vkDeviceExtensions[j]);
     // Plume's volkLoadInstance replaces the global enumeration pointer. Explicitly

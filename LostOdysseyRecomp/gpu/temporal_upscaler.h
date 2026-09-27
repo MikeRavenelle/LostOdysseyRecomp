@@ -101,6 +101,7 @@ public:
     bool HasFeatureState() const;
     void ReleaseFeatureAfterGpuDrain();
     void ShutdownAfterGpuDrain();
+    bool ShutdownComplete() const;
     void AbandonAfterDeviceLoss();
 private:
     dlss::Controller& dlss_;

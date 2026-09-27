@@ -244,6 +244,13 @@ namespace gpu
             catch (...) { LOG_ERROR("graphics startup failed: unknown exception"); video::Shutdown(); }
             ready.set_value(success);
             if (success) WorkerMain();
+            if (video::ExitRequested()) {
+                host_ui::RequestStop();
+                m_running = false;
+                m_writePtrChanged.notify_all();
+                m_interruptCv.notify_all();
+                video::FinishRequestedExit();
+            }
         });
         if (!initialized.get()) {
             m_running = false;
@@ -260,6 +267,13 @@ namespace gpu
             return false;
         }
         return true;
+    }
+
+    void CommandProcessor::RequestStopForExit()
+    {
+        m_running.store(false, std::memory_order_release);
+        m_writePtrChanged.notify_all();
+        m_interruptCv.notify_all();
     }
 
     void CommandProcessor::Shutdown()
@@ -622,7 +636,7 @@ namespace gpu
     {
         Reader reader{ TranslatePhysical(m_primaryBufferPhysical), m_primaryBufferSize,
             (readIndex * 4) % m_primaryBufferSize, (writeIndex * 4) % m_primaryBufferSize, true };
-        while (reader.ReadCount())
+        while (reader.ReadCount() && m_running)
         {
             if (!ExecutePacket(reader))
             {
@@ -636,7 +650,7 @@ namespace gpu
     void CommandProcessor::ExecuteIndirectBuffer(uint32_t physicalAddress, uint32_t dwordCount)
     {
         Reader reader{ TranslatePhysical(physicalAddress), dwordCount * 4, 0, dwordCount * 4, false };
-        while (reader.ReadCount())
+        while (reader.ReadCount() && m_running)
         {
             if (!ExecutePacket(reader))
             {

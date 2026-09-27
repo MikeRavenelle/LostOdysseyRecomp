@@ -1,6 +1,7 @@
 #include "dlss_frame_generation.h"
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
 #include "dlss_fg_constants.h"
+#include "vulkan_command_recording.h"
 #include <os/logger.h>
 #include <cstdlib>
 #include <cstdio>
@@ -8,6 +9,12 @@
 #include <chrono>
 
 namespace gpu::dlss_fg {
+namespace {
+uint64_t SteadyMs() {
+    return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+}
 Session::Session(Runtime& runtime, plume::VulkanDevice& device, plume::VulkanCommandQueue& queue)
     : runtime_(runtime), device_(device), queue_(queue) {}
 Session::~Session() { Shutdown(); }
@@ -56,7 +63,9 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
     if (retained_) FailClosed("prepare before previous input completion");
     token_ = nullptr;
     ++frame_;
-    if (!Check(runtime_.NewFrameToken(token_, &frame_), "frame token") || !token_) { Disable(); return false; }
+    if (!Check(runtime_.NewFrameToken(token_, &frame_), "frame token") || !token_) {
+        Disable(); ObserveInputs(false, false, Interruption::SdkFailure); return false;
+    }
     const auto sleepBegin = Clock::now();
     Check(runtime_.ReflexSleep(*token_), "Reflex sleep");
     const auto slept = Clock::now();
@@ -68,6 +77,7 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
         inputs->inputs.motionState == temporal::MotionState::ResetInitialization ||
         previousEpoch_ != inputs->inputs.temporalEpoch || previousFrame_ + 1 != inputs->inputs.renderFrameId ||
         previousProvider_ != inputs->inputs.plan.requestedUpscaler ||
+        !SameHistoryConfiguration(previousPlan_, inputs->inputs.plan) ||
         options_.colorWidth != width || options_.colorHeight != height ||
         options_.colorBufferFormat != uint32_t(format) || options_.numBackBuffers != buffers ||
         options_.mvecDepthWidth != inputs->inputs.depth.width || options_.mvecDepthHeight != inputs->inputs.depth.height;
@@ -93,20 +103,23 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
                 width, height, inputs ? inputs->inputs.plan.output.width : 0, inputs ? inputs->inputs.plan.output.height : 0,
                 buffers, uint32_t(format), commands != nullptr, reset);
         Disable();
+        ObserveInputs(false, false, failed_ ? Interruption::SdkFailure :
+            !inputs ? Interruption::NoInputs : Interruption::InvalidInputs);
         return false;
     }
     const auto& in = inputs->inputs;
+    if (!hostUse_.Begin(commands)) FailClosed("overlapping FG input recording");
     retained_ = inputs; // Retain source images before recording their GPU read.
     const auto depthBegin = Clock::now();
     auto* remappedDepth = depth_.Record(commands, in.depth, remap);
     const auto depthRecorded = Clock::now();
-    if (!remappedDepth) { Disable(); return false; }
+    if (!remappedDepth) { Disable(); ObserveInputs(false, false, Interruption::InvalidInputs); return false; }
     options_.numBackBuffers = buffers;
     options_.colorWidth = width; options_.colorHeight = height; options_.colorBufferFormat = format;
     options_.mvecDepthWidth = in.depth.width; options_.mvecDepthHeight = in.depth.height;
     options_.depthBufferFormat = VK_FORMAT_R32_SFLOAT;
     options_.mvecBufferFormat = VK_FORMAT_R16G16_SFLOAT;
-    if (!Mode(true)) { Disable(); return false; }
+    if (!Mode(true)) { Disable(); ObserveInputs(false, false, Interruption::SdkFailure); return false; }
     sl::Resource resources[2] = {{sl::ResourceType::eTex2d, nullptr}, {sl::ResourceType::eTex2d, nullptr}};
     const temporal::TextureRegion regions[] = {{remappedDepth, {in.depth.width, in.depth.height},
         0, 0, in.depth.width, in.depth.height}, in.motion};
@@ -129,8 +142,10 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
     }
     if (!Check(runtime_.SetConstants(constants, *token_, viewport_), "constants") ||
         !Check(runtime_.SetTagForFrame(*token_, viewport_, tags, 4, nullptr), "composited inputs")) {
-        Disable(); return false;
+        Disable(); ObserveInputs(false, false, Interruption::SdkFailure); return false;
     }
+    previousPlan_ = in.plan;
+    ObserveInputs(true, reset, Interruption::None);
     previousVP_ = in.cameraViewProjection;
     previousRaster_ = in.cameraRaster;
     previousFrame_ = in.renderFrameId; previousEpoch_ = in.temporalEpoch;
@@ -143,7 +158,65 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
     }
     return true;
 }
-void Session::SubmitStart() { Mark(sl::PCLMarker::eRenderSubmitStart); }
+void Session::LogContinuity() {
+    const double ratio = continuity_.Samples() ?
+        100.0 * double(continuity_.Enabled()) / double(continuity_.Samples()) : 0.0;
+    LOG_INFO("DLSS FG continuity: samples={} enabled_samples={} enabled_percent={} longest_interruption_ms={} resumes={} reset_samples={} reason={} scope=prepare_attempts_not_display",
+        continuity_.Samples(), continuity_.Enabled(), ratio, continuity_.LongestInterruption(SteadyMs()),
+        continuity_.Resumes(), continuity_.Resets(), Name(continuity_.Reason()));
+}
+void Session::ObserveInputs(bool enabled, bool reset, Interruption reason) {
+    const auto previousReason = continuity_.Reason();
+    continuity_.Observe(enabled, reset, reason, SteadyMs());
+    if (continuity_.Samples() <= 5 || continuity_.Samples() % 60 == 0 ||
+        previousReason != continuity_.Reason()) LogContinuity();
+}
+void Session::SubmitStart() {
+    if (!hostUse_.SubmissionStarted()) FailClosed("duplicate host submit attempt");
+    Mark(sl::PCLMarker::eRenderSubmitStart);
+}
+void Session::HostSubmitted(bool success, uint64_t serial, int32_t nativeResult) {
+    if (!hostUse_.Submitted(success, serial))
+        FailClosed("host submission failed or missing serial", nativeResult);
+}
+void Session::CancelUnsubmitted(plume::RenderCommandList* commands) {
+    if (!hostUse_.Matches(commands) || hostUse_.Serial()) return;
+    if (!hostUse_.CanCancel(commands)) FailClosed("cancellation after submit attempt");
+    auto& list = *static_cast<plume::VulkanCommandList*>(commands);
+    // A reset of this never-submitted list revokes all recorded host reads.
+    // It is not evidence that any SDK work or producer copy has completed.
+    const auto reset = vkResetCommandBuffer(list.vk, 0);
+    if (reset != VK_SUCCESS) FailClosed("cancel command reset failed", int32_t(reset));
+    submission::ClearBindings(list);
+    list.recording = false;
+    list.externalCommandsOpen = false;
+    list.activeRenderPass = VK_NULL_HANDLE;
+    Disable();
+    sl::ResourceTag tags[] = {{nullptr, sl::kBufferTypeDepth, sl::eValidUntilPresent},
+        {nullptr, sl::kBufferTypeMotionVectors, sl::eValidUntilPresent},
+        {nullptr, sl::kBufferTypeHUDLessColor, sl::eValidUntilPresent},
+        {nullptr, sl::kBufferTypeUIColorAndAlpha, sl::eValidUntilPresent}};
+    if (!token_ || !Check(runtime_.SetTagForFrame(*token_, viewport_, tags, 4, nullptr), "cancel input tags"))
+        FailClosed("cancel input tags failed");
+    // Producer copies preceded this recording on the same queue. They still
+    // own these images even though our host list never reached submission.
+    // Previous SDK input use was already drained before Prepare began.
+    VkResult drained;
+    {
+        std::unique_lock lock(*queue_.queue->mutex);
+        drained = vkQueueWaitIdle(queue_.queue->vk);
+    }
+    if (drained != VK_SUCCESS) FailClosed("cancel producer drain failed", int32_t(drained));
+    if (!hostUse_.Canceled(commands, true, true, true)) FailClosed("invalid input cancellation");
+    retained_.reset();
+    // Plume's layout cache was changed while recording. An unexecuted image
+    // must not enter the completed-input reuse pool with that cached layout.
+    depth_.DiscardUnsubmitted();
+    continuity_.Suspend(Interruption::Canceled, SteadyMs());
+    LogContinuity();
+    token_ = nullptr;
+    LOG_INFO("DLSS FG: unsubmitted input canceled commands_reset=true tags_revoked=true producer_drained=true retained=false");
+}
 void Session::SubmitEnd() { Mark(sl::PCLMarker::eRenderSubmitEnd); }
 void Session::PresentStart() { Mark(sl::PCLMarker::ePresentStart); }
 [[noreturn]] void Session::FailClosed(const char* operation, int32_t nativeResult) {
@@ -173,6 +246,7 @@ void Session::DrainInputs() {
     const auto result = vkWaitForFences(device_.vk, 1, &completion_, VK_TRUE, 10'000'000'000ull);
     if (!inputCompletion_.Completed(serial, result == VK_SUCCESS))
         FailClosed("input completion wait failed", int32_t(result));
+    if (!hostUse_.Completed()) FailClosed("SDK completion without host submission");
     // Neither a mode request nor device-idle can take this release path.
     retained_.reset();
     depth_.ReleaseAfterInputDrain();
@@ -182,6 +256,7 @@ void Session::DrainInputs() {
 }
 void Session::Presented(bool accepted) {
     if (!ready_ || !token_) return;
+    if (retained_ && !hostUse_.Serial()) FailClosed("present before host submission");
     Mark(sl::PCLMarker::ePresentEnd);
     // A rejected Present provides no documented input-completion ordering.
     // Keep uncertain resources alive and stop instead of calling them drained.
@@ -205,16 +280,27 @@ void Session::Disable() {
     if (!ready_) return;
     // A failed Prepare may already have recorded the depth conversion into
     // the host list. Keep that allocation until Presented's checked fence.
-    if (enabled_ && !Mode(false)) FailClosed("disable options failed");
+    if (enabled_) {
+        if (token_) {
+            sl::ResourceTag tags[] = {{nullptr, sl::kBufferTypeDepth, sl::eValidUntilPresent},
+                {nullptr, sl::kBufferTypeMotionVectors, sl::eValidUntilPresent},
+                {nullptr, sl::kBufferTypeHUDLessColor, sl::eValidUntilPresent},
+                {nullptr, sl::kBufferTypeUIColorAndAlpha, sl::eValidUntilPresent}};
+            if (!Check(runtime_.SetTagForFrame(*token_, viewport_, tags, 4, nullptr), "disable input tags"))
+                FailClosed("disable input tags failed");
+        }
+        if (!Mode(false)) FailClosed("disable options failed");
+    }
     previousFrame_ = previousEpoch_ = 0;
     previousProvider_ = upscaling::Upscaler::Off;
 }
 void Session::Quiesce() {
     if (!ready_) return;
+    continuity_.Suspend(Interruption::ResourceBoundary, SteadyMs());
     DrainInputs();
-    // The caller must cancel an unsubmitted host list before discarding it.
-    // This session has no such cancellation proof; never infer one from idle.
-    if (retained_) FailClosed("quiesce without post-present input completion");
+    // The recording exit guard cancels only lists with no submit attempt.
+    // Submitted/uncertain input use still requires the checked SDK marker.
+    if (retained_ || hostUse_.Pending()) FailClosed("quiesce without post-present input completion");
     Disable();
     const auto result = vkDeviceWaitIdle(device_.vk);
     if (result != VK_SUCCESS) FailClosed("SDK quiesce failed", int32_t(result));
@@ -227,6 +313,12 @@ void Session::Shutdown() {
     // Off applies at a later Present. Do not issue a fake frame. First retire
     // inputs by their checked marker, then drain before SDK/device teardown.
     Quiesce();
+    // Release the FG feature while both Streamline and native NGX sessions
+    // are alive. A local fence drain does not prove SDK destruction succeeded.
+    if (used_ && !runtime_.FreeResources(sl::kFeatureDLSS_G, viewport_))
+        FailClosed("FG feature release failed");
+    used_ = false;
+    LogContinuity();
     vkDestroyFence(device_.vk, completion_, nullptr);
     completion_ = VK_NULL_HANDLE; ready_ = false;
     LOG_INFO("DLSS FG: session ended generated_intervals={} actual_presents={} submitted_input_serial={} completed_input_serial={} cleanup=complete",

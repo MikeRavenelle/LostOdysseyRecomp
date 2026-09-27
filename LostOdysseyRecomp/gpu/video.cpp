@@ -90,6 +90,7 @@ namespace gpu::video
 
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
         SDL_Window* g_window = nullptr;
+        std::atomic<bool> g_exitRequested{false};
         bool g_videoSubsystemOwned = false;
         constexpr auto kCursorIdleTimeout = std::chrono::milliseconds(2000);
         std::chrono::steady_clock::time_point g_lastPointerActivity{};
@@ -599,6 +600,11 @@ namespace gpu::video
         void FgSubmitStart() {
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
             if (g_fgSession) g_fgSession->SubmitStart();
+#endif
+        }
+        void FgHostSubmitted(bool success, uint64_t serial, int32_t nativeResult) {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+            if (g_fgSession) g_fgSession->HostSubmitted(success, serial, nativeResult);
 #endif
         }
         void FgPresentStart() {
@@ -1137,8 +1143,13 @@ namespace gpu::video
         g_captureRetained.clear();
         if (g_captureCopy.buffer) g_captureCopy.buffer.reset();
         g_captureCopy = {};
-        if (g_temporalUpscaler)
+        if (g_temporalUpscaler) {
             g_temporalUpscaler->ShutdownAfterGpuDrain();
+            if (!g_temporalUpscaler->ShutdownComplete()) {
+                LOG_ERROR("video: SR shutdown incomplete; retaining unresolved resources and device");
+                std::fflush(nullptr); std::_Exit(EXIT_FAILURE);
+            }
+        }
         g_cpuFrame.reset(); g_cpuWidth = g_cpuHeight = 0;
         g_presentedSnapshot.reset(); g_snapshotWidth = g_snapshotHeight = 0; g_snapshotFormat=plume::RenderFormat::UNKNOWN;
         // Renderer shutdown above established a completed/lost-device teardown
@@ -1365,7 +1376,7 @@ namespace gpu::video
             g_queue = g_device->createCommandQueue(plume::RenderCommandListType::DIRECT);
             if (!g_queue) return "graphics queue creation failed";
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
-            if (g_fgDispatch) {
+            if (g_fgDispatch && g_fgDispatch->FeatureSupported()) {
                 std::string reason;
                 if (!g_fgDispatch->InstallDeviceHooks(static_cast<plume::VulkanInterface*>(g_interface.get())->instance,
                     static_cast<plume::VulkanDevice*>(g_device.get())->vk, reason)) return reason;
@@ -1459,6 +1470,34 @@ namespace gpu::video
         hid::SetExternalEventPump(false);
     }
 
+    bool FrameGenerationAvailable() {
+#if defined(LO_GPU_PLUME) && defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        return bool(g_fgSession);
+#else
+        return false;
+#endif
+    }
+    bool ExitRequested() { return g_exitRequested.load(std::memory_order_acquire); }
+    void RequestExit() {
+        if (!g_exitRequested.exchange(true, std::memory_order_acq_rel))
+            LOG_INFO("video: exit requested; GPU owner cleanup pending");
+        g_commandProcessor.RequestStopForExit();
+        RequestSkipShaderPreparation();
+    }
+    [[noreturn]] void FinishRequestedExit() {
+        if (!ExitRequested()) {
+            LOG_ERROR("video: exit without an owner-thread shutdown request");
+            std::fflush(nullptr); std::_Exit(EXIT_FAILURE);
+        }
+        // All presentation stack/recording guards have unwound at this point.
+        renderer::WaitDebugCaptureArchive();
+        Shutdown(); // Failed native/SDK drains terminate with EXIT_FAILURE.
+        LOG_INFO("video: owner shutdown complete native_ngx_cleanup=complete streamline_cleanup=complete exit_code=0");
+        os::shaderlog::CloseForExit();
+        std::fflush(nullptr);
+        std::_Exit(EXIT_SUCCESS);
+    }
+
     void PumpEvents()
     {
 #ifndef _WIN32
@@ -1477,7 +1516,7 @@ namespace gpu::video
         g_skipShaderPreparation.store(true);
         LOG_INFO("video: shader preparation skip requested");
     }
-    void ResetShaderPreparationSkip() { g_skipShaderPreparation.store(false); }
+    void ResetShaderPreparationSkip() { g_skipShaderPreparation.store(ExitRequested()); }
     bool DisplayModeFailed() { return g_displayFailed.load(); }
     bool WindowModeOverridden() { return g_windowModeOverridden.load(); }
     uint64_t BeginDisplayChange(const settings::Config& config) {
@@ -1548,6 +1587,15 @@ namespace gpu::video
 
     void PumpWindowEvents()
     {
+        if (ExitRequested() || !g_window) return;
+        // Service close even during an outstanding FG window handshake. The
+        // regular event loop below cannot run while that handshake is pending.
+        SDL_PumpEvents();
+        SDL_Event closeEvent{};
+        if (SDL_PeepEvents(&closeEvent, 1, SDL_GETEVENT, SDL_QUIT, SDL_QUIT) > 0) {
+            RequestExit();
+            return;
+        }
         static uint64_t shownProgress = 0;
         static auto lastProgressPaint = std::chrono::steady_clock::time_point{};
         const uint64_t progress = g_shaderProgress.load();
@@ -1608,9 +1656,8 @@ namespace gpu::video
             renderer::WaitDebugCaptureArchive();
 #if defined(_WIN32) || defined(__linux__)
             if (settings::restart::LaunchWaitingChild()) {
-                os::shaderlog::CloseForExit();
-                fflush(nullptr);
-                std::_Exit(0);
+                RequestExit();
+                return;
             }
 #else
             settings::restart::ReportLaunchFailure();
@@ -1802,11 +1849,8 @@ namespace gpu::video
                 hid::HandleControllerEvent(event.type, event.cdevice.which);
             if (event.type == SDL_QUIT)
             {
-                LOG_INFO("video: window closed, exiting");
-                renderer::WaitDebugCaptureArchive();
-                os::shaderlog::CloseForExit();
-                fflush(stdout);
-                std::_Exit(0);
+                RequestExit();
+                return;
             }
         }
     }
@@ -1991,6 +2035,7 @@ namespace gpu::video
         FgSubmitStart();
         const bool submitted = SubmitPresentationBatch(lists, 1, &waitSemaphore, 1, &signalSemaphore, 1,
             g_fence.get(), &submissionSerial, &submitResult);
+        FgHostSubmitted(submitted, submissionSerial, submitResult);
         if (!submitted) { LOG_ERROR("video: present submit failed raw_result={}", submitResult); ReadPresentCapture(captureResult, false, false, 0); return false; }
         FgPresentStart();
         const bool presented = g_swapChain->present(imageIndex, &signalSemaphore, 1);
@@ -2148,7 +2193,14 @@ namespace gpu::video
 
                 // Staging the exact resolve is independent of ordinary present.
                 // This does not make inputs CPU/GPU consumable before completion.
-                struct FgRecordingExit { ~FgRecordingExit() { g_fgPresent.CancelRecording(); } } fgExit;
+                struct FgRecordingExit {
+                    ~FgRecordingExit() {
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+                        if (g_fgSession) g_fgSession->CancelUnsubmitted(g_commandList.get());
+#endif
+                        g_fgPresent.CancelRecording();
+                    }
+                } fgExit;
                 if (fgHandoff.packet && g_fgPresent.Select(fgHandoff, g_deviceEpoch.load(), sourceWidth, sourceHeight,
                     g_swapChain->getWidth(), g_swapChain->getHeight())) {
                     const auto& id = fgHandoff.selected;
@@ -2202,6 +2254,7 @@ namespace gpu::video
                 FgSubmitStart();
                 const bool submitted = SubmitPresentationBatch(lists, 1, &waitSemaphore, 1, &signalSemaphore, 1,
                     g_fence.get(), &submissionSerial, &submitResult);
+                FgHostSubmitted(submitted, submissionSerial, submitResult);
                 if (!submitted) { LOG_ERROR("video: GPU presentation submit failed raw_result={}", submitResult); ReadPresentCapture(captureResult, false, false, 0); return; }
                 g_fgPresent.Submitted(g_deviceEpoch.load(), submissionSerial);
                 FgPresentStart();

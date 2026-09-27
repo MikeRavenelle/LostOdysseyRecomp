@@ -39,6 +39,8 @@ namespace gpu
     {
         bool Init();
         void Shutdown();
+        // Thread-safe request only; GPU destruction stays on the worker.
+        void RequestStopForExit();
 
         // Kernel entry points
         void InitializeRingBuffer(uint32_t physicalAddress, uint32_t sizeLog2);

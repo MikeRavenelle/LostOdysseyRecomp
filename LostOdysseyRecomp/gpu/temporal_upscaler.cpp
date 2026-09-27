@@ -203,6 +203,7 @@ void TemporalUpscaler::ReleaseCompleted(uint64_t serial) { if (serial) { dlss_.R
 bool TemporalUpscaler::HasFeatureState() const { return dlss_.HasFeatureState() || fsr_->HasFeatureState(); }
 void TemporalUpscaler::ReleaseFeatureAfterGpuDrain() { dlss_.ReleaseFeatureAfterGpuDrain(); fsr_->ReleaseFeatureAfterGpuDrain(); }
 void TemporalUpscaler::ShutdownAfterGpuDrain() { dlss_.ShutdownAfterGpuDrain(); fsr_->ShutdownAfterGpuDrain(); }
+bool TemporalUpscaler::ShutdownComplete() const { return dlss_.ShutdownComplete() && !fsr_->HasFeatureState(); }
 void TemporalUpscaler::AbandonAfterDeviceLoss() { dlss_.AbandonUsesAfterDeviceLoss(); fsr_->AbandonUsesAfterDeviceLoss(); }
 } // namespace gpu
 #endif

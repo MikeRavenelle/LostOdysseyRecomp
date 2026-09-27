@@ -1,6 +1,7 @@
 #pragma once
 
 #include "frame_generation_snapshot.h"
+#include "dlss_fg_policy.h"
 
 #include <cmath>
 #include <cstdint>
@@ -52,8 +53,7 @@ struct CompositeHandoff {
             !p.sourceColor.region.texture && !p.sourceColor.lifetime &&
             !p.motionInvalidity.region.texture && !p.motionInvalidity.lifetime &&
             !p.sceneColorCandidate.region.texture && !p.sceneColorCandidate.lifetime;
-        return upscaling::IsSrConsumer(plan.consumer) &&
-            upscaling::MatchesSrProvider(plan.requestedUpscaler, plan.consumer) &&
+        return dlss_fg::CompositePlanSupported(plan) &&
             p.ui == UiSeparation::Unavailable &&
             !p.lineageCanceled && !p.producerDiscarded && !p.producerWaitFailed &&
             !resolveDiscarded && !resolveWaitFailed &&

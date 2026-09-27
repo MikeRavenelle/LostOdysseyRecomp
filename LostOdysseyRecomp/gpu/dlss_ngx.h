@@ -146,6 +146,10 @@ public:
     // feature only; final shutdown also releases parameters and the session.
     void ReleaseFeatureAfterGpuDrain();
     void ShutdownAfterGpuDrain();
+    bool ShutdownComplete() const {
+        return srUses_.Empty() && !feature_ && !featureParameters_ &&
+            !capabilityParameters_ && !sessionInitialized_;
+    }
     void AbandonUsesAfterDeviceLoss();
     const ProbeReport& Report() const { return report_; }
 

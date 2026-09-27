@@ -60,6 +60,13 @@ namespace gpu::video
     // explicit LO_HEADLESS / LO_NO_RENDERER remain diagnostic opt-outs.
     bool Init();
     void Shutdown();
+    // Window thread publishes a request; only the command/presentation owner
+    // may destroy GPU resources and finish process exit.
+    bool ExitRequested();
+    // Presentation/renderer owner only; actual initialized feature probe state.
+    bool FrameGenerationAvailable();
+    void RequestExit();
+    [[noreturn]] void FinishRequestedExit();
 
     // Drains messages on non-Windows hosts; Windows pumps on its window thread.
     void PumpEvents();

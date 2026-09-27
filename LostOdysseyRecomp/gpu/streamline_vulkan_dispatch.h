@@ -18,6 +18,7 @@ public:
     void RestoreDeviceHooks();
     void RestoreCreationHooks();
     bool Ready() const { return reason_.empty(); }
+    bool FeatureSupported() const { return featureSupported_; }
     const std::string& Reason() const { return reason_; }
     void Report() const;
 private:
@@ -53,6 +54,7 @@ private:
     PFN_vkCreateWin32SurfaceKHR createSurface_{};
     PFN_vkDestroySurfaceKHR destroySurface_{};
     std::array<uint64_t, 8> counts_{};
+    bool featureSupported_{};
     bool creationInstalled_{};
     bool deviceInstalled_{};
 };

@@ -623,14 +623,7 @@ namespace gpu::renderer
             bool fgSnapshotAttempted = false;
             std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
             frame_generation::ResolveHandoffPool fgHandoffPool;
-            const bool fgCompositeEnabled = [] {
-#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
-                const char* value = getenv("LO_DLSS_FG");
-                return value && std::string_view(value) == "1";
-#else
-                return false;
-#endif
-            }();
+            const bool fgCompositeEnabled = video::FrameGenerationAvailable();
             uint64_t fgCompositeAttemptedFrame = ~0ull;
             std::shared_ptr<frame_generation::CompositeHandoff> fgCompositeHandoff;
             const uint64_t fgUiRequestedFrame = [] {
@@ -2810,8 +2803,7 @@ namespace gpu::renderer
                 RecordFgUiScene(*color);
                 const bool diagnosticSnapshot = !fgSnapshotAttempted && fgSnapshotRequestedFrame == frame;
                 const bool compositeSnapshot = fgCompositeEnabled && fgCompositeAttemptedFrame != frame &&
-                    activePlan.requestedUpscaler == upscaling::Upscaler::Dlss &&
-                    activePlan.consumer == upscaling::TemporalConsumer::DlssSr;
+                    dlss_fg::CompositePlanSupported(activePlan);
                 if (vulkan && (diagnosticSnapshot || compositeSnapshot)) {
                     if (diagnosticSnapshot) fgSnapshotAttempted = true;
                     if (compositeSnapshot) fgCompositeAttemptedFrame = frame;
@@ -9010,8 +9002,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     !fgInputSnapshot->inputs.cameraValid ||
                     !std::isfinite(fgInputSnapshot->inputs.frameTimeDeltaMilliseconds) ||
                     fgInputSnapshot->inputs.frameTimeDeltaMilliseconds <= 0.0f ||
-                    rs.sourcePlan.requestedUpscaler != upscaling::Upscaler::Dlss ||
-                    rs.sourcePlan.consumer != upscaling::TemporalConsumer::DlssSr ||
+                    !dlss_fg::CompositePlanSupported(rs.sourcePlan) ||
                     fgInputSnapshot->inputs.renderFrameId != frame ||
                     fgInputSnapshot->inputs.temporalEpoch != temporalEpoch ||
                     fgInputSnapshot->inputs.plan != rs.sourcePlan ||

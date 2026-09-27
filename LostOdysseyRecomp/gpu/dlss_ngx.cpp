@@ -987,12 +987,10 @@ void Controller::ReleaseFeatureAfterGpuDrain() {
 #endif
             NVSDK_NGX_VULKAN_ReleaseFeature(static_cast<NVSDK_NGX_Handle*>(feature_));
         RecordCall("ReleaseFeature", int32_t(result), NVSDK_NGX_FAILED(result));
-#if defined(_WIN32)
-        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+        if (NVSDK_NGX_FAILED(result)) {
             sessionFailed_ = true;
             return; // Retain a failed-release handle for a later drained cleanup.
         }
-#endif
         feature_ = nullptr;
     }
 #endif
@@ -1004,9 +1002,7 @@ void Controller::ReleaseFeatureAfterGpuDrain() {
 void Controller::ShutdownAfterGpuDrain() {
     if (!srUses_.Empty()) return;
     ReleaseFeatureAfterGpuDrain();
-#if defined(_WIN32)
-    if (backend_ == Backend::D3D12 && feature_) return;
-#endif
+    if (feature_) return;
 #if defined(LO_DLSS_SDK)
     if (featureParameters_) {
         const auto result =
@@ -1015,12 +1011,10 @@ void Controller::ShutdownAfterGpuDrain() {
 #endif
             NVSDK_NGX_VULKAN_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(featureParameters_));
         RecordCall("DestroyFeatureParameters", int32_t(result), NVSDK_NGX_FAILED(result));
-#if defined(_WIN32)
-        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+        if (NVSDK_NGX_FAILED(result)) {
             sessionFailed_ = true;
             return;
         }
-#endif
         featureParameters_ = nullptr;
     }
     if (capabilityParameters_) {
@@ -1030,12 +1024,10 @@ void Controller::ShutdownAfterGpuDrain() {
 #endif
             NVSDK_NGX_VULKAN_DestroyParameters(static_cast<NVSDK_NGX_Parameter*>(capabilityParameters_));
         RecordCall("DestroyCapabilityParameters", int32_t(result), NVSDK_NGX_FAILED(result));
-#if defined(_WIN32)
-        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+        if (NVSDK_NGX_FAILED(result)) {
             sessionFailed_ = true;
             return;
         }
-#endif
         capabilityParameters_ = nullptr;
     }
     if (sessionInitialized_) {
@@ -1046,12 +1038,10 @@ void Controller::ShutdownAfterGpuDrain() {
 #endif
             sessionDevice_ ? NVSDK_NGX_VULKAN_Shutdown1(sessionDevice_->vk) : NVSDK_NGX_Result_Fail;
         RecordCall("Session_Shutdown1", int32_t(result), NVSDK_NGX_FAILED(result));
-#if defined(_WIN32)
-        if (backend_ == Backend::D3D12 && NVSDK_NGX_FAILED(result)) {
+        if (NVSDK_NGX_FAILED(result)) {
             sessionFailed_ = true;
             return;
         }
-#endif
     }
 #endif
     sessionInitialized_ = false;

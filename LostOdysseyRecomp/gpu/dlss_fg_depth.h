@@ -15,6 +15,7 @@ public:
     plume::RenderTexture* Record(plume::RenderCommandList* commands,
         const temporal::TextureRegion& source, const DepthRemap& mapping);
     void ReleaseAfterInputDrain();
+    void DiscardUnsubmitted() { active_.reset(); }
 private:
     struct Active {
         uint32_t width = 0, height = 0;
