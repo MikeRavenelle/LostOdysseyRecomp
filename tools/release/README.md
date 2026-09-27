@@ -19,3 +19,9 @@ assets remain unchanged; the updater is neither extracted nor launched.
 The archive checksum is read once. Payloads are not rehashed, and this tool
 does not run the game or verify shader behavior. It handles the Windows ZIP
 format; the Linux AppImage has no corresponding embedded ZIP manifest.
+
+For the v0.7.3 public release, publish only the Windows ZIP, Linux AppImage,
+and stable Linux Flatpak bundle. Do not publish the Flatpak runtime archive,
+`release-source.json`, or standalone checksum/source-list assets; checksum and
+source records remain CI or local internal validation artifacts. GitHub Release
+should contain only the three installable packages.

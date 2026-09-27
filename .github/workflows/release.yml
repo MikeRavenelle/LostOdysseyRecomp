@@ -206,7 +206,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $assets = @(Get-ChildItem out/releases/LostOdysseyRecomp-*.zip,out/releases/LostOdysseyRecomp-*.sha256 | ForEach-Object FullName)
+          $assets = @(Get-ChildItem out/releases/LostOdysseyRecomp-*.zip | ForEach-Object FullName)
           if ($assets.Count -eq 0) { throw 'No Windows release assets to upload.' }
           $json = gh release view $env:RELEASE_TAG --json assets
           if ($LASTEXITCODE -ne 0) { throw 'Release is missing.' }
@@ -379,7 +379,7 @@ jobs:
         run: |
           set -euo pipefail
           linux_assets=()
-          for file in out/releases/LostOdysseyRecomp-*.AppImage out/releases/LostOdysseyRecomp-*.AppImage.sha256; do
+          for file in out/releases/LostOdysseyRecomp-*.AppImage; do
             if [ -f "$file" ]; then
               linux_assets+=("$file")
             fi
