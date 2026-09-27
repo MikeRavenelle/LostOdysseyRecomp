@@ -51,7 +51,16 @@ diff --git a/tools/tests/motion_replay/CMakeLists.txt b/tools/tests/motion_repla
   add_executable(LoNativeDlssRendererTest "${ROOT}/tools/tests/native_dlss_renderer_gpu_test.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
-@@ -149,9 +165,11 @@
+@@ -142,6 +158,8 @@
+    target_link_libraries(LoDlssEvaluateCaptureContractTest PRIVATE mv_runtime)
+   add_executable(LoVideoSubmissionStopTest "${ROOT}/tools/tests/video_submission_stop_test.cpp"
+    "${ROOT}/LostOdysseyRecomp/gpu/video.cpp"
++   "${ROOT}/LostOdysseyRecomp/gpu/temporal_upscaler.cpp"
++   "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
+    "${ROOT}/LostOdysseyRecomp/gpu/upscaling_plan.cpp"
+    "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp" platform_stub.cpp)
+   target_include_directories(LoVideoSubmissionStopTest BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/compile_boundary")
+@@ -149,11 +167,14 @@
    target_compile_definitions(LoVideoSubmissionStopTest PRIVATE LO_VIDEO_SUBMISSION_UNIT LO_GPU_PLUME NOMINMAX
     LO_SOURCE_VERSION="video-submission-stop")
    if(MSVC)
@@ -64,7 +73,10 @@ diff --git a/tools/tests/motion_replay/CMakeLists.txt b/tools/tests/motion_repla
 +   target_link_options(LoVideoSubmissionStopTest PRIVATE -Wl,--gc-sections)
    endif()
    lo_enable_dlss(LoVideoSubmissionStopTest)
++  lo_enable_fsr(LoVideoSubmissionStopTest)
    target_link_libraries(LoVideoSubmissionStopTest PRIVATE mv_runtime)
+   add_test(NAME LoNativeDlssRendererTest COMMAND LoNativeDlssRendererTest)
+  add_test(NAME frame_generation_snapshot_renderer COMMAND LoNativeDlssRendererTest --fg-snapshot-only)
 diff --git a/tools/tests/video_submission_stop_test.cpp b/tools/tests/video_submission_stop_test.cpp
 --- a/tools/tests/video_submission_stop_test.cpp
 +++ b/tools/tests/video_submission_stop_test.cpp
