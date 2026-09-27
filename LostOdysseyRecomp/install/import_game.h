@@ -36,10 +36,6 @@ struct DiscInfo
     std::string title;
     std::string media;
     std::string edition;
-    std::string identity;
-    std::string metadataEdition;
-    std::string sha256;
-    std::string md5;
 };
 
 struct DlcPackageInfo
@@ -49,8 +45,6 @@ struct DlcPackageInfo
     std::string displayName;
     uint32_t licenseMask = 0;
     std::string format;
-    std::string sourceSha256;
-    std::string extractedManifestSha256;
     uint32_t files = 0;
     uint64_t bytes = 0;
 };
@@ -132,9 +126,6 @@ bool WriteGamePath(const std::filesystem::path& executableDirectory,
                    std::string& error);
 
 #ifdef LO_IMPORT_TESTING
-void SetTestSha256(uint32_t disc, std::string_view hex, bool europe);
-void SetTestMd5(uint32_t disc, std::string_view hex, bool europe);
-void ClearTestOverrides();
 void SetTestDlcWriteFailure(std::string_view filename, std::string_view stage);
 void SetTestDiscWriteFailure(std::string_view filename, std::string_view stage);
 void SetTestPublishFailure(std::string_view slot, std::string_view stage);

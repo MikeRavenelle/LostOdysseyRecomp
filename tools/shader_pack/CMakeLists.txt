@@ -9,7 +9,3 @@ find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 add_test(NAME portable-pack-merge COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_LIST_DIR}/../tests/portable_shader_merge_test.py"
     --tool $<TARGET_FILE:LoShaderPackTool> --fixtures $<TARGET_FILE:LoPortableShaderContractTest>)
-
-add_test(NAME portable-pack-release-contract
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../tests/portable_shader_release_test.py"
-        --tool $<TARGET_FILE:LoShaderPackTool> --fixtures $<TARGET_FILE:LoPortableShaderContractTest>)

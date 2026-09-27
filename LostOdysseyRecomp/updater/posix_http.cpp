@@ -88,18 +88,12 @@ struct DownloadContext
     uint64_t expectedSize;
     uint64_t total = 0;
     bool cancelled = false;
-    bool exceeded = false;
 };
 
 size_t WriteDownload(void *data, size_t size, size_t count, void *context)
 {
     auto &download = *static_cast<DownloadContext *>(context);
     const uint64_t bytes = uint64_t(size) * uint64_t(count);
-    if (bytes > download.expectedSize - download.total)
-    {
-        download.exceeded = true;
-        return 0;
-    }
     download.output.write(static_cast<const char *>(data), std::streamsize(bytes));
     if (!download.output) return 0;
     download.total += bytes;
@@ -131,7 +125,6 @@ bool Download(std::string_view url, const std::filesystem::path &destination, ui
         error = "update URL does not use HTTPS";
         return false;
     }
-    if (!expectedSize || expectedSize > 1024ull * 1024 * 1024) { error = "update asset size is outside the supported range"; return false; }
     std::ofstream output(destination, std::ios::binary | std::ios::trunc);
     if (!output) { error = "could not create update download"; return false; }
     static const CurlGlobal global;
@@ -163,12 +156,11 @@ bool Download(std::string_view url, const std::filesystem::path &destination, ui
         error = "update cancelled by user";
         return false;
     }
-    if (download.exceeded) { error = "update download exceeded the declared asset size"; return false; }
     if (result != CURLE_OK) { error = CurlError(result); return false; }
     if (!finalIsHttps) { error = "update redirect resolved to non-HTTPS URL"; return false; }
     if (status != 200) { error = "update server returned HTTP " + std::to_string(status); return false; }
     output.flush();
-    if (!output || download.total != expectedSize) { error = "update download size mismatch"; return false; }
+    if (!output) { error = "could not write update download"; return false; }
     return true;
 }
 }

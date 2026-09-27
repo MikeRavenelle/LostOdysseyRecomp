@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-The tested environment is Windows x64 with Direct3D 12 or the optional Vulkan backend, Visual Studio 2022 Build Tools and Windows SDK, LLVM clang-cl, CMake 3.28+, Ninja and Python 3.11+ (the code-generation guard uses the standard-library `tomllib` module). The runtime requires Clang; the `windows-msvc` preset is not a supported runtime alternative. Generated code uses AVX instructions. Windows 10 1803+ is required by the current memory-mapping path; this is not a guarantee for every GPU/driver combination.
+The tested environment is Windows x64 with Direct3D 12 or the optional Vulkan backend, Visual Studio 2022 Build Tools and Windows SDK, LLVM clang-cl, CMake 3.28+, Ninja and Python 3.11+ (the generation wrapper uses the standard-library `tomllib` module). The runtime requires Clang; the `windows-msvc` preset is not a supported runtime alternative. Generated code uses AVX instructions. Windows 10 1803+ is required by the current memory-mapping path; this is not a guarantee for every GPU/driver combination.
 
 The scripts [build_runtime.bat](../tools/build_runtime.bat), [build_tools.bat](../tools/build_tools.bat) and [CMakePresets.json](../CMakePresets.json) discover Visual Studio with `vswhere` and resolve tools from `PATH`. Use `LO_VCVARS64` or `LLVM_ROOT` for custom installations. Keep personal overrides in the ignored `CMakeUserPresets.json`.
 
@@ -22,19 +22,19 @@ python -B tools/ppc_codegen.py generate
 .\tools\build_runtime.bat
 ```
 
-After a pull that updates the tracked XenonRecomp patch, inspect and synchronize the *actual* modified `tools/XenonRecomp/` tree with the updated patch before rebuilding. Do not blindly reapply the patch on an already modified tree or discard unrelated local changes. Once the tree matches the intended patch, run the three commands above in order: rebuild the generator tools, regenerate PPC sources, then rebuild the runtime. A runtime-only incremental build or `ppc_codegen.py check` cannot establish that the actual dependency tree matches the tracked patch; stale `PPCTimeBase` code in a local XenonRecomp header can leave generated guest code on the old clock path despite a correct tracked patch. If `build_tools.bat` cannot handle a partially updated patched tree, reconcile that tree first rather than stamping an old generator binary.
+After a pull that updates the tracked XenonRecomp patch, inspect and synchronize the *actual* modified `tools/XenonRecomp/` tree with the updated patch before rebuilding. Do not blindly reapply patches over a modified dependency tree or discard unrelated local changes. Once the tree matches the intended patch, rebuild the generator, explicitly regenerate PPC sources, then rebuild the runtime. If `build_tools.bat` cannot handle a partially updated patched tree, reconcile that tree first.
 
-`build_tools.bat` builds the generator and records a receipt containing the generator binary and source hashes. `ppc_codegen.py generate` verifies that receipt, hashes the TOML and generator inputs before and after execution, writes an output manifest for the generated C++/header files and rejects obsolete 64-bit jump-table switches. Use `python -B tools/ppc_codegen.py check` to verify an existing generated tree without regenerating it; if the inputs or outputs changed, regenerate from the repository root. Configured runtime builds also run `LoPpcCodegenCheck` as an order dependency before compiling guest objects. See [recompilation notes](notes/recomp.md) for function boundaries and switch-table maintenance. These commands describe the checked-in scripts; a new-machine end-to-end bootstrap has not been retested as part of this documentation update.
+`build_tools.bat` builds the generator. `ppc_codegen.py generate` generates the guest sources and performs basic output and failure handling; a failed generation preserves the previous output tree. Use `python -B tools/ppc_codegen.py generate` after generator or configuration changes. Runtime builds consume the generated sources directly without a per-build repository scan, manifest, stamp or hash gate. See [recompilation notes](notes/recomp.md) for function boundaries and switch-table maintenance.
 
 ### PowerPC recompilation from source
 
 All platforms compile recompiled PowerPC guest code directly from generated sources in `LostOdysseyRecompLib/ppc/`. The build does not depend on prebuilt static libraries or remote PPC synchronization, ensuring clean provenance, reproducible multi-platform builds, and forward compatibility with additional architectures (such as ARM64).
 
-After generating the guest sources with `tools/ppc_codegen.py generate`, simply configure CMake and build the target. CMake enforces that `LostOdysseyRecompLib/ppc/` contains valid recompiled code and runs `LoPpcCodegenCheck` to verify input/output consistency.
+After generating the guest sources with `tools/ppc_codegen.py generate`, simply configure CMake and build the target. CMake compiles the generated sources directly; regenerate explicitly when the generator or its configuration changes.
 
 Audio configuration fetches the pinned Xenia FFmpeg source via CMake FetchContent, so first configuration needs network access. See [ffmpeg.cmake](../thirdparty/ffmpeg.cmake) and its [license](../thirdparty/ffmpeg-LICENSE.txt). This is a frame-level XMAFRAMES decoder, not a system FFmpeg executable requirement.
 
-Release builds do not require a separately installed Vulkan SDK. Windows Vulkan headers, volk and VMA come from the patched plume submodule; the GPU driver supplies `vulkan-1.dll` and its ICD. The runtime requests Vulkan 1.2, buffer-device-address, geometry shaders and Win32 WSI. Use the exact paired DXC v1.8.2407 DLLs copied by CMake and tracked in [DXC provenance](../thirdparty/dxc-licenses/PROVENANCE.json); do not substitute one DLL independently. Release packaging ships the single `LostOdysseyRecomp.exe` binary; the updater and importer run from that binary.
+Release builds do not require a separately installed Vulkan SDK. Windows Vulkan headers, volk and VMA come from the patched plume submodule; the GPU driver supplies `vulkan-1.dll` and its ICD. The runtime requests Vulkan 1.2, buffer-device-address, geometry shaders and Win32 WSI. Keep the paired DXC v1.8.2407 DLLs together with their license files; do not substitute one DLL independently. Release packaging ships the single `LostOdysseyRecomp.exe` binary; the updater and importer run from that binary.
 
 ### Windows Direct3D 12 DLSS and FSR development paths
 
@@ -180,10 +180,10 @@ python3 -B tools/package_flatpak.py \
 
 For a development bundle, omit `--version`; the exporter uses a `dev` branch
 name and emits a commit-suffixed development filename. It validates the
-payload tree, copies the AppDir `usr` tree into a Flatpak runtime, runs the
-runtime dependency probe, and verifies the runtime ELF digest is unchanged.
-The output also contains internal checksum and source records; these are not
-required public Release attachments.
+payload tree and copies the AppDir `usr` tree into a Flatpak runtime. It runs
+the runtime dependency probe; no runtime-wide digest gate is required.
+The output may contain internal source records for debugging; these are not
+required public Release attachments or runtime gates.
 
 #### Standalone bundle installation and update limits
 
@@ -245,7 +245,7 @@ and logs.
 
 Clear test-only environment variables before manual play. Do not treat a window staying open, a heartbeat, or nonzero PCM as proof a scene is correct.
 
-The shader compiler uses the paired `dxcompiler.dll`/`dxil.dll` copied beside the runtime. Custom development builds must preserve the v1.8.2407 pair and its license/provenance checks; the Windows SDK fallback is not the tested packaging contract.
+The shader compiler uses the paired `dxcompiler.dll`/`dxil.dll` copied beside the runtime. Custom development builds must preserve the v1.8.2407 pair and its license files; the Windows SDK fallback is not the tested packaging contract.
 
 Generated baseline mappings, branch targets, import listings and Ghidra exports are local analysis artifacts. They are ignored; regenerate them from your own data when extending the recompiler configuration. Checked-in TOML and manual boundary/switch overrides remain the build inputs.
 

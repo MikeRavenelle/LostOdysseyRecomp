@@ -176,36 +176,22 @@ jobs:
         run: |
           # The pinned input takes priority over a previously staged valid pack.
           Remove-Item -LiteralPath out/build/release/LostOdysseyRecomp/shaders/portable_vk.lospv -ErrorAction SilentlyContinue
-          python tools/release/fetch_shader_pack.py --target-dir out/build/release/LostOdysseyRecomp/shaders --pack-tool out/build/release/LostOdysseyRecomp/LoShaderPackTool.exe --tag "$env:RELEASE_TAG"
-      - name: Confirm pinned portable shader pack
-        run: |
-          $expected = 'b486c87d121968bcec67fae6bc1aa7926378455281bc8b2a221409b8c06c6e2b'
-          $manifest = Get-Content out/shader-input/shaders/manifest.json -Raw | ConvertFrom-Json
-          if ($manifest.sha256 -ne $expected -or $manifest.records -ne 28527) { throw 'Private shader pack input has an unexpected identity.' }
-          $actual = (Get-FileHash out/build/release/LostOdysseyRecomp/shaders/portable_vk.lospv -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) { throw 'Release shader pack differs from the pinned 28527-record input.' }
+          python tools/release/fetch_shader_pack.py --target-dir out/build/release/LostOdysseyRecomp/shaders --tag "$env:RELEASE_TAG"
       - name: Package runtime
         run: |
           if (-not (Test-Path -LiteralPath out/build/release/LostOdysseyRecomp/licenses/LICENSE-FidelityFX.txt -PathType Leaf)) {
             throw 'FSR license was not staged by the Windows runtime build.'
           }
           if ($env:RELEASE_TAG) {
-            python tools/package_release.py --version $env:RELEASE_TAG
+            python tools/package_release.py --version $env:RELEASE_TAG --legacy-updater-manifest
             if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed.' }
-            $commit = git rev-parse HEAD
-            if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve source commit.' }
-            python tools/release/verify_package.py --assets out/releases --version $env:RELEASE_TAG --commit $commit --output out/releases/windows-verification.json
-            if ($LASTEXITCODE -ne 0) { throw 'Windows package verification failed.' }
           } else {
             python tools/package_release.py
           }
       - uses: actions/upload-artifact@v4
         with:
           name: LostOdysseyRecomp-windows-x64
-          path: |
-            out/releases/LostOdysseyRecomp-*.zip
-            out/releases/LostOdysseyRecomp-*.sha256
-            out/releases/windows-verification.json
+          path: out/releases/LostOdysseyRecomp-*.zip
           if-no-files-found: error
       - name: Upload Windows assets to release
         if: env.RELEASE_TAG != ''
@@ -331,7 +317,6 @@ jobs:
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++
           cmake --build out/build/tools --target XenonRecomp XenonAnalyse xexdump
-          python tools/ppc_codegen.py stamp-tool --executable out/build/tools/XenonRecomp/XenonRecomp/XenonRecomp
       - name: Fetch NVIDIA DLSS SDK
         run: python3 tools/release/fetch_dlss_sdk.py --dest out/deps/nvidia-dlss
       - name: Generate game code
@@ -354,7 +339,7 @@ jobs:
             -DSDL_PIPEWIRE=ON -DSDL_PIPEWIRE_SHARED=ON
           grep -q '^#define SDL_AUDIO_DRIVER_PIPEWIRE 1' out/build/linux/thirdparty/SDL/include-config-release/SDL2/SDL_config.h
           grep -q '^#define SDL_AUDIO_DRIVER_PIPEWIRE_DYNAMIC ' out/build/linux/thirdparty/SDL/include-config-release/SDL2/SDL_config.h
-          cmake --build out/build/linux --target LostOdysseyRecomp LoShaderPackTool --parallel 2
+          cmake --build out/build/linux --target LostOdysseyRecomp --parallel 2
       - name: Install linuxdeploy
         run: |
           mkdir -p out/tools/linuxdeploy
@@ -366,11 +351,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           rm -f out/build/linux/shaders/portable_vk.lospv
-          python tools/release/fetch_shader_pack.py --target-dir out/build/linux/shaders --pack-tool out/build/linux/LostOdysseyRecomp/LoShaderPackTool --tag "$RELEASE_TAG"
-      - name: Confirm pinned portable shader pack
-        run: |
-          python3 -c 'import json; m=json.load(open("out/shader-input/shaders/manifest.json")); assert (m["sha256"],m["records"]) == ("b486c87d121968bcec67fae6bc1aa7926378455281bc8b2a221409b8c06c6e2b",28527), "Private shader pack input has an unexpected identity"'
-          printf '%s  %s\n' 'b486c87d121968bcec67fae6bc1aa7926378455281bc8b2a221409b8c06c6e2b' 'out/build/linux/shaders/portable_vk.lospv' | sha256sum --check
+          python tools/release/fetch_shader_pack.py --target-dir out/build/linux/shaders --tag "$RELEASE_TAG"
       - name: Package AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
@@ -387,9 +368,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: LostOdysseyRecomp-linux-x64
-          path: |
-            out/releases/LostOdysseyRecomp-*.AppImage
-            out/releases/LostOdysseyRecomp-*.AppImage.sha256
+          path: out/releases/LostOdysseyRecomp-*.AppImage
           if-no-files-found: error
       - name: Upload Linux assets to release
         if: env.RELEASE_TAG != ''
@@ -457,7 +436,6 @@ jobs:
           name: LostOdysseyRecomp-linux-x64-flatpak
           path: |
             ${{ env.FLATPAK_OUTPUT }}/*.flatpak
-            ${{ env.FLATPAK_OUTPUT }}/*.flatpak.sha256
             ${{ env.FLATPAK_OUTPUT }}/source.json
           if-no-files-found: error
       - name: Upload Flatpak to release

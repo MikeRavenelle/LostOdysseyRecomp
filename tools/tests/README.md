@@ -21,7 +21,7 @@ These native C++ and Python fixtures execute without requiring a GPU device. Mos
 | `LoSaveAnywhereConfigTest` | Debug & Settings | Windows contract test target defined in `LostOdysseyRecomp/CMakeLists.txt` (`EXCLUDE_FROM_ALL`), validating isolated `settings.ini` persistence, default handling for missing or invalid keys, immediate debug toggles, cross-process restoration, and non-committal of unconfirmed graphics previews. |
 | `LoQuitTextHookTest` | Guest System menu text | Standalone CPU fixture in `LostOdysseyRecomp/CMakeLists.txt` (`EXCLUDE_FROM_ALL`), covering overrides for label ID 9104, help ID 9114, and prompt ID 9120 across all 9 languages ("Quit to Desktop"), non-target fallback, guest UTF-16BE pointer handling, terminator-inclusive copied length (`text.size() + 1`), and simulated downstream deep-copy truncation without trailing garbage characters. Runtime hook compilation was checked separately; live menu display and user visual acceptance remain unverified. |
 | `LoQuitActionHookTest` | Guest quit routing & actions | Standalone CPU contract target in `LostOdysseyRecomp/CMakeLists.txt` (`EXCLUDE_FROM_ALL`), validating that confirmed Settings "Quit to Main Menu" waits for retail Settings close and invokes the original guest title transition on the same guest thread without dispatching `SDL_QUIT`, while confirmed native System "Quit to Desktop" Yes branches route to `SDL_QUIT` across both verified generated callsites (`0x822E256C` and `0x822E26B8`) with continuation-appropriate cancel recovery and non-Yes callers retaining retail behavior. Physical-hardware execution of the System quit-to-desktop action path was verified on the v4 build (`ffb59dbc...`); other menu actions remain unverified on hardware item by item. |
-| `tools/tests/ppc_codegen_test.py` | PPC recompiler | Code generation manifest integrity, jump tables, and generator receipts. |
+| `tools/tests/ppc_codegen_test.py` | PPC recompiler | Focused generator and output checks; generation is explicit and is not a runtime build gate. |
 | `tools/tests/disc_set_test.py` | Disc management | Multi-disc set detection and metadata ordering. |
 
 ### 2. GPU hardware fixtures
@@ -46,7 +46,6 @@ Python suites validating offline tools, data pipelines, and packaging manifests 
 | `tools/tests/shader_analysis_tools_test.py` | `tools/shader_analysis/` | Validates source collection, HLSL dependency slicing, SPIR-V inspection, and CPX decoding against synthetic microcodes. |
 | `tools/tests/capture_analysis_tools_test.py` | `tools/capture_analysis/` | Validates archive inspection and image difference metrics on synthetic F1 captures. |
 | `tools/tests/portable_shader_merge_test.py` | `LoShaderPackTool merge` | Validates tab-separated manifest parsing, inclusion/exclusion rules, and microcode deduplication. |
-| `tools/tests/release_package_verify_test.py` | `tools/release/verify_package.py` | Validates release ZIP archive checksums, manifests, version tags, and provenance checks. |
 | `tools/tests/drive_city_save_test.py` | `tools/drive_city.py` | Validates game save isolation, staging backup, and error rollback logic for `tools/drive_city.py`. |
 | `tools/asm-profiler/test_report.py` | `tools/asm-profiler/` | Validates x64 disassembly parsing and HTML profiler report generation. Refer to [`tools/asm-profiler/README.md`](../asm-profiler/README.md). |
 
@@ -61,7 +60,7 @@ Python suites validating offline tools, data pipelines, and packaging manifests 
 
 `LoStorageTest io-lifetime <output>` exercises real guest read/write/scatter, close and duplicate imports, APC/event publication ordering, independent-file progress and positioned reads. Run `python -B tools/tests/io_lifetime_test.py <LoStorageTest-executable> --out <new-directory>` for the lifetime, invalid-handle and diagnostics selectors. Use `--mode io-lifetime`, `--mode io-invalid-handle` or `--mode io-diagnostics` to select one. The runner enables `LO_IO_DIAGNOSTICS=1` for the diagnostics selector, applies a 30-second process timeout, and attempts a debugger stack capture before terminating a timed-out child. Direct `LoStorageTest io-diagnostics <output>` invocation requires that environment variable to be set before startup.
 
-Windows and Linux runs passed the lifetime, diagnostics, invalid-handle and standalone audit `--handles` selectors with exit code 0; the 8000-read check reported zero mismatches. The regression set checks that read, write and scatter operations release `ioMutex` before completion-side work, that close can complete without invalidating the retained operation, and that each request publishes its buffer and IOSB before notification. These checks do not reproduce the Issue #53 gameplay hang or establish a story transition.
+The lifetime, diagnostics and invalid-handle selectors are optional focused fixtures. The regression set checks that read, write and scatter operations release `ioMutex` before completion-side work, that close can complete without invalidating the retained operation, and that each request publishes its buffer and IOSB before notification. These checks do not reproduce the Issue #53 gameplay hang or establish a story transition.
 
 For runtime investigation, start with `LO_IO_DIAGNOSTICS=1`, then manually call the exported `LoDumpIoDiagnostics("/path/to/snapshot.jsonl")` from a debugger. Active requests and history are bounded to 256 and 2048 records. Snapshots do not acquire the file I/O mutex or dereference recorded object addresses; skipped/overwritten records are counted. Owner observations are clues tied to object instances and timestamps, not proof of a deadlock. See the [investigation report](../../docs/notes/ISSUE_53_DISC2_HANG_FIX_REPORT.md) for the validation boundary.
 
@@ -154,7 +153,12 @@ Run the synthetic guard tests from the repository root with:
 python -B tools/tests/ppc_codegen_test.py
 ```
 
-The seven `unittest` cases cover a matching manifest, input/output/context drift, obsolete 64-bit jump-table switches, a stale generator receipt and invalidation after a failed generation. They use a temporary tree with synthetic files; they do not require game input, generated game sources, a native tool build or a game/runtime process. For a real generated tree, `python -B tools/ppc_codegen.py check` verifies the recorded input/output manifest, while `python -B tools/ppc_codegen.py generate` requires the receipt written by `tools/build_tools.bat` and regenerates the sources.
+`kernel_wait_handle_test.cpp` is an independent, on-demand C++ fixture for
+wait and handle-table semantics. It is not registered as a CMake target or an
+automatic build gate; this documentation does not claim that it was run in the
+current build.
+
+The focused `unittest` cases cover successful source replacement and failure rollback using temporary synthetic files; they do not require game input, generated game sources, a native tool build or a game/runtime process. A real build uses `python -B tools/ppc_codegen.py generate` explicitly after generator or configuration changes; no receipt, manifest or per-build hash gate is required.
 
 Run commands from the repository root. Select checks appropriate to the changed behavior; this entry point does not imply that every suite is required for every change.
 

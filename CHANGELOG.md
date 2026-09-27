@@ -4,6 +4,16 @@ One record of completed changes, with unpublished work separated from verified r
 
 本文统一记录已完成改动，并区分未发布内容与已确认发布版本；日期采用 UTC 发布日期。后续计划见[路线图](docs/ROADMAP.zh-CN.md)，不作为已发布功能记录。
 
+## v0.7.4 — Unreleased / 未发布
+
+### English
+
+- Removed routine SHA-256, repository-wide provenance and package-audit gates from normal build, import, shader-pack and update paths. PPC generation remains explicit after generator/configuration changes and preserves the previous output on failure. Downloads install after ordinary HTTP/I/O handling, ZIP CRC parsing, path protection and rollback; the updater adds no SHA-256 or size authentication. A one-time transition Windows package will carry the legacy SHA map so existing v0.7.3 updaters can upgrade automatically; the new updater ignores those values. Windows main plus `LoUpdaterTest` incremental builds succeeded, the default updater fixture passed, and `updater_archive_test.py` passed 11 checks with zero failures. No game run, FPS, image-quality, full-game, Linux runtime or release publication is claimed.
+
+### 简体中文
+
+- 清理普通构建、导入、shader pack 和更新路径中的 SHA-256、全仓 provenance 及 package audit 门禁。PPC 生成器或配置改变后仍需显式重新生成，失败时保留上一份输出。下载完成后只进行普通 HTTP/I/O 处理、ZIP CRC 解析、路径保护与回滚，更新器不增加 SHA-256 或大小认证。一次性 Windows 过渡包会携带旧 SHA map，使现有 v0.7.3 更新器自动升级；新版更新器忽略这些值。Windows main 与 `LoUpdaterTest` 增量构建成功，默认 updater fixture 通过，`updater_archive_test.py` 通过 11 项且无失败。本条不宣称游戏运行、FPS、画质、全游戏、Linux runtime 或发布。
+
 ## Unreleased / 未发布
 
 ### English

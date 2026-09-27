@@ -332,16 +332,18 @@ std::optional<int> TryRunApplyMode()
         return failWithReason("AppImage path does not match plan executable; existing installation not changed");
     }
 
+    std::string pathError;
+    if (!IsSafePayloadPath(plan->files.front().path, pathError))
+        return failWithReason("invalid staged AppImage path; existing installation not changed");
     const auto staged = plan->stageRoot / plan->files.front().path;
-    std::string digestError;
-    const auto expectedDigest = plan->files.front().sha256;
-    if (expectedDigest.empty() || Sha256File(staged, digestError) != expectedDigest)
+    std::error_code stagedError;
+    if (!std::filesystem::is_regular_file(staged, stagedError) || stagedError)
     {
-        return failWithReason("staged AppImage digest mismatch; existing installation not changed");
+        return failWithReason("staged AppImage is missing; existing installation not changed");
     }
 
-    // Copy onto the target filesystem, re-check the bytes that will be renamed,
-    // then swap with a same-directory backup so EXDEV cannot replace the only copy.
+    // Copy onto the target filesystem, then swap with a same-directory backup
+    // so EXDEV cannot replace the only copy.
     const auto incoming = appImagePath.parent_path() / (appImagePath.filename().string() + ".new");
     const auto previous = appImagePath.parent_path() / (appImagePath.filename().string() + ".previous");
     std::error_code filesystemError;
@@ -351,12 +353,6 @@ std::optional<int> TryRunApplyMode()
     {
         std::filesystem::remove(incoming, filesystemError);
         return failWithReason("failed to copy staged AppImage onto the target filesystem; existing installation not changed");
-    }
-    digestError.clear();
-    if (Sha256File(incoming, digestError) != expectedDigest)
-    {
-        std::filesystem::remove(incoming, filesystemError);
-        return failWithReason("copied AppImage digest mismatch; existing installation not changed");
     }
     if (chmod(incoming.c_str(), 0755) != 0)
     {

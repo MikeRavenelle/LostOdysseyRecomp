@@ -7,33 +7,29 @@ import shutil
 import subprocess
 import tempfile
 from portable_shader_pack_payload import stage_portable_shader_pack
-from build_provenance import (source_state, read_stamp, validate_formal, validate_staged_binaries,
-                              normalize_release_version, valid_source_version)
+from release.version import normalize_release_version, valid_source_version
 
 ROOT = Path(__file__).resolve().parents[1]
 DXC_LICENSES = ROOT / 'thirdparty/dxc-licenses'
-
-
-def sha(path):
-    with path.open('rb') as f:
-        return hashlib.file_digest(f, 'sha256').hexdigest()
 
 
 def run(*args, **kwargs):
     return subprocess.check_output(args, cwd=ROOT, text=True, **kwargs).strip()
 
 
-def validated_dxc_payload(runtime_directory):
-    """Keep the exact compiler/validator pair used by the built runtime."""
-    provenance = json.loads((DXC_LICENSES / 'PROVENANCE.json').read_text(encoding='utf-8'))
+def check_dxc_payload(runtime_directory):
+    """Require the compiler pair and its license files for the package."""
     for name in ('dxcompiler.dll', 'dxil.dll'):
         path = runtime_directory / name
-        if not path.is_file() or sha(path) != provenance['files'][name]:
-            raise SystemExit(f'Built {name} does not match the validated DXC pair; rebuild or update its provenance and validation.')
-    for name, digest in provenance['licenses'].items():
-        if sha(DXC_LICENSES / name) != digest:
-            raise SystemExit(f'DXC license checksum mismatch: {name}')
-    return provenance
+        if not path.is_file() or not path.stat().st_size:
+            raise SystemExit(f'Missing or empty built DXC library: {name}')
+    if not DXC_LICENSES.is_dir():
+        raise SystemExit('Missing DXC licenses')
+
+
+def legacy_updater_file_hash(path):
+    with path.open('rb') as source:
+        return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
 def main():
@@ -41,6 +37,8 @@ def main():
     parser.add_argument('--build', type=Path, default=ROOT / 'out/build/release')
     parser.add_argument('--output', type=Path, default=ROOT / 'out/releases')
     parser.add_argument('--version', default='')
+    parser.add_argument('--legacy-updater-manifest', action='store_true',
+                        help='Include the SHA256 file map required by older Windows updaters')
     args = parser.parse_args()
     if args.version:
         try:
@@ -58,16 +56,17 @@ def main():
     if not valid_source_version(source_version):
         raise SystemExit('The linked runtime source version is invalid.')
     output.mkdir(parents=True, exist_ok=True)
-    dxc = validated_dxc_payload(runtime.parent)
-    state = source_state(ROOT)
+    check_dxc_payload(runtime.parent)
     try:
-        stamps = [read_stamp(runtime, source_version)]
-        normalized_version = validate_formal(ROOT, args.version, source_version, state, stamps)
+        commit = run('git', 'rev-parse', 'HEAD')
+        normalized_version = 'v' + normalize_release_version(args.version) if args.version else ''
+        if args.version:
+            if normalized_version[1:] != source_version:
+                raise ValueError('Requested release version differs from the built runtime version.')
+            if run('git', 'rev-parse', '--verify', f'refs/tags/{args.version}^{{commit}}') != commit:
+                raise ValueError('Release tag differs from packaging commit.')
     except (ValueError, subprocess.CalledProcessError) as error:
-        raise SystemExit(f'Release provenance check failed: {error}')
-    commit = stamps[0]['source']['commit']
-    # Untagged local candidates are development artifacts even from clean source.
-    dirty = state['dirty'] or any(stamp['source']['dirty'] for stamp in stamps)
+        raise SystemExit(f'Release version check failed: {error}')
     development = not args.version
     name = 'LostOdysseyRecomp-windows-x64-' + (normalized_version or f'v{source_version}-{commit[:8]}') + ('-dev' if development else '')
     package_zip = output / (name + '.zip')
@@ -78,7 +77,6 @@ def main():
         package = work / name
         package.mkdir()
         shutil.copy2(runtime, package / runtime.name)
-        validate_staged_binaries([package / runtime.name], stamps)
         shutil.copy2(ROOT / 'docs/INSTALLING.md', package / 'README.md')
         licenses = package / 'licenses'
         licenses.mkdir()
@@ -153,16 +151,19 @@ def main():
                     continue
                 if redist or not (dll.lower().startswith(('api-ms-', 'ext-ms-')) or (system / dll).exists()):
                     raise SystemExit(f'Unbundled dependency: {binary.name} -> {dll}')
-        (package / 'manifest.json').write_text(json.dumps({
-            'commit': commit, 'build_commit': commit, 'packaging_commit': state['commit'],
+        payload_files = {p.relative_to(package).as_posix(): p for p in package.rglob('*') if p.is_file()}
+        file_sizes = {name: path.stat().st_size for name, path in payload_files.items()}
+        manifest = {
+            'commit': commit,
             'version': normalized_version, 'source_version': source_version, 'development_build': development,
-            'dirty': dirty, 'build_provenance': stamps, 'packaging_source': state,
-            'dxc_sha256': dxc['archive_sha256'], 'dxc': dxc,
             'dependencies': dependencies_report,
-            'files': {p.relative_to(package).as_posix(): sha(p) for p in package.rglob('*') if p.is_file()},
-        }, indent=2), encoding='utf-8')
+            'files': file_sizes,
+        }
+        if args.legacy_updater_manifest:
+            # Transitional releases must remain readable by the previous updater.
+            manifest['files'] = {name: legacy_updater_file_hash(path) for name, path in payload_files.items()}
+        (package / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
         shutil.make_archive(str(package_zip.with_suffix('')), 'zip', work, name)
-    package_zip.with_suffix('.zip.sha256').write_text(sha(package_zip) + '  ' + package_zip.name + '\n')
     print(package_zip)
 
 

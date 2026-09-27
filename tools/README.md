@@ -75,7 +75,6 @@ The catalog below lists maintained groups and representative root utilities. `th
 
 | Tool / Path | Purpose | Type & side effects | Reference |
 |---|---|---|---|
-| `tools/release/verify_package.py` | Verifies Windows release ZIP checksum, manifest, version, commit, and runtime provenance. | Input read-only; writes JSON verification report to explicit `--output`. | [`tools/release/README.md`](release/README.md) |
 | `tools/release/extract_release_notes.py` | Extracts version-specific ATX-heading body from `CHANGELOG.md` for GitHub Release publication. | Input read-only; writes extracted Markdown to explicit `--output`. | Source: `tools/release/` |
 | `tools/release/fetch_shader_pack.py` | Downloads portable shader pack release asset from GitHub Release tags. | Network I/O: Fetches asset from GitHub; writes local file. | Source: `tools/release/` |
 | `tools/release/fetch_dlss_sdk.py` | Downloads NVIDIA DLSS SDK assets for build packaging. | Network I/O: Fetches external dependency; writes local directory. | Source: `tools/release/` |

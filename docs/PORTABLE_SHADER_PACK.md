@@ -56,14 +56,12 @@ Deck, AppImage update transactions and full-game shader coverage remain unverifi
 - Local success caches, negative caches and schema-2 startup bundles keep their
   current compiler/path identity rules. No cache-version rollback or global
   weakening of `cache::IdentityKey` / `RuntimeIdentity`.
-- Portable compatibility includes schema, translator version, options, variant,
-  HLSL prelude digest, discovery identity, fixed loaded-XEX range digest and an
-  explicit layout revision. No install path or local DXC DLL/SO hash. Producer
-  DXC identity is provenance only. The runtime computes the expected contract;
-  it never uses the pack's self-reported contract as its expected value.
-- Header/index checksums, exact file completion, count/size/range checks, no
-  overlapping/gapped blobs, per-block checksum, bounded Zstd frames and SPIR-V
-  framing/entrypoint checks. A corrupt lazy record disables the pack and leaves
+- Portable compatibility keeps schema, translator options, variant and layout
+  markers needed to reject an incompatible pack. It does not bind startup to
+  install paths, local DXC DLL/SO hashes or a full content digest.
+- The reader checks the pack format, bounded Zstd frames, sizes, offsets and
+  decompression boundaries. It loads records on demand and does not scan every
+  SPIR-V payload at startup. A malformed record disables the pack and leaves
   the local fallback retryable, without inserting an invalid shader entry.
 - Windows ZIP and Linux AppImage staging copy only `shaders/portable_vk.lospv`,
   validate it with the native tool, and retain the Zstandard license. They do not

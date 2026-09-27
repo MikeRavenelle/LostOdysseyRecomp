@@ -132,7 +132,6 @@ private:
     uint32_t totalBlocks_ = 0;
     uint32_t tableCount_ = 0;
     uint32_t tableStart_ = 0;
-    std::array<uint8_t, 20> topDigest_{};
     int topLevel_ = 0;
     uint64_t base_ = 0;
 

@@ -66,8 +66,8 @@ class Reader {
     struct Impl;
     std::unique_ptr<Impl> impl_;
 public:
-    // Reads and validates the small index only. Payload blocks are integrity-checked
-    // by SHA-256 and bounded-decompressed on first use. One block is retained.
+    // Reads the index and checks layout/compatibility. Payload blocks are
+    // bounded-decompressed on first use without content hashing. One block is retained.
     Reader(const std::filesystem::path&, const Digest& expectedContract);
     ~Reader();
     Reader(const Reader&) = delete;

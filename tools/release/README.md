@@ -1,24 +1,27 @@
-# Release ZIP verification
+# Release packaging
 
-`verify_package.py` checks a Windows release ZIP after packaging. Supply the
-expected tag and full commit explicitly:
+Release packaging assembles the Windows ZIP, Linux AppImage and Flatpak bundle.
+The current release workflow checks that the expected package files exist and
+are nonempty before publication. It does not require a repository-wide hash,
+provenance manifest or SHA-256 sidecar.
 
 ```sh
-python tools/release/verify_package.py \
-  --assets /path/to/release-assets --version v0.6.15 \
-  --commit <40-character-commit> --output /path/to/package-verification.json
+python tools/release/extract_release_notes.py \
+  --version v0.7.3 --output /path/to/release-notes.md
 ```
 
-Use `--package /path/to/LostOdysseyRecomp-windows-x64-v0.6.15.zip` instead of
-`--assets` to select one ZIP. The tool reads the ZIP and its adjacent
-`.zip.sha256` sidecar. It checks the archive checksum, ZIP entry names, manifest
-file list, formal version, clean source state, build and packaging commits, and
-linked runtime provenance. It writes only the requested JSON report. Release
-assets remain unchanged; the updater is neither extracted nor launched.
+The notes extractor reads only the matching changelog entry. ZIP installation
+still performs ordinary archive parsing, CRC, path protection and rollback; it
+does not add a downloaded-file size or SHA check and does not launch the game.
 
-The archive checksum is read once. Payloads are not rehashed, and this tool
-does not run the game or verify shader behavior. It handles the Windows ZIP
-format; the Linux AppImage has no corresponding embedded ZIP manifest.
+The release workflow will enable `--legacy-updater-manifest` only for the next
+formal Windows transition ZIP. That package carries the old SHA map in `files`,
+allowing already published v0.7.3 updaters to upgrade automatically. The new
+updater ignores the map values and installs the downloaded archive directly
+after ordinary HTTP/I/O, ZIP CRC, path and rollback handling. After that
+transition package, the workflow flag is removed; ordinary packages may retain
+`files` as path-to-size metadata, but it is not used for integrity
+authentication.
 
 For the v0.7.3 public release, publish only the Windows ZIP, Linux AppImage,
 and stable Linux Flatpak bundle. Do not publish the Flatpak runtime archive,
@@ -34,12 +37,12 @@ Windows ZIP and AppImage. After both platform jobs succeed, the publication
 job checks that exactly those three packages are uploaded and nonempty before
 publishing the draft. Re-runs validate an existing public release without
 changing its publication state.
-AppImage fixture passes 8/8 checks, Flatpak Python fixtures pass 6/6, the
-workflow shell fragments pass `bash -n`, actionlint 1.7.12 passes, the Flatpak
-reuse probe resolves 29 ELF files and four libraries, and the SDL
-PipeWire/static focused compile passes. Stable bundle export exits 0, isolated
-user installation and sandbox shell checks pass, and the installed main ELF
-SHA-256 matches the AppImage input. Full Release CI has not run this workflow;
-these checks do not rewrite the already published v0.7.3 provenance. Evidence:
+The historical v0.7.3 workflow record reports AppImage fixture 8/8 and Flatpak
+Python fixtures 6/6; those results are retained as release history. The
+current packaging path checks package existence and size only. The historical
+record also reports that the installed main ELF
+SHA-256 matched the AppImage input; this is not a current runtime gate. Full
+Release CI has not run this workflow; these checks do not rewrite the already
+published v0.7.3 provenance. Evidence:
 `out/release-workflow-reuse/flatpak-package.log`, `flatpak-source.json`, and
 `install-check.log`.

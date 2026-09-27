@@ -535,7 +535,6 @@ StfsPackage::StfsPackage(std::filesystem::path path, const Cancelled& cancelled)
     totalBlocks_ = ReadBeU32(vol + 0x1c);
     tableCount_ = ReadLeU16(vol + 3);
     tableStart_ = static_cast<uint32_t>(vol[5]) | (static_cast<uint32_t>(vol[6]) << 8) | (static_cast<uint32_t>(vol[7]) << 16);
-    std::copy(vol + 8, vol + 28, topDigest_.begin());
 
     if (totalBlocks_ == 0 || totalBlocks_ > STFS_FANOUT * STFS_FANOUT * STFS_FANOUT ||
         tableCount_ == 0 || tableCount_ > 1563)
@@ -596,23 +595,6 @@ StfsPackage::StfsPackage(std::filesystem::path path, const Cancelled& cancelled)
         if (flags != 0) licenseMask |= bits;
     }
 
-    // Source SHA256 of entire stream
-    stream_.clear();
-    stream_.seekg(0);
-    crypto::Sha256 sha;
-    std::vector<char> buf(1024 * 1024);
-    while (stream_)
-    {
-        if (cancelled_ && cancelled_())
-            throw Error("Source check cancelled", true);
-        stream_.read(buf.data(), buf.size());
-        auto g = stream_.gcount();
-        if (g > 0) sha.Update(buf.data(), static_cast<size_t>(g));
-    }
-    std::string sourceSha256 = crypto::HexString(sha.Finalize());
-
-    stream_.clear();
-
     char formatBuf[5]{};
     std::memcpy(formatBuf, header_.data(), 4);
     std::string format = formatBuf;
@@ -623,7 +605,6 @@ StfsPackage::StfsPackage(std::filesystem::path path, const Cancelled& cancelled)
     info_.displayName = displayName;
     info_.licenseMask = licenseMask;
     info_.format = format;
-    info_.sourceSha256 = sourceSha256;
 
     ParseEntries();
 
@@ -707,12 +688,10 @@ const std::vector<uint8_t>& StfsPackage::GetTable(uint32_t number, int level)
         return it->second;
 
     uint32_t active = 0;
-    std::array<uint8_t, 20> expected{};
 
     if (level == topLevel_)
     {
         active = rootCopy_;
-        expected = topDigest_;
     }
     else
     {
@@ -721,15 +700,10 @@ const std::vector<uint8_t>& StfsPackage::GetTable(uint32_t number, int level)
         uint32_t index = (number / span) % STFS_FANOUT;
         const uint8_t* record = parent.data() + index * 24;
         active = (copies_ == 2 && (record[20] & 0x40)) ? 1 : 0;
-        std::copy(record, record + 20, expected.begin());
     }
 
     std::vector<uint8_t> data(STFS_BLOCK);
     ReadRaw(offset + static_cast<uint64_t>(active) * STFS_BLOCK, data.data(), STFS_BLOCK);
-
-    auto digest = crypto::ComputeSha1(data.data(), data.size());
-    if (digest != expected)
-        throw Error("STFS hash table checksum mismatch");
 
     tables_[key] = std::move(data);
     return tables_[key];
@@ -747,9 +721,6 @@ void StfsPackage::ReadBlock(uint32_t number, void* outBuffer)
 
     ReadRaw(DataOffset(number), outBuffer, STFS_BLOCK);
 
-    auto digest = crypto::ComputeSha1(outBuffer, STFS_BLOCK);
-    if (std::memcmp(digest.data(), record, 20) != 0)
-        throw Error("STFS data block checksum mismatch");
 }
 
 std::vector<uint32_t> StfsPackage::ReadChain(uint32_t start, uint32_t count)

@@ -35,7 +35,7 @@ int main()
                     checked += take;
                 }
             }
-            std::cout << "PASS GOD/dump disc=" << disc.disc << " sha256=" << disc.sha256 << '\n';
+            std::cout << "PASS GOD/dump disc=" << disc.disc << " edition=" << disc.edition << '\n';
         }
         if (source.discs.size() != 4 || checked == 0) throw install::Error("Incomplete source coverage");
         std::cout << "PASS bounded comparison bytes=" << checked << '\n';

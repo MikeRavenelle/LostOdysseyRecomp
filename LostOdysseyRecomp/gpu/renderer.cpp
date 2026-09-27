@@ -1045,7 +1045,8 @@ namespace gpu::renderer
             } vertexTiming;
 
             // Both diagnostic consumers need CPU segments; ordinary play does not.
-            const bool cpuTimingEnabled = getenv("LO_GPU_STATS") != nullptr || render_timing::Enabled();
+            const bool gpuStatsEnabled = getenv("LO_GPU_STATS") != nullptr;
+            const bool cpuTimingEnabled = gpuStatsEnabled || render_timing::Enabled();
             uint32_t descriptorBatchLimit = 500;
             uint32_t descriptorSplits = 0, textureSetSplits = 0, samplerVersionSplits = 0;
             uint32_t uploadSplits = 0, arenaSplits = 0;
@@ -5364,7 +5365,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 }
                 ScopedTimer timer{ tPipeline, cpuTimingEnabled };
                 nPipeline++;
-                ++runtimePipelineCreates;
+                if (gpuStatsEnabled) ++runtimePipelineCreates;
                 auto pipeline = CreatePipeline(key, vs, ps, true);
                 RenderPipeline* result = pipeline.get();
                 // A failed speculative creation must not poison the draw cache.
@@ -7074,7 +7075,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                             indices = it->second.data;
                             cachedIndexEntry = &it->second;
                             it->second.lastFrame = frame;
-                            ++indexCacheHits;
+                            if (cpuTimingEnabled) ++indexCacheHits;
                             useIndices = true;
                             indexCached = true;
                         }
@@ -7128,7 +7129,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     entry.content.Capture(indexSrc, indexSrcBytes);
                     entry.lastFrame = frame;
                     indexCache.emplace(indexKey, std::move(entry));
-                    ++indexCacheMisses;
+                    if (cpuTimingEnabled) ++indexCacheMisses;
                 }
                 if (useIndices)
                     indexCount = uint32_t(indices.size());
@@ -8593,7 +8594,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         temporalScene.ObserveCamera(anchor);
                     }
                 }
-                if (preparedPipelineKeys.contains(key)) {
+                if (gpuStatsEnabled && preparedPipelineKeys.contains(key)) {
                     ++preparedPipelineHits;
                     usedPreparedPipelineKeys.insert(key);
                 }
@@ -8607,7 +8608,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         group.draws++;
                         group.indices += indexCount;
                     }
-                    if (modeControl == 4)
+                    if (gpuStatsEnabled && modeControl == 4)
                     {
                         skin.colorDraws++;
                         skin.colorIndices += indexCount;
@@ -8619,7 +8620,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                             skin.sceneIndices += indexCount;
                         }
                     }
-                    else skin.depthDraws++;
+                    else if (gpuStatsEnabled) skin.depthDraws++;
                 }
 
                 // Xbox 360 D3D clears a surface by drawing a screen-space rectangle
@@ -10092,7 +10093,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 r.descriptorSplits = r.textureSetSplits = r.samplerVersionSplits = r.uploadSplits = r.arenaSplits = 0;
                 r.descriptorHits = r.descriptorMisses = 0;
             }
-            if (render_timing::Enabled() || g_renderer->frame % 60 == 0)
+            if ((stats || render_timing::Enabled()) && (render_timing::Enabled() || g_renderer->frame % 60 == 0))
             {
                 auto& r = *g_renderer;
                 LOG_INFO("index cache frame={} hits={} misses={} entries={} bytes={} peak_bytes={} evictions={} scope=current_frame_index_conversion_cache",

@@ -5,14 +5,13 @@ The AppDir is the only binary input. No source compilation takes place here.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
-from build_provenance import normalize_release_version
+from release.version import normalize_release_version
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,11 +65,6 @@ for library in ('/app/lib/libdxcompiler.so', '/app/bin/libnvidia-ngx-dlss.so.310
     ctypes.CDLL(library)
 print('Flatpak runtime probe: ' + str(checked) + ' ELF files and four dlopen libraries resolved')
 """
-
-
-def sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def source_version() -> str:
@@ -150,7 +144,6 @@ def package(args: argparse.Namespace) -> dict:
         raise ValueError(f"Release version must match checkout source version {version}")
     branch = "stable" if args.version else "dev"
     commit = subprocess.check_output(("git", "-C", str(ROOT), "rev-parse", "HEAD"), text=True).strip()
-    original_sha = sha256(source / "bin/LostOdysseyRecomp")
     metadata = manifest_config()
     output.mkdir(parents=True)
     build = output / "builder"
@@ -159,8 +152,6 @@ def package(args: argparse.Namespace) -> dict:
          metadata["runtime"], metadata["runtime-version"]])
     shutil.copytree(source, build / "files", symlinks=True, dirs_exist_ok=True, copy_function=shutil.copy2)
     inspect_payload_tree(build / "files")
-    if sha256(build / "files/bin/LostOdysseyRecomp") != original_sha:
-        raise ValueError("Flatpak runtime differs from AppDir runtime")
     run(["flatpak", "build", "--runtime", "--env=LD_LIBRARY_PATH=/app/lib:/app/bin",
          str(build), "python3", "-c", RUNTIME_PROBE])
     run(["flatpak", "build-finish", *metadata["finish-args"],
@@ -170,12 +161,12 @@ def package(args: argparse.Namespace) -> dict:
                    f"LostOdysseyRecomp-v{version}-{commit[:8]}-dev.flatpak")
     bundle = output / bundle_name
     run(["flatpak", "build-bundle", str(repo), str(bundle), APP_ID, branch])
-    bundle_sha = sha256(bundle)
-    (output / (bundle_name + ".sha256")).write_text(f"{bundle_sha}  {bundle_name}\n", encoding="utf-8")
+    if not bundle.is_file() or not bundle.stat().st_size:
+        raise ValueError("Flatpak bundler did not produce a nonempty bundle")
     record = {"version": version, "branch": branch, "packaging_commit": commit,
-              "appdir": str(appdir), "runtime_sha256": original_sha,
+              "appdir": str(appdir),
               "runtime_ref": f"{metadata['runtime']}/x86_64/{metadata['runtime-version']}",
-              "bundle": bundle_name, "sha256": bundle_sha}
+              "bundle": bundle_name, "size": bundle.stat().st_size}
     (output / "source.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     return record
 

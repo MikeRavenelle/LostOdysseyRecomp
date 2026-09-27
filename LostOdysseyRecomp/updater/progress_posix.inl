@@ -610,17 +610,11 @@ void ProgressWindow::SetPhase(ProgressPhase phase)
         impl_->completed = 1;
         impl_->total = 1;
     }
-    else if (phase == ProgressPhase::Verifying)
-    {
-        impl_->cancellable = false;
-        impl_->amountText.clear();
-        impl_->phaseText = "Verifying…";
-    }
     else
     {
         impl_->cancellable = false;
         impl_->amountText.clear();
-        impl_->phaseText = "Checking package…";
+        impl_->phaseText = "Extracting…";
     }
     impl_->Pump();
 }

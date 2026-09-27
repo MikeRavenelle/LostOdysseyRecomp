@@ -23,7 +23,6 @@ bool ShouldUpdateToLatest(const Version &current, const Version &latest);
 struct FileEntry
 {
     std::filesystem::path path;
-    std::string sha256;
 };
 
 struct PackageManifest
@@ -37,7 +36,6 @@ struct ReleaseAsset
 {
     std::string name;
     std::string url;
-    std::string sha256;
     uint64_t size = 0;
 };
 
@@ -55,7 +53,6 @@ std::string_view ReleaseChangelog(const Release &release, uint32_t uiLanguage);
 std::optional<ReleaseAsset> SelectAsset(const Release &release, std::string_view platform,
                                         std::string_view architecture, std::string &error);
 bool IsSafePayloadPath(const std::filesystem::path &path, std::string &error);
-std::string Sha256File(const std::filesystem::path &path, std::string &error);
 
 struct StagedUpdate
 {

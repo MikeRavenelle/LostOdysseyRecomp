@@ -91,12 +91,10 @@ class PackageFlatpakTest(unittest.TestCase):
                 self.assertEqual(copied.read_bytes(), (source / "usr/bin/LostOdysseyRecomp").read_bytes())
                 self.assertEqual((output / "builder/files/lib/libcurl.so.4").read_bytes(), b"runtime dependency")
                 self.assertTrue((output / "builder/files/bin/libnvidia-ngx-dlss.so").is_symlink())
-                self.assertEqual(result["runtime_sha256"], flatpak.sha256(copied))
+                self.assertEqual(result["size"], (output / result["bundle"]).stat().st_size)
                 self.assertEqual(result["packaging_commit"], "a" * 40)
                 self.assertEqual(result["branch"], branch)
                 self.assertEqual(json.loads((output / "source.json").read_text())["bundle"], result["bundle"])
-                self.assertEqual((output / (result["bundle"] + ".sha256")).read_text(),
-                                 f"{result['sha256']}  {result['bundle']}\n")
                 self.assertTrue(result["bundle"].endswith((f"{tag}.flatpak" if tag else "-dev.flatpak")))
             self.assertEqual([command[1] for command in commands],
                              ["build-init", "build", "build-finish", "build-export", "build-bundle"] * 2)

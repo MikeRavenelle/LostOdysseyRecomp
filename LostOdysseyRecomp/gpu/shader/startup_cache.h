@@ -245,28 +245,24 @@ class Writer {
     fs::path path,temp;
     std::ofstream out;
     uint64_t count=0;
-    Encoder digests;
     std::string common;
 public:
     Writer(const fs::path& target,std::string_view commonText) : path(target),temp(Temporary(target)),out(temp,std::ios::binary),common(commonText) {
         WriteNumber(out,Magic);WriteNumber(out,Schema);WriteNumber(out,0);
         WriteRaw(out,std::array<uint8_t,64>{}); // Final input snapshot (hex).
         WriteNumber(out,common.size());WriteRaw(out,Bytes(common));
-        const auto digest=resources::Sha256(Bytes(common));
-        digests.bytes.insert(digests.bytes.end(),digest.begin(),digest.end());
     }
     ~Writer() { out.close();std::error_code ec;fs::remove(temp,ec); }
     void Add(const Record& record) {
         if(++count>MaxRecords) throw std::runtime_error("too many startup cache records");
         const auto bytes=Encode(record,common);
         if(bytes.size()>MaxRecordBytes) throw std::runtime_error("startup cache record too large");
-        const auto digest=resources::Sha256(bytes);WriteNumber(out,bytes.size());WriteRaw(out,digest);WriteRaw(out,bytes);
-        digests.bytes.insert(digests.bytes.end(),digest.begin(),digest.end());
+        // Reserved checksum slot preserves the existing bundle layout.
+        WriteNumber(out,bytes.size());WriteRaw(out,Digest{});WriteRaw(out,bytes);
     }
     void Finish(std::string_view snapshot) {
         if(!count || snapshot.size()!=64) throw std::runtime_error("incomplete startup cache publication");
-        digests.Text(snapshot);digests.U64(count);digests.U64(Schema);
-        WriteNumber(out,Magic);WriteRaw(out,resources::Sha256(digests.bytes));
+        WriteNumber(out,Magic);WriteRaw(out,Digest{});
         out.seekp(16);WriteNumber(out,count);WriteRaw(out,Bytes(snapshot));out.close();
         if(!out) throw std::runtime_error("startup cache close failed");
         Publish(temp,path);
@@ -305,24 +301,19 @@ inline LoadResult Load(const fs::path& path,std::string_view snapshot,cache::For
         const auto commonSize=ReadNumber(in);if(commonSize>MaxRecordBytes) throw std::runtime_error("invalid bundle prelude length");
         std::string common(size_t(commonSize),'\0');if(!in.read(common.data(),common.size())) throw std::runtime_error("truncated bundle prelude");
 
-        Encoder digests;
         std::set<std::pair<bool,uint64_t>> keys;
-        const auto commonDigest=resources::Sha256(Bytes(common));
-        digests.bytes.insert(digests.bytes.end(),commonDigest.begin(),commonDigest.end());
 
         if(progress) progress(0,uint32_t(count));
         if(pump) pump();
         auto lastPump=std::chrono::steady_clock::now();
         for(uint64_t index=0;index<count;++index) {
             const auto size=ReadNumber(in);if(size>MaxRecordBytes || size<32) throw std::runtime_error("invalid bundle record length");
-            Digest expected{};in.read(reinterpret_cast<char*>(expected.data()),expected.size());
+            in.ignore(Digest{}.size());
             std::vector<uint8_t> bytes(static_cast<size_t>(size));
             if(!in.read(reinterpret_cast<char*>(bytes.data()),bytes.size())) throw std::runtime_error("truncated bundle record");
             result.bytesRead+=bytes.size();
-            if(resources::Sha256(bytes)!=expected) throw std::runtime_error("bundle record digest mismatch");
             auto record=Decode(bytes,common,format,retainHlsl);
             if(!keys.emplace(record.info.isPixelShader,record.hash).second) throw std::runtime_error("duplicate bundle record");
-            digests.bytes.insert(digests.bytes.end(),expected.begin(),expected.end());
             consume(std::move(record));
             const auto now=std::chrono::steady_clock::now();
             if(index+1==count || now-lastPump>=std::chrono::milliseconds(16)) {
@@ -332,11 +323,10 @@ inline LoadResult Load(const fs::path& path,std::string_view snapshot,cache::For
             }
         }
 
-        digests.Text(snapshot);digests.U64(count);digests.U64(Schema);
         if(ReadNumber(in)!=Magic) throw std::runtime_error("bundle completion marker missing");
-        Digest digest{};in.read(reinterpret_cast<char*>(digest.data()),digest.size());
-        if(!in || digest!=resources::Sha256(digests.bytes) || in.peek()!=std::char_traits<char>::eof())
-            throw std::runtime_error("bundle completion digest mismatch");
+        in.ignore(Digest{}.size());
+        if(in.gcount()!=Digest{}.size() || !in || in.peek()!=std::char_traits<char>::eof())
+            throw std::runtime_error("bundle completion marker truncated");
 
         result.ok=true;result.records=uint32_t(count);
     } catch(const std::exception& e) {result.reason=e.what();}
@@ -385,8 +375,7 @@ inline std::string ReadFailure(const fs::path& path,std::string_view key) {
         std::ifstream in(path,std::ios::binary|std::ios::ate);const auto size=in.tellg();
         if(size<136 || size>8*1024*1024) return {};
         std::string bytes(size_t(size),'\0');in.seekg(0);if(!in.read(bytes.data(),bytes.size())) return {};
-        if(bytes.substr(0,8)!="LOFAIL1\n" || bytes.substr(8,64)!=key ||
-            Hex(Bytes(std::string_view(bytes).substr(136)))!=bytes.substr(72,64)) return {};
+        if(bytes.substr(0,8)!="LOFAIL1\n" || bytes.substr(8,64)!=key) return {};
         return bytes.substr(136);
     } catch(...) {return {};}
 }
@@ -394,7 +383,7 @@ inline bool WriteFailure(const fs::path& path,std::string_view key,std::string_v
     if(!deterministic || key.size()!=64 || error.empty() || error.size()>(8u<<20)-136) return false;
     const auto temp=Temporary(path);
     try {
-        std::ofstream out(temp,std::ios::binary);out<<"LOFAIL1\n"<<key<<Hex(Bytes(error))<<error;out.close();
+        std::ofstream out(temp,std::ios::binary);out<<"LOFAIL1\n"<<key<<std::string(64,'0')<<error;out.close();
         if(!out) throw std::runtime_error("cannot write compiler failure record");
         Publish(temp,path);return true;
     } catch(...) {std::error_code ec;fs::remove(temp,ec);return false;}

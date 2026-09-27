@@ -1,5 +1,4 @@
 """Linux regression: compile the real apply entry point and exercise restart/rollback."""
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,7 +22,6 @@ def main():
             "g++", "-std=c++20", "-I", str(source), str(probe_source),
             str(source / "updater/apply_mode.cpp"),
             str(source / "updater/update.cpp"),
-            str(source / "updater/sha256.cpp"),
             "-o", str(probe),
         ], check=True)
         app = root / "Lost Odyssey.AppImage"
@@ -68,7 +66,7 @@ def main():
             plan.write_text(json.dumps({
                 "schema": 1, "version": "v9.9.9", "install_root": str(root),
                 "stage_root": str(stage), "executable": str(app), "launch_arguments": [],
-                "files": {payload.name: hashlib.sha256(payload.read_bytes()).hexdigest()},
+                "files": {payload.name: None},
             }))
             result = subprocess.run(
                 [probe, "--apply-plan", plan, "--wait-process", "1"], env=env,

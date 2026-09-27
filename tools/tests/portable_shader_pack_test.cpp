@@ -22,14 +22,6 @@ uint32_t U32(const Bytes& b,size_t at) { uint32_t v=0;for(unsigned i=0;i<4;++i)v
 uint64_t U64(const Bytes& b,size_t at) {return U32(b,at)|(uint64_t(U32(b,at+4))<<32);}
 Bytes Read(const fs::path& path) {std::ifstream f(path,std::ios::binary);return {std::istreambuf_iterator<char>(f),{}};}
 void Write(const fs::path& path,const Bytes& b) {std::ofstream f(path,std::ios::binary);f.write((const char*)b.data(),b.size());}
-void RepairHeader(Bytes& b) {
-    auto digest=xenos::resources::Sha256(std::span(b).first(128));
-    std::copy(digest.begin(),digest.end(),b.end()-32);
-}
-void RepairIndex(Bytes& b) {
-    auto digest=xenos::resources::Sha256(std::span(b).subspan(size_t(U64(b,48)),size_t(U64(b,56))));
-    std::copy(digest.begin(),digest.end(),b.begin()+88);RepairHeader(b);
-}
 Bytes Shader(bool pixel,uint32_t generator=0,size_t nops=0) {
     // SPIR-V-shaped CPU framing fixture, not claimed to be driver-validated.
     std::vector<uint32_t> words={0x07230203,0x00010500,generator,16,0,
@@ -79,24 +71,24 @@ int main(int argc,char** argv) try {
     auto rejectFile=[&](Bytes bytes){Write(bad,bytes);Reject([&]{p::Reader r(bad,contract);r.VerifyAll();},"malformed file accepted");};
     for(size_t size:{size_t(0),size_t(12),size_t(127),size_t(128),original.size()-1}) {auto bytes=original;bytes.resize(size);rejectFile(bytes);}
     {auto bytes=original;bytes.push_back(0);rejectFile(bytes);}
-    {auto bytes=original;bytes[0]^=1;RepairHeader(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put32(bytes,8,999);RepairHeader(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put32(bytes,72,UINT32_MAX);RepairHeader(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put64(bytes,48,UINT64_MAX);RepairHeader(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put64(bytes,56,UINT64_MAX);RepairHeader(bytes);rejectFile(bytes);}
-    {auto bytes=original;bytes[84]=1;RepairHeader(bytes);rejectFile(bytes);}
+    {auto bytes=original;bytes[0]^=1;rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,8,999);rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,72,UINT32_MAX);rejectFile(bytes);}
+    {auto bytes=original;Put64(bytes,48,UINT64_MAX);rejectFile(bytes);}
+    {auto bytes=original;Put64(bytes,56,UINT64_MAX);rejectFile(bytes);}
+    {auto bytes=original;bytes[84]=1;rejectFile(bytes);}
     {auto bytes=original;bytes.at(size_t(U64(bytes,48)))^=1;rejectFile(bytes);}
     {auto bytes=original;bytes[128]^=1;rejectFile(bytes);}
     const auto index=size_t(U64(original,48));const auto entries=index+28+std::string("producer-A").size();
-    {auto bytes=original;Put32(bytes,entries+8,16);RepairIndex(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put32(bytes,entries+72,UINT32_MAX);RepairIndex(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put64(bytes,entries+76,0);RepairIndex(bytes);rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,entries+8,16);rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,entries+72,UINT32_MAX);rejectFile(bytes);}
+    {auto bytes=original;Put64(bytes,entries+76,0);rejectFile(bytes);}
     const auto blobs=entries+3*76,blocks=blobs+2*12;
-    {auto bytes=original;Put32(bytes,blobs,99);RepairIndex(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put32(bytes,blobs+4,4);RepairIndex(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put32(bytes,blobs+8,p::MaxShaderBytes+4);RepairIndex(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put64(bytes,blocks,UINT64_MAX);RepairIndex(bytes);rejectFile(bytes);}
-    {auto bytes=original;Put32(bytes,blocks+12,UINT32_MAX);RepairIndex(bytes);rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,blobs,99);rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,blobs+4,4);rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,blobs+8,p::MaxShaderBytes+4);rejectFile(bytes);}
+    {auto bytes=original;Put64(bytes,blocks,UINT64_MAX);rejectFile(bytes);}
+    {auto bytes=original;Put32(bytes,blocks+12,UINT32_MAX);rejectFile(bytes);}
     {p::Writer w(file,contract,"producer-A");w.Add(1,ps,pb);}Check(Read(file)==original,"unfinished export clobbered published file");
     {p::Writer w(bad,contract,"producer-A");Reject([&]{w.Add(1,ps,vb);},"stage mismatch accepted");}
     {p::Writer w(bad,contract,"producer-A");auto v=vb;Put32(v,4,0x00010600);Reject([&]{w.Add(1,vs,v);},"Vulkan1.2 pack accepted SPIR-V1.6");}

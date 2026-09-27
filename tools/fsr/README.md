@@ -11,7 +11,7 @@ cmake --build out/fsr-sdk-build --config Release --target lo_fsr3upscaler_vk LoF
 python tools/fsr/prepare_adapter_shaders.py --glslang .cache/deps/fidelityfx-sdk-v1.1.4/sdk/tools/binary_store/glslangValidator.exe --output out/fsr-shaders-vk
 ```
 
-The shader directory contains 40 permutation index headers, their SPIR-V byte-array headers, source/tool hashes, commands and the upstream MIT license. Copy that directory with the matching SDK sources to Linux; generation is not repeated there. Build configuration verifies prepared header/source hashes. Generated output belongs in the build/package inputs, not the runtime source checkout. Distribute `LICENSE-FidelityFX.txt` with binaries containing these shaders/SDK code. Enabled executable targets stage it in `licenses/LICENSE-FidelityFX.txt` beside the binary.
+The shader directory contains 40 permutation index headers, their SPIR-V byte-array headers, generation commands and the upstream MIT license. Copy that directory with the matching SDK sources to Linux; generation is not repeated there. Generated output belongs in the build/package inputs, not the runtime source checkout. Distribute `LICENSE-FidelityFX.txt` with binaries containing these shaders/SDK code. Enabled executable targets stage it in `licenses/LICENSE-FidelityFX.txt` beside the binary.
 
 `LoFsr::Vulkan` exposes the SDK headers and links the upscaler/backend static library. `lo_enable_fsr(target)` links it and defines `LO_HAS_FSR=1`; disabled or missing optional inputs define `LO_HAS_FSR=0`. Both switches default off. `LO_REQUIRE_FSR=ON` makes requested missing/mismatched inputs fatal. The existing DLSS options are independent.
 

@@ -57,10 +57,6 @@ std::string ProcessIdString()
 }
 
 #ifdef LO_IMPORT_TESTING
-std::map<uint32_t, std::string> g_testSha256Asia;
-std::map<uint32_t, std::string> g_testSha256Europe;
-std::map<uint32_t, std::string> g_testMd5Asia;
-std::map<uint32_t, std::string> g_testMd5Europe;
 std::string g_testDlcFailureFile;
 std::string g_testDlcFailureStage;
 std::string g_testDiscFailureFile;
@@ -188,16 +184,6 @@ bool IsSymlinkOrReparse(const std::filesystem::path& path)
     return false;
 }
 
-std::string Sha256Bytes(const void* data, size_t length)
-{
-    return crypto::Sha256Hex(data, length);
-}
-
-std::string Md5Bytes(const void* data, size_t length)
-{
-    return crypto::Md5Hex(data, length);
-}
-
 struct ExecutionInfo
 {
     std::string title;
@@ -257,131 +243,37 @@ ExecutionInfo ParseExecution(std::span<const uint8_t> data)
 struct EditionEntry
 {
     const char* id;
-    const char* label;
     uint32_t version;
     uint32_t base;
     std::array<const char*, 5> media;
-    std::array<const char*, 5> sha256;
 };
 
 constexpr EditionEntry EDITIONS_DATA[] = {
     {
         "asia",
-        "Europe / Asia",
         4,
         4,
-        {"", "39F7D748", "0EF8CEA8", "309E3386", "7B21A91D"},
-        {"",
-         "40c7dbb12cca03921d52cf4177a0f700cc4ae94ab730ab594940e2bdffd8ecf2",
-         "a42a46b211b22e923ccaed7a313e59083adbdbfbbc62d04cb7c6848fd9717ec7",
-         "0d7965a11fb9d102856e26c7fb462b888cb57a1fedc474378b9ae2cceccf6570",
-         "893914d1bf334f06508b5d54fa20004ee642a53ffcc6137500c10655c3831916"}
+        {"", "39F7D748", "0EF8CEA8", "309E3386", "7B21A91D"}
     },
     {
         "usa-europe",
-        "USA / Europe",
         3,
         3,
-        {"", "368DE6DD", "1888BE4E", "6DD59D08", "0C0E80B5"},
-        {"",
-         "175ae53d109d480a83bebbd186e7b6871f7b03ce80af69ab388db2f747640de3",
-         "1d8a78379349e4583957d34148d5dbf8a091955edb6c6877bc24bdc9c7b87541",
-         "dd323967d7f4b99b48c00aa6a15a643c96df525e539669e9be49a876513b86f6",
-         "9204ba8b91836853ae1e9f0dc49090abd5e63709935599c5551c23b28ecf48d4"}
+        {"", "368DE6DD", "1888BE4E", "6DD59D08", "0C0E80B5"}
     }
 };
 
-std::string GetExpectedSha256(const EditionEntry& ed, uint32_t disc)
+std::string IdentifyDisc(const ExecutionInfo& info)
 {
-    if (disc >= 1 && disc <= 4)
-    {
-#ifdef LO_IMPORT_TESTING
-        bool isEu = (std::string_view(ed.id) == "usa-europe");
-        const auto& overrideMap = isEu ? g_testSha256Europe : g_testSha256Asia;
-        auto it = overrideMap.find(disc);
-        if (it != overrideMap.end())
-            return it->second;
-#endif
-        return ed.sha256[disc];
-    }
+    if (info.title != "4D5307FA" || info.disc < 1 || info.disc > 4 || info.discs != 4)
+        return {};
+    for (const auto& ed : EDITIONS_DATA)
+        if (ed.media[info.disc] == info.media && info.version == ed.version && info.base == ed.base)
+            return ed.id;
     return {};
 }
 
-std::string GetExpectedMd5(const EditionEntry& ed, uint32_t disc)
-{
-#ifdef LO_IMPORT_TESTING
-    if (disc >= 1 && disc <= 4)
-    {
-        bool isEu = (std::string_view(ed.id) == "usa-europe");
-        const auto& overrideMap = isEu ? g_testMd5Europe : g_testMd5Asia;
-        auto it = overrideMap.find(disc);
-        if (it != overrideMap.end())
-            return it->second;
-    }
-#endif
-    return {};
-}
-
-std::pair<std::string, std::string> IdentifyDisc(const ExecutionInfo& info,
-                                                 const std::string& sha256,
-                                                 const std::string& md5)
-{
-    auto metadataMatches = [&](const EditionEntry& ed) {
-        if (info.disc < 1 || info.disc > 4) return false;
-        return ed.media[info.disc] == info.media &&
-               info.version == ed.version &&
-               info.base == ed.base;
-    };
-
-    for (const auto& ed : EDITIONS_DATA)
-    {
-        std::string expSha = GetExpectedSha256(ed, info.disc);
-        if (!expSha.empty() && !sha256.empty() && expSha == sha256)
-        {
-            if (!metadataMatches(ed))
-                throw Error("XEX hash and execution metadata identify different disc builds");
-            return {ed.id, "sha256"};
-        }
-
-        std::string expMd5 = GetExpectedMd5(ed, info.disc);
-        if (!expMd5.empty() && !md5.empty() && expMd5 == md5)
-        {
-            if (!metadataMatches(ed))
-                throw Error("XEX hash and execution metadata identify different disc builds");
-            return {ed.id, "md5"};
-        }
-    }
-    return {"unknown", "none"};
-}
-
-std::string MetadataEdition(const ExecutionInfo& info)
-{
-    for (const auto& ed : EDITIONS_DATA)
-    {
-        if (info.disc >= 1 && info.disc <= 4)
-        {
-            if (ed.media[info.disc] == info.media &&
-                info.version == ed.version &&
-                info.base == ed.base)
-            {
-                return ed.id;
-            }
-        }
-    }
-    return {};
-}
-
-const EditionEntry* FindEditionEntry(std::string_view id)
-{
-    for (const auto& ed : EDITIONS_DATA)
-    {
-        if (ed.id == id)
-            return &ed;
-    }
-    return nullptr;
-}
-
-// PrepareDisc parses and authenticates any source kind (Folder, ISO, GOD)
+// PrepareDisc parses the execution metadata for any source kind (Folder, ISO, GOD).
 DiscInfo PrepareDisc(const std::filesystem::path& path,
                     std::optional<Kind> explicitKind,
                     std::vector<Entry>& outEntries,
@@ -454,10 +346,7 @@ DiscInfo PrepareDisc(const std::filesystem::path& path,
     }
 
     ExecutionInfo exec = ParseExecution(xexBytes);
-    std::string sha256 = Sha256Bytes(xexBytes.data(), xexBytes.size());
-    std::string md5 = Md5Bytes(xexBytes.data(), xexBytes.size());
-    auto [edition, identity] = IdentifyDisc(exec, sha256, md5);
-    std::string metaEd = MetadataEdition(exec);
+    const std::string edition = IdentifyDisc(exec);
 
     if (validate)
     {
@@ -466,19 +355,11 @@ DiscInfo PrepareDisc(const std::filesystem::path& path,
         if (exec.disc < 1 || exec.disc > 4 || exec.discs != 4)
             throw Error("Unsupported disc set: disc " + std::to_string(exec.disc) +
                         " of " + std::to_string(exec.discs) + " (expected 1-4 of 4)");
-        if (edition == "unknown")
+        if (edition.empty())
         {
-            std::string resembles;
-            if (!metaEd.empty())
-            {
-                const auto* ed = FindEditionEntry(metaEd);
-                resembles = std::string(" Metadata resembles ") + (ed ? ed->label : metaEd.c_str()) +
-                            ", but metadata alone cannot prove compatible guest code.";
-            }
             throw Error("Unrecognized Lost Odyssey XEX: Media ID " + exec.media +
                         ", version " + std::to_string(exec.version) +
-                        ", base " + std::to_string(exec.base) + "; MD5 " + md5 +
-                        "; SHA256 " + sha256 + "." + resembles);
+                        ", base " + std::to_string(exec.base));
         }
 
         // Required disc files
@@ -513,10 +394,6 @@ DiscInfo PrepareDisc(const std::filesystem::path& path,
     info.title = exec.title;
     info.media = exec.media;
     info.edition = edition;
-    info.identity = identity;
-    info.metadataEdition = metaEd;
-    info.sha256 = sha256;
-    info.md5 = md5;
     if (retainedReader)
         *retainedReader = std::move(imageReader);
     return info;
@@ -535,7 +412,7 @@ struct DiscoveredSources
 };
 
 using json = nlohmann::json;
-struct ExtractedDlcFile { std::string path; uint64_t size = 0; std::string sha256; };
+struct ExtractedDlcFile { std::string path; uint64_t size = 0; };
 struct ExtractedDlc
 {
     DlcPackageInfo info;
@@ -543,12 +420,6 @@ struct ExtractedDlc
     std::array<std::vector<uint8_t>, 3> sidecars;
 };
 constexpr std::array<const char*, 3> DlcSidecars{".lo-content", ".lo-dlc-header", ".lo-dlc.json"};
-
-bool IsHexSha256(std::string_view value)
-{
-    if (value.size() != 64) return false;
-    return std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
-}
 
 ExtractedDlc ReadExtractedDlc(const std::filesystem::path& dir, const Cancelled& cancelled = {})
 {
@@ -576,11 +447,9 @@ ExtractedDlc ReadExtractedDlc(const std::filesystem::path& dir, const Cancelled&
     if (data.is_discarded() || !data.is_object()) throw Error("Invalid extracted DLC manifest");
     if (data.value("schema", 0) != 1 || data.value("title_id", "") != "4D5307FA") throw Error("Wrong extracted DLC metadata");
     auto contentId = data.value("content_id", "");
-    auto sourceSha = data.value("source_sha256", "");
-    if (contentId.size() != 40 || !std::all_of(contentId.begin(), contentId.end(), [](unsigned char c) { return std::isxdigit(c); }) || !IsHexSha256(sourceSha)) throw Error("Invalid extracted DLC identity");
+    if (contentId.size() != 40 || !std::all_of(contentId.begin(), contentId.end(), [](unsigned char c) { return std::isxdigit(c); })) throw Error("Invalid extracted DLC identity");
     auto& info = package.info;
-    info.path = dir; info.contentId = ToUpper(contentId); info.sourceSha256 = ToLower(sourceSha); info.format = "extracted";
-    info.extractedManifestSha256 = crypto::Sha256Hex(manifest.data(), manifest.size());
+    info.path = dir; info.contentId = ToUpper(contentId); info.format = "extracted";
     info.displayName = data.value("display_name", "");
     info.licenseMask = data.value("license_mask", uint32_t(0));
     const auto& header = package.sidecars[1];
@@ -612,16 +481,11 @@ ExtractedDlc ReadExtractedDlc(const std::filesystem::path& dir, const Cancelled&
             if (IsSymlinkOrReparse(ancestor)) throw Error("Links are not supported as DLC payloads");
             if (ancestor == ancestor.parent_path()) break;
         }
-        auto expected = item.value("size", uint64_t(0)); auto hash = item.value("sha256", "");
-        if (!IsHexSha256(hash)) throw Error("Invalid extracted DLC file hash");
+        auto expected = item.value("size", uint64_t(0));
         std::error_code ec;
         if (IsSymlinkOrReparse(file) || !std::filesystem::is_regular_file(file, ec) || std::filesystem::file_size(file, ec) != expected)
             throw Error("Extracted DLC file is missing or has the wrong size: " + name);
-        std::ifstream stream(file, std::ios::binary); crypto::Sha256 sha; std::array<uint8_t, 4096> buffer{}; uint64_t read = 0;
-        if (!stream) throw Error("Could not open extracted DLC payload: " + name);
-        while (stream.read(reinterpret_cast<char*>(buffer.data()), buffer.size()) || stream.gcount()) { checkCancelled(); auto n = stream.gcount(); sha.Update(buffer.data(), static_cast<size_t>(n)); read += static_cast<uint64_t>(n); }
-        if (read != expected || ToLower(crypto::HexString(sha.Finalize())) != ToLower(hash)) throw Error("Extracted DLC file hash mismatch: " + name);
-        files.push_back({name, expected, ToLower(hash)}); info.bytes += expected;
+        files.push_back({name, expected}); info.bytes += expected;
     }
     if (files.empty()) throw Error("Extracted DLC manifest has no files");
     for (const auto& sidecar : DlcSidecars) names.insert(sidecar);
@@ -898,11 +762,10 @@ std::vector<uint8_t> MakeContentRecord(const DlcPackageInfo& info)
     return data;
 }
 
-bool ExistingDlcPayloadMatches(const std::filesystem::path& target, StfsPackage& package)
+bool ExistingDlcPayloadMatches(const std::filesystem::path& target, const StfsPackage& package)
 {
     if (IsSymlinkOrReparse(target)) return false;
     std::set<std::string> expected{".lo-content", ".lo-dlc-header", ".lo-dlc.json"};
-    std::array<uint8_t, 4096> original{}, installed{};
     for (const auto& entry : package.GetEntries())
     {
         auto path = target / std::filesystem::u8path(entry.path);
@@ -912,18 +775,6 @@ bool ExistingDlcPayloadMatches(const std::filesystem::path& target, StfsPackage&
         expected.insert(ToLower(entry.path));
         if (!std::filesystem::is_regular_file(path) || std::filesystem::file_size(path) != entry.size)
             return false;
-        std::ifstream input(path, std::ios::binary);
-        uint64_t remaining = entry.size;
-        for (auto block : entry.blocks)
-        {
-            package.ReadBlock(block, original.data());
-            const auto take = static_cast<size_t>(std::min<uint64_t>(remaining, original.size()));
-            input.read(reinterpret_cast<char*>(installed.data()), take);
-            if (input.gcount() != static_cast<std::streamsize>(take) ||
-                !std::equal(original.begin(), original.begin() + take, installed.begin())) return false;
-            remaining -= take;
-        }
-        if (remaining) return false;
     }
     std::set<std::string> actual;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(target))
@@ -944,26 +795,6 @@ bool ExistingDlcPayloadMatches(const std::filesystem::path& target, StfsPackage&
 // ----------------------------------------------------------------------------
 
 #ifdef LO_IMPORT_TESTING
-void SetTestSha256(uint32_t disc, std::string_view hex, bool europe)
-{
-    if (europe) g_testSha256Europe[disc] = std::string(hex);
-    else g_testSha256Asia[disc] = std::string(hex);
-}
-
-void SetTestMd5(uint32_t disc, std::string_view hex, bool europe)
-{
-    if (europe) g_testMd5Europe[disc] = std::string(hex);
-    else g_testMd5Asia[disc] = std::string(hex);
-}
-
-void ClearTestOverrides()
-{
-    g_testSha256Asia.clear();
-    g_testSha256Europe.clear();
-    g_testMd5Asia.clear();
-    g_testMd5Europe.clear();
-}
-
 void SetTestDlcWriteFailure(std::string_view filename, std::string_view stage)
 {
     g_testDlcFailureFile = filename;
@@ -1022,8 +853,7 @@ ContentScan ScanContent(const std::vector<std::filesystem::path>& paths, const C
     }
 
     // 2. Scan DLC packages
-    std::map<std::string, std::string> seenDlcIdentities; // content_id -> source_sha256
-    std::map<std::string, std::string> seenExtractedManifests;
+    std::set<std::string> seenDlcIdentities;
     for (const auto& pkgPath : discovered.packages)
     {
         if (cancelled && cancelled())
@@ -1034,30 +864,16 @@ ContentScan ScanContent(const std::vector<std::filesystem::path>& paths, const C
             if (std::filesystem::is_directory(pkgPath))
             {
                 auto info = ReadExtractedDlc(pkgPath, cancelled).info;
-                auto it = seenDlcIdentities.find(info.contentId);
-                if (it != seenDlcIdentities.end())
-                {
-                    if (it->second != info.sourceSha256 || !seenExtractedManifests.contains(info.contentId) ||
-                        seenExtractedManifests.at(info.contentId) != info.extractedManifestSha256)
-                        throw Error("Different source packages have the same DLC content ID");
+                if (!seenDlcIdentities.insert(info.contentId).second)
                     continue;
-                }
-                seenDlcIdentities[info.contentId] = info.sourceSha256;
-                seenExtractedManifests[info.contentId] = info.extractedManifestSha256;
                 scanResult.packages.push_back(std::move(info));
                 continue;
             }
             StfsPackage stfs(pkgPath, cancelled);
             const auto& info = stfs.GetInfo();
 
-            auto it = seenDlcIdentities.find(info.contentId);
-            if (it != seenDlcIdentities.end())
-            {
-                if (it->second != info.sourceSha256 || seenExtractedManifests.contains(info.contentId))
-                    throw Error("Different source packages have the same DLC content ID");
+            if (!seenDlcIdentities.insert(info.contentId).second)
                 continue;
-            }
-            seenDlcIdentities[info.contentId] = info.sourceSha256;
             scanResult.packages.push_back(info);
         }
         catch (const Error& err)
@@ -1311,7 +1127,7 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                 auto info = ParseExecution(bytes);
                 if (info.title != "4D5307FA" || info.discs != 4)
                     throw Error("Retained disc XEX has incompatible title or disc count: " + existing.string());
-                auto [edition, identity] = IdentifyDisc(info, Sha256Bytes(bytes.data(), bytes.size()), Md5Bytes(bytes.data(), bytes.size()));
+                const auto edition = IdentifyDisc(info);
                 DiscInfo installed;
                 installed.disc = info.disc; installed.edition = edition;
                 if (installed.disc != n || installed.edition != targetEdition)
@@ -1333,8 +1149,8 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
         {
             LoadedDisc ld;
             ld.info = PrepareDisc(d.path, d.kind, ld.entries, true, checkCancelled, &ld.image);
-            if (ld.info.disc != d.disc || ld.info.sha256 != d.sha256 ||
-                ld.info.media != d.media || ld.info.edition != d.edition)
+            if (ld.info.disc != d.disc || ld.info.media != d.media ||
+                ld.info.version != d.version || ld.info.base != d.base || ld.info.edition != d.edition)
                 throw Error("The selected disc identity changed after review; check the source again");
             if (ld.info.edition != targetEdition)
                 throw Error("Cannot mix Europe/Asia and USA/Europe discs in one installation");
@@ -1415,22 +1231,10 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                          << "  \"base\": " << ld.info.base << ",\n"
                          << "  \"disc\": " << ld.info.disc << ",\n"
                          << "  \"discs\": " << ld.info.discs << ",\n"
-                         << "  \"sha256\": \"" << ld.info.sha256 << "\",\n"
-                         << "  \"md5\": \"" << ld.info.md5 << "\",\n"
-                         << "  \"edition\": \"" << ld.info.edition << "\",\n"
-                         << "  \"identity\": \"" << ld.info.identity << "\",\n"
-                         << "  \"metadata_edition\": \"" << ld.info.metadataEdition << "\"\n"
+                         << "  \"edition\": \"" << ld.info.edition << "\"\n"
                          << "}\n";
                 FinishDiscOutput(infoJson, infoJsonPath);
 
-                // Verify copied default.xex SHA256 matches
-                std::filesystem::path copiedXex = targetDisc / "default.xex";
-                std::ifstream copiedXexFile(copiedXex, std::ios::binary);
-                std::vector<uint8_t> copiedXexBytes((std::istreambuf_iterator<char>(copiedXexFile)),
-                                                    std::istreambuf_iterator<char>());
-                std::string copiedHash = Sha256Bytes(copiedXexBytes.data(), copiedXexBytes.size());
-                if (copiedHash != ld.info.sha256)
-                    throw Error("The source XEX changed during import; please retry");
             }
 
             if (checkCancelled())
@@ -1470,14 +1274,13 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
             {
                 package.extracted = ReadExtractedDlc(pkgInfo.path, checkCancelled);
                 package.info = package.extracted->info;
-                if (package.info.sourceSha256 != pkgInfo.sourceSha256 || package.info.contentId != pkgInfo.contentId ||
-                    package.info.extractedManifestSha256 != pkgInfo.extractedManifestSha256)
+                if (package.info.contentId != pkgInfo.contentId)
                     throw Error("DLC source changed since review; check the source again");
             }
             else
             {
                 package.stfs = std::make_unique<StfsPackage>(pkgInfo.path, checkCancelled);
-                if (package.stfs->GetInfo().sourceSha256 != pkgInfo.sourceSha256 || package.stfs->GetInfo().contentId != pkgInfo.contentId)
+                if (package.stfs->GetInfo().contentId != pkgInfo.contentId)
                     throw Error("DLC source changed since review; check the source again");
             }
 
@@ -1489,7 +1292,7 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                 if (package.extracted)
                 {
                     auto existing = ReadExtractedDlc(targetDir, checkCancelled);
-                    if (existing.sidecars == package.extracted->sidecars)
+                    if (existing.info.contentId == package.info.contentId)
                     {
                         result.dlcUnchanged.push_back(pkgInfo.contentId);
                         continue;
@@ -1538,7 +1341,6 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                     {
                         std::string path;
                         uint32_t size = 0;
-                        std::string sha256;
                     };
                     std::vector<ManifestFile> manifestFiles;
 
@@ -1561,7 +1363,6 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                         std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
                         CheckDlcOutput(out, outPath, "open");
 
-                        crypto::Sha256 fileSha;
                         uint32_t remaining = entry.size;
 
                         for (uint32_t b : entry.blocks)
@@ -1572,7 +1373,6 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                             {
                                 out.write(reinterpret_cast<const char*>(blockBuf.data()), take);
                                 CheckDlcOutput(out, outPath, "write");
-                                fileSha.Update(blockBuf.data(), take);
                                 remaining -= take;
                                 dlcDone += take;
                                 reportProgress(dlcDone, totalDlcBytes, entry.path);
@@ -1583,7 +1383,7 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                         if (remaining != 0)
                             throw Error("DLC file chain is shorter than its declared size");
 
-                        manifestFiles.push_back({entry.path, entry.size, crypto::HexString(fileSha.Finalize())});
+                        manifestFiles.push_back({entry.path, entry.size});
                     }
                     if (pkg.extracted) for (const auto& entry : pkg.extracted->files)
                     {
@@ -1592,11 +1392,11 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                         std::filesystem::create_directories(outPath.parent_path(), ec);
                         std::ifstream in(source, std::ios::binary); std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
                         if (!in || !out) throw Error("Could not open extracted DLC payload for copying");
-                        crypto::Sha256 sha; std::array<uint8_t, 4096> bytes{}; uint64_t total = 0;
-                        while (in.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) || in.gcount()) { auto n = in.gcount(); sha.Update(bytes.data(), static_cast<size_t>(n)); out.write(reinterpret_cast<char*>(bytes.data()), n); total += n; dlcDone += n; reportProgress(dlcDone, totalDlcBytes, entry.path); if (checkCancelled()) throw Error("DLC import cancelled; source files were kept", true); }
+                        std::array<uint8_t, 4096> bytes{}; uint64_t total = 0;
+                        while (in.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) || in.gcount()) { auto n = in.gcount(); out.write(reinterpret_cast<char*>(bytes.data()), n); total += n; dlcDone += n; reportProgress(dlcDone, totalDlcBytes, entry.path); if (checkCancelled()) throw Error("DLC import cancelled; source files were kept", true); }
                         out.flush();
                         if (!out) throw Error("Extracted DLC write failed");
-                        if (total != entry.size || ToLower(crypto::HexString(sha.Finalize())) != entry.sha256) throw Error("Extracted DLC changed during import");
+                        if (total != entry.size || in.bad()) throw Error("Extracted DLC changed during import");
                     }
 
                     if (pkg.extracted)
@@ -1609,7 +1409,6 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                             out.flush();
                             if (!out) throw Error("Extracted DLC sidecar write failed");
                         }
-                        ReadExtractedDlc(targetDir, checkCancelled);
                         continue;
                     }
 
@@ -1638,14 +1437,13 @@ static InstallResult ImportContentImpl(const ContentScan& selection,
                             << "  \"schema\": 1,\n"
                             << "  \"title_id\": \"4D5307FA\",\n"
                             << "  \"content_id\": \"" << info.contentId << "\",\n"
-                            << "  \"source_sha256\": \"" << info.sourceSha256 << "\",\n"
                             << "  \"display_name\": \"" << info.displayName << "\",\n"
                             << "  \"license_mask\": " << info.licenseMask << ",\n"
                             << "  \"files\": [\n";
                     for (size_t i = 0; i < manifestFiles.size(); ++i)
                     {
                         jsonOut << "    {\"path\": \"" << manifestFiles[i].path << "\", \"size\": "
-                                << manifestFiles[i].size << ", \"sha256\": \"" << manifestFiles[i].sha256 << "\"}";
+                                << manifestFiles[i].size << "}";
                         if (i + 1 < manifestFiles.size()) jsonOut << ",";
                         jsonOut << "\n";
                     }

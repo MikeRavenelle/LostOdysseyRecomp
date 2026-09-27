@@ -104,6 +104,7 @@ enabled by this change.
 No copyrighted game inputs are required for these commands:
 
 ```sh
+# Historical audit commands; native_audit.py has since been removed.
 python tools/tests/native_audit.py --cxx clang++ --sanitize --out out/audit/native
 python tools/tests/menu_boundary_regression.py --cxx clang++ --sanitize --out out/audit/menu
 python tools/tests/shader_prebuild_regression.py --cxx clang++ --sanitize --out out/audit/prebuild

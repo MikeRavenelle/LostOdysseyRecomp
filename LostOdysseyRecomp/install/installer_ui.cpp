@@ -1465,7 +1465,7 @@ InstallerResult ShowInstallerUI(const std::filesystem::path& executableDirectory
                         ui::DrawString(renderer, 220, rowY, d.edition, secondary.r, secondary.g, secondary.b, 255, 1.0f);
                         ui::DrawString(renderer, 400, rowY, std::to_string(d.files), primary.r, primary.g, primary.b, 255, 1.0f);
                         ui::DrawString(renderer, 500, rowY, FormatBytes(d.bytes), primary.r, primary.g, primary.b, 255, 1.0f);
-                        ui::DrawString(renderer, 650, rowY, d.identity.empty() ? "Verified" : d.identity, status.r, status.g, status.b, 255, 1.0f);
+                        ui::DrawString(renderer, 650, rowY, d.edition, status.r, status.g, status.b, 255, 1.0f);
                     }
                     else
                     {

@@ -1,6 +1,5 @@
 """Package the Linux runtime as an AppImage using linuxdeploy."""
 import argparse
-import hashlib
 import os
 import shutil
 import subprocess
@@ -169,9 +168,8 @@ def main():
             raise SystemExit("linuxdeploy did not produce an AppImage")
         destination = output / f"{name}.AppImage"
         shutil.move(str(produced), destination)
-        checksum_path = destination.with_suffix(".AppImage.sha256")
-        checksum = hashlib.sha256(destination.read_bytes()).hexdigest()
-        checksum_path.write_text(f"{checksum}  {destination.name}\n", encoding="utf-8")
+        if not destination.stat().st_size:
+            raise SystemExit("linuxdeploy produced an empty AppImage")
         if appdir_destination:
             appdir_destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(appdir, appdir_destination, symlinks=True)
@@ -179,7 +177,6 @@ def main():
             validate_appdir_links(appdir_destination)
             print(f"AppDir: {appdir_destination}")
         print(f"SelectAsset: {destination.name}")
-        print(f"SelectAsset: {checksum_path.name}")
 
 
 if __name__ == "__main__":

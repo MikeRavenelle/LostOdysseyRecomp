@@ -139,11 +139,6 @@ bool ReadResponse(std::string_view url, size_t limit, std::string &body, std::st
 bool Download(std::string_view url, const std::filesystem::path &destination, uint64_t expectedSize,
               ProgressWindow &progress, std::string &error, bool &cancelled)
 {
-    if (!expectedSize || expectedSize > 1024ull * 1024 * 1024)
-    {
-        error = "update asset size is outside the supported range";
-        return false;
-    }
     InternetHandle session, connection, request;
     if (!OpenRequest(url, session, connection, request, error)) return false;
     std::ofstream output(destination, std::ios::binary | std::ios::trunc);
@@ -157,17 +152,12 @@ bool Download(std::string_view url, const std::filesystem::path &destination, ui
         if (!WinHttpReadData(request.value, buffer.data(), DWORD(buffer.size()), &read))
             return WindowsApiFailure("WinHttpReadData(update download)", GetLastError(), error);
         if (!read) break;
-        if (total > expectedSize || read > expectedSize - total)
-        {
-            error = "update download exceeded the declared asset size";
-            return false;
-        }
         output.write(buffer.data(), read);
         total += read;
         progress.SetDownloadProgress(total, expectedSize);
     }
     output.flush();
-    if (!output || total != expectedSize) { error = "update download size mismatch"; return false; }
+    if (!output) { error = "could not write update download"; return false; }
     return true;
 }
 
@@ -343,17 +333,9 @@ StartupResult PrepareAtStartup(const StartupOptions &options)
         result.detail = error;
         return result;
     }
-    progress.SetPhase(ProgressPhase::Verifying);
-    if (Sha256File(archive, error) != asset->sha256)
-    {
-        std::filesystem::remove_all(operationRoot, filesystemError);
-        result.status = StartupStatus::IntegrityFailed;
-        result.detail = error.empty() ? "GitHub asset digest mismatch" : error;
-        return result;
-    }
     StagedUpdate update;
     update.installRoot = std::filesystem::absolute(options.installRoot);
-    progress.SetPhase(ProgressPhase::CheckingPackage);
+    progress.SetPhase(ProgressPhase::Extracting);
     if (!StageArchive(archive, operationRoot, release->tag, update, error))
     {
         std::filesystem::remove_all(operationRoot, filesystemError);

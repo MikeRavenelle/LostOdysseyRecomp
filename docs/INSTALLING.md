@@ -1,6 +1,6 @@
 # Installing Lost Odyssey Recomp
 
-This guide describes the published [v0.6.1 package](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.6.1), with Direct3D 12 and Vulkan graphics backends. The importer and updater are built into **LostOdysseyRecomp.exe**; there is no separate `InstallGame.exe` or `LostOdysseyUpdater.exe`.
+This guide describes the current development branch and the next package transition, with Direct3D 12 and Vulkan graphics backends. The importer and updater are built into **LostOdysseyRecomp.exe**; there is no separate `InstallGame.exe` or `LostOdysseyUpdater.exe`.
 
 1. Extract the entire package to a writable folder, outside Program Files. Keep the main executable, validated DXC v1.8.2407 DLL pair and license files together.
 2. Run **LostOdysseyRecomp.exe** directly. If game files are missing, the built-in importer opens; select your source and review its recognition result before importing.
@@ -8,7 +8,7 @@ This guide describes the published [v0.6.1 package](https://github.com/freefrank
 
 The built-in importer can also be opened from the game to import additional discs or DLC. Disc 1 is required to start.
 
-The package includes the game executable and built-in importer/updater, validated DXC v1.8.2407 DLL pair, dependency licenses and a SHA256 manifest. Python and Visual Studio are not required. Windows x64 and an AVX-capable CPU are required. D3D12 is the default graphics path; the development Vulkan path requires a compatible Windows driver and uses the driver-provided Vulkan loader rather than a bundled SDK.
+The package includes the game executable and built-in importer/updater, the DXC v1.8.2407 DLL pair and dependency licenses. Python and Visual Studio are not required. Windows x64 and an AVX-capable CPU are required. D3D12 is the default graphics path; the development Vulkan path requires a compatible Windows driver and uses the driver-provided Vulkan loader rather than a bundled SDK.
 Game files are supplied by the user and are not included in the download.
 
 <a id="automatic-content-import"></a>
@@ -47,7 +47,7 @@ The importer accepts these audited sets, both with Title ID `4D5307FA`:
 | Asian multilingual | 4 | `39F7D748`, `0EF8CEA8`, `309E3386`, `7B21A91D` |
 | USA/Europe | 3 | `368DE6DD`, `1888BE4E`, `6DD59D08`, `0C0E80B5` |
 
-Each XEX SHA256 must match one of the audited supported builds. Discs from different editions cannot be mixed,
+Each XEX must carry the metadata of one audited supported build. Discs from different editions cannot be mixed,
 either in a single import or when adding to an existing installation. Other builds, title updates
 and modified XEX files need separate compatibility work.
 
@@ -80,7 +80,7 @@ Review the detected package names, content IDs and game discs together, then con
 
 All discs share `game/dlc/<content-id>/`. Selecting an existing `game/disc1` through `game/disc4` directory also uses this shared location. Keep the extracted files and their hidden metadata together. DLC import leaves `game-path.txt`, source packages, saves, profiles and settings unchanged.
 
-An identical, intact installation is recognized without copying it again. A conflicting or damaged package with the same ID is reported and left unchanged. Importing stages the selected packages before publication; cancellation removes this operation's temporary data. The importer checks structure and file integrity, without verifying Microsoft signatures. Other games, title updates, SVOD DLC and arbitrary loose DLC folders are unsupported.
+An existing installation with the same content ID and expected size is recognized without copying it again. A conflicting package is reported and left unchanged. Importing stages the selected packages before publication; cancellation removes this operation's temporary data. The importer checks structure, path and I/O results, without verifying Microsoft signatures or doing a full source hash scan. Other games, title updates, SVOD DLC and arbitrary loose DLC folders are unsupported.
 
 Three real DLC packages have been imported and read at runtime through their headers, complete indexes and payloads in 24 total reads without a crash; imported files and isolated user data remained unchanged. Rewards, dungeon gameplay and broader edition compatibility still need verification. DLC files are not included in the program download.
 

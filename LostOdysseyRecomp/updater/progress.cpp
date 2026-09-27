@@ -83,7 +83,7 @@ struct ProgressWindow::Impl
     void RequestCancel()
     {
         // The transaction only observes cancellation in its download loop.
-        // Verification/package checking must finish through the existing owner.
+        // Extraction must finish through the existing owner.
         if (!cancellable || cancelled) return;
         cancelled = true;
         SetCancellable(false);
@@ -332,10 +332,8 @@ void ProgressWindow::SetPhase(ProgressPhase phase)
         Impl::Text(impl_->amount, impl_->amountText, L"");
         SetProgress(1, 1, L"Ready to restart");
     }
-    else if (phase == ProgressPhase::Verifying)
-        SetPhase(L"Verifying…");
     else
-        SetPhase(L"Checking package…");
+        SetPhase(L"Extracting…");
 }
 
 void ProgressWindow::SetPhase(std::wstring_view detail)

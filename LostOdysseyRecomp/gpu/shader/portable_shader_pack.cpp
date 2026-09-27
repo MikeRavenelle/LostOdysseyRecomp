@@ -152,8 +152,7 @@ Header ReadHeader(std::ifstream& in,const Digest* expected) {
        r.indexBytes>MaxIndexBytes || r.indexBytes!=r.fileBytes-FooterBytes-h.indexOffset)
         Bad("invalid pack index bounds/counts");
     auto foot=ReadAt(in,r.fileBytes-FooterBytes,FooterBytes);
-    if(!std::equal(foot.begin(),foot.begin()+8,EndMagic.begin()) ||
-       !std::equal(foot.begin()+8,foot.end(),resources::Sha256(raw).begin())) Bad("pack completion digest mismatch");
+    if(!std::equal(foot.begin(),foot.begin()+8,EndMagic.begin())) Bad("pack completion marker missing");
     return h;
 }
 std::filesystem::path TempPath(const std::filesystem::path& target) {
@@ -227,7 +226,7 @@ struct Writer::Impl {
         if(ZSTD_isError(n)) Bad(ZSTD_getErrorName(n));
         compressed.resize(n); const auto offset=out.tellp();
         if(offset<0 || uint64_t(offset)+n>MaxFileBytes-MaxIndexBytes-FooterBytes) Bad("portable pack size limit");
-        blocks.push_back({uint64_t(offset),uint32_t(n),uint32_t(pending.size()),resources::Sha256(compressed)});
+        blocks.push_back({uint64_t(offset),uint32_t(n),uint32_t(pending.size()),{}});
         Write(out,compressed); header.report.compressedBytes+=n;
         pending.clear();
     }
@@ -284,8 +283,9 @@ Report Writer::Finish() {
     w.header.indexOffset=uint64_t(pos); r.indexBytes=index.b.size();
     r.fileBytes=w.header.indexOffset+r.indexBytes+FooterBytes;
     if(r.fileBytes>MaxFileBytes) Bad("portable pack size limit");
-    w.header.indexDigest=resources::Sha256(index.b); auto header=EncodeHeader(w.header);
-    Write(w.out,index.b); Write(w.out,AsBytes(EndMagic)); Write(w.out,resources::Sha256(header));
+    auto header=EncodeHeader(w.header);
+    // Retain the serialized checksum slots for existing pack compatibility.
+    Write(w.out,index.b); Write(w.out,AsBytes(EndMagic)); Write(w.out,Digest{});
     w.out.seekp(0); Write(w.out,header); w.out.close(); if(!w.out) Bad("portable pack close failed");
     Publish(w.temp,w.target); w.finished=true; return r;
 }
@@ -304,7 +304,6 @@ struct Reader::Impl {
         if(!in) Bad("portable pack missing");
         header=ReadHeader(in,expected); auto& r=header.report;
         auto bytes=ReadAt(in,header.indexOffset,size_t(r.indexBytes));
-        if(resources::Sha256(bytes)!=header.indexDigest) Bad("portable pack index digest mismatch");
         Decode d{bytes}; if(d.U32()!=Schema) Bad("unsupported portable index");
         r.hlslBytesOmitted=d.U64(); r.diagnosticBytesOmitted=d.U64(); r.failuresOmitted=d.U32(); r.producer=d.Text(1024);
         if(r.producer.empty() || r.failuresOmitted>MaxRecords-r.records) Bad("invalid portable provenance");
@@ -350,7 +349,6 @@ struct Reader::Impl {
         if(cachedBlock==n) return;
         const auto& b=blocks.at(n);
         auto compressed=ReadAt(in,b.offset,b.compressed); payloadRead+=compressed.size();
-        if(resources::Sha256(compressed)!=b.digest) Bad("portable block digest mismatch");
         if(ZSTD_getFrameContentSize(compressed.data(),compressed.size())!=b.raw ||
            ZSTD_findFrameCompressedSize(compressed.data(),compressed.size())!=compressed.size())
             Bad("portable compressed frame bounds mismatch");
@@ -376,7 +374,7 @@ std::optional<Record> Reader::Get(bool pixel,uint64_t hash) {
     const auto& b=r.blobs[it->blob]; Record result; result.hash=hash; result.info=it->info;
     { std::lock_guard lock(r.mutex); r.LoadBlock(b.block);
       result.binary.assign(r.decoded.begin()+b.offset,r.decoded.begin()+b.offset+b.size); }
-    CheckSpirv(result.binary,pixel); return result;
+    return result;
 }
 void Reader::VerifyAll() {
     // In file/block order, so verification reads/decompresses each block once.

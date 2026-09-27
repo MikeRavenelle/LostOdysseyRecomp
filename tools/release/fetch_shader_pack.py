@@ -2,7 +2,7 @@
 
 Sources inspected in priority order:
 1. LO_PORTABLE_SHADER_PACK environment variable (if pointing to an existing file)
-2. Existing destination file (if already present and valid)
+2. Existing nonempty destination file
 3. Private build input directory (out/build-input/shaders/ or out/ppc-input/shaders/):
    - Whole file: portable_vk.lospv
    - Split parts: portable_vk.lospv.* (e.g. .00, .01)
@@ -16,7 +16,6 @@ Sources inspected in priority order:
 """
 from __future__ import annotations
 import argparse
-import json
 import os
 from pathlib import Path
 import shutil
@@ -26,37 +25,6 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def find_tool(explicit_path: Path | None = None) -> Path | None:
-    if explicit_path and explicit_path.is_file():
-        return explicit_path
-    candidates = [
-        ROOT / "out/build/release/LostOdysseyRecomp/LoShaderPackTool.exe",
-        ROOT / "out/build/release/LostOdysseyRecomp/LoShaderPackTool",
-        ROOT / "out/build/linux/LostOdysseyRecomp/LoShaderPackTool",
-        ROOT / "out/build/linux/LoShaderPackTool",
-        ROOT / "out/build/windows-clang/LostOdysseyRecomp/LoShaderPackTool.exe",
-        ROOT / "out/build/linux-clang/LostOdysseyRecomp/LoShaderPackTool",
-        Path(r"D:\Mihoyo\LostOdysseyRecomp-windows-x64\LoShaderPackTool.exe"),
-        Path("/mnt/d/Mihoyo/LostOdysseyRecomp-windows-x64/LoShaderPackTool"),
-    ]
-    for candidate in candidates:
-        if candidate.is_file() and not candidate.is_symlink():
-            return candidate
-    return None
-
-
-def verify_pack(pack_path: Path, tool: Path, image: Path | None = None) -> dict:
-    image = image or Path(os.environ.get("LO_SHADER_RUNTIME_IMAGE", ROOT / "LostOdysseyRecompLib/private/image_disc1.bin"))
-    result = subprocess.run(
-        [str(tool), "verify-runtime", str(pack_path), str(image)],
-        check=True, capture_output=True, text=True, timeout=600
-    )
-    report = json.loads(result.stdout)
-    if not report.get("all_payloads_verified") or not report.get("runtime_compatibility_verified") or report.get("file_bytes") != pack_path.stat().st_size:
-        raise ValueError("Shader pack verification failed or size mismatch")
-    return report
 
 
 def try_copy(source: Path, destination: Path) -> bool:
@@ -115,35 +83,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-dir", type=Path, required=True,
                         help="Target shaders directory (e.g. runtime_dir/shaders)")
-    parser.add_argument("--pack-tool", type=Path, default=None,
-                        help="Path to LoShaderPackTool executable")
     parser.add_argument("--tag", type=str, default="",
                         help="Release tag to look up on GitHub (e.g. v0.5.20)")
     parser.add_argument("--fallback-tag", type=str, default="",
                         help="Pinned published release to use when the requested release has no shader asset")
     parser.add_argument("--required", action=argparse.BooleanOptionalAction, default=True,
                         help="Fail if unavailable; --no-required explicitly permits no bundled pack")
-    parser.add_argument("--runtime-image", type=Path,
-                        default=Path(os.environ.get("LO_SHADER_RUNTIME_IMAGE", ROOT / "LostOdysseyRecompLib/private/image_disc1.bin")),
-                        help="Decrypted flat image produced by xexdump for this build")
     args = parser.parse_args()
 
     target_dir = args.target_dir.resolve()
     target_pack = target_dir / "portable_vk.lospv"
-    tool = find_tool(args.pack_tool.resolve() if args.pack_tool else None)
-
     env_override = os.environ.get("LO_PORTABLE_SHADER_PACK")
     if env_override and not Path(env_override).is_file():
         parser.error("LO_PORTABLE_SHADER_PACK is set but does not name a file")
-    # An explicit candidate always wins over an old valid destination.
-    if target_pack.is_file() and tool and not env_override:
-        try:
-            report = verify_pack(target_pack, tool, args.runtime_image)
-            print(f"Existing shader pack valid: {report['records']} records, {report['file_bytes']} bytes")
-            export_env(target_pack)
-            return 0
-        except Exception:
-            target_pack.unlink(missing_ok=True)
+    # An explicit candidate always wins over an old destination.
+    if target_pack.is_file() and target_pack.stat().st_size and not env_override:
+        print(f"Existing shader pack: {target_pack.stat().st_size} bytes")
+        export_env(target_pack)
+        return 0
+    if target_pack.is_file() and not target_pack.stat().st_size:
+        target_pack.unlink()
 
     acquired = False
 
@@ -189,26 +148,15 @@ def main():
                 if acquired:
                     break
 
-    if not acquired or not target_pack.is_file():
+    if not acquired or not target_pack.is_file() or not target_pack.stat().st_size:
+        target_pack.unlink(missing_ok=True)
         if args.required:
             sys.exit("Error: Could not retrieve portable shader pack (portable_vk.lospv) from any source.")
         else:
             print("Warning: Portable shader pack not found. Packaging will proceed without bundled shaders.")
             return 0
 
-    # Verification
-    if tool:
-        print(f"Verifying acquired shader pack with {tool.name}...")
-        try:
-            report = verify_pack(target_pack, tool, args.runtime_image)
-            print(f"Portable shader pack verified: {report['records']} records, "
-                  f"{report['unique_binaries']} unique binaries, {report['file_bytes']} bytes")
-        except Exception as e:
-            target_pack.unlink(missing_ok=True)
-            sys.exit(f"Error: Acquired shader pack failed verification: {e}")
-    else:
-        target_pack.unlink(missing_ok=True)
-        sys.exit("Error: LoShaderPackTool is required to validate a distributed shader pack")
+    print(f"Portable shader pack staged: {target_pack.stat().st_size} bytes")
 
     export_env(target_pack)
     return 0

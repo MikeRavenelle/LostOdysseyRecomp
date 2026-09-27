@@ -62,28 +62,14 @@ lo_add_header_test(LoResolveCopyPolicyTest ${CMAKE_SOURCE_DIR}/tools/tests/resol
 target_include_directories(LoVertexCacheTest PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/unordered_dense/include)
 lo_add_header_test(LoRenderTimingTest ${CMAKE_SOURCE_DIR}/tools/tests/render_timing_test.cpp)
     lo_add_header_test(LoRenderArenaTest ${CMAKE_SOURCE_DIR}/tools/tests/render_arena_policy_test.cpp)
-add_executable(LoUpdaterPosixSha256Test EXCLUDE_FROM_ALL
-    ${CMAKE_SOURCE_DIR}/tools/tests/updater_posix_sha256_test.cpp
-    ${LO_RUNTIME_ROOT}/updater/sha256.cpp
-    ${LO_RUNTIME_ROOT}/updater/update.cpp)
-target_include_directories(LoUpdaterPosixSha256Test PRIVATE ${LO_RUNTIME_ROOT})
-target_compile_features(LoUpdaterPosixSha256Test PRIVATE cxx_std_20)
-if(WIN32)
-    target_link_libraries(LoUpdaterPosixSha256Test PRIVATE bcrypt)
-endif()
-
 add_executable(LoUpdaterSdlUiTest EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/tools/tests/updater_sdl_ui_test.cpp
     ${LO_RUNTIME_ROOT}/install/installer_font.cpp
     ${LO_RUNTIME_ROOT}/updater/posix_ui.cpp
-    ${LO_RUNTIME_ROOT}/updater/sha256.cpp
     ${LO_RUNTIME_ROOT}/updater/update.cpp)
 target_include_directories(LoUpdaterSdlUiTest PRIVATE ${LO_RUNTIME_ROOT})
 target_compile_features(LoUpdaterSdlUiTest PRIVATE cxx_std_20)
 target_link_libraries(LoUpdaterSdlUiTest PRIVATE SDL2::SDL2-static)
-if(WIN32)
-    target_link_libraries(LoUpdaterSdlUiTest PRIVATE bcrypt)
-endif()
 add_executable(LoUpdaterGamePromptTest EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/tools/tests/updater_game_prompt_test.cpp
     ${LO_RUNTIME_ROOT}/updater/game_prompt.cpp)
@@ -199,7 +185,6 @@ if(WIN32)
 
     set(LO_UPDATER_TRANSACTION_SOURCES
         ${LO_RUNTIME_ROOT}/updater/update.cpp
-        ${LO_RUNTIME_ROOT}/updater/sha256.cpp
         ${LO_RUNTIME_ROOT}/updater/stage.cpp
         ${LO_RUNTIME_ROOT}/updater/apply.cpp)
     add_executable(LoUpdaterHttpFailureTest EXCLUDE_FROM_ALL
@@ -207,19 +192,18 @@ if(WIN32)
     target_include_directories(LoUpdaterHttpFailureTest PRIVATE ${LO_RUNTIME_ROOT})
     target_compile_features(LoUpdaterHttpFailureTest PRIVATE cxx_std_20)
     target_compile_definitions(LoUpdaterHttpFailureTest PRIVATE NOMINMAX)
-    target_link_libraries(LoUpdaterHttpFailureTest PRIVATE bcrypt shell32)
+    target_link_libraries(LoUpdaterHttpFailureTest PRIVATE shell32)
     add_executable(LoUpdaterStartupOrderTest EXCLUDE_FROM_ALL
         ${CMAKE_SOURCE_DIR}/tools/tests/updater_startup_order_test.cpp
         ${LO_RUNTIME_ROOT}/updater/update.cpp
         ${LO_RUNTIME_ROOT}/updater/windows_http.cpp
-        ${LO_RUNTIME_ROOT}/updater/sha256.cpp
         ${LO_RUNTIME_ROOT}/updater/stage.cpp
         ${LO_RUNTIME_ROOT}/updater/apply.cpp
         ${LO_RUNTIME_ROOT}/updater/progress.cpp)
     target_include_directories(LoUpdaterStartupOrderTest PRIVATE ${LO_RUNTIME_ROOT})
     target_compile_features(LoUpdaterStartupOrderTest PRIVATE cxx_std_20)
     target_compile_definitions(LoUpdaterStartupOrderTest PRIVATE NOMINMAX)
-    target_link_libraries(LoUpdaterStartupOrderTest PRIVATE bcrypt winhttp user32 gdi32 shell32)
+    target_link_libraries(LoUpdaterStartupOrderTest PRIVATE winhttp user32 gdi32 shell32)
     add_executable(LostOdysseyUpdater WIN32
         ${CMAKE_SOURCE_DIR}/tools/updater/helper_main.cpp
         ${LO_RUNTIME_ROOT}/updater/apply_mode.cpp
@@ -232,25 +216,9 @@ if(WIN32)
     target_compile_features(LostOdysseyUpdater PRIVATE cxx_std_20)
     target_compile_definitions(LostOdysseyUpdater PRIVATE NOMINMAX)
     target_compile_definitions(LostOdysseyUpdater PRIVATE LO_SOURCE_VERSION="${LO_SOURCE_VERSION}")
-    target_link_libraries(LostOdysseyUpdater PRIVATE bcrypt winhttp user32 gdi32 shell32)
+    target_link_libraries(LostOdysseyUpdater PRIVATE winhttp user32 gdi32 shell32)
     # The runtime owns the update path; the standalone helper remains available
     # only for focused compatibility fixtures.
-    # Capture once before either target compiles; publish per-binary stamps only
-    # after successful links. An old EXE cannot inherit packaging-time HEAD.
-    set(LO_BUILD_SOURCE_STAMP "${CMAKE_CURRENT_BINARY_DIR}/build-source-current.json")
-    add_custom_target(LoBuildSourceStamp
-        COMMAND python "${CMAKE_SOURCE_DIR}/tools/build_provenance.py" capture
-            --root "${CMAKE_SOURCE_DIR}" --source "${LO_BUILD_SOURCE_STAMP}" --version "${LO_SOURCE_VERSION}"
-        VERBATIM)
-    foreach(target LostOdysseyRecomp LostOdysseyUpdater)
-        add_dependencies(${target} LoBuildSourceStamp)
-        set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/tools/build_provenance.py")
-        add_custom_command(TARGET ${target} POST_BUILD
-            COMMAND python "${CMAKE_SOURCE_DIR}/tools/build_provenance.py" linked
-                --root "${CMAKE_SOURCE_DIR}" --source "${LO_BUILD_SOURCE_STAMP}" --version "${LO_SOURCE_VERSION}"
-                --binary "$<TARGET_FILE:${target}>" VERBATIM)
-    endforeach()
-
     add_executable(LoUpdaterProbe WIN32 EXCLUDE_FROM_ALL ${CMAKE_SOURCE_DIR}/tools/tests/updater_probe.cpp)
     target_compile_features(LoUpdaterProbe PRIVATE cxx_std_20)
     target_link_libraries(LoUpdaterProbe PRIVATE shell32)
@@ -263,7 +231,7 @@ if(WIN32)
     target_include_directories(LoUpdaterTest PRIVATE ${LO_RUNTIME_ROOT})
     target_compile_features(LoUpdaterTest PRIVATE cxx_std_20)
     target_compile_definitions(LoUpdaterTest PRIVATE NOMINMAX)
-    target_link_libraries(LoUpdaterTest PRIVATE bcrypt winhttp user32 gdi32 shell32)
+    target_link_libraries(LoUpdaterTest PRIVATE winhttp user32 gdi32 shell32)
     add_dependencies(LoUpdaterTest LostOdysseyUpdater LoUpdaterProbe)
 
     add_executable(LoUpdaterProgressTest EXCLUDE_FROM_ALL
@@ -283,17 +251,16 @@ if(WIN32)
     target_include_directories(LoUpdaterStandaloneTest PRIVATE ${LO_RUNTIME_ROOT})
     target_compile_features(LoUpdaterStandaloneTest PRIVATE cxx_std_20)
     target_compile_definitions(LoUpdaterStandaloneTest PRIVATE NOMINMAX)
-    target_link_libraries(LoUpdaterStandaloneTest PRIVATE bcrypt winhttp user32 gdi32 shell32)
+    target_link_libraries(LoUpdaterStandaloneTest PRIVATE winhttp user32 gdi32 shell32)
     add_dependencies(LoUpdaterStandaloneTest LostOdysseyUpdater LoUpdaterProbe)
 
     add_executable(LoUpdaterHelperContextTest EXCLUDE_FROM_ALL
         ${CMAKE_SOURCE_DIR}/tools/tests/updater_helper_context_test.cpp
-        ${LO_RUNTIME_ROOT}/updater/update.cpp
-        ${LO_RUNTIME_ROOT}/updater/sha256.cpp)
+        ${LO_RUNTIME_ROOT}/updater/update.cpp)
     target_include_directories(LoUpdaterHelperContextTest PRIVATE ${LO_RUNTIME_ROOT})
     target_compile_features(LoUpdaterHelperContextTest PRIVATE cxx_std_20)
     target_compile_definitions(LoUpdaterHelperContextTest PRIVATE NOMINMAX)
-    target_link_libraries(LoUpdaterHelperContextTest PRIVATE bcrypt user32 shell32)
+    target_link_libraries(LoUpdaterHelperContextTest PRIVATE user32 shell32)
     add_dependencies(LoUpdaterHelperContextTest LostOdysseyUpdater LoUpdaterProbe)
 endif()
 

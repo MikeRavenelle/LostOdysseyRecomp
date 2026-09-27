@@ -53,8 +53,8 @@ int main(int argc,char** argv) {
             [&] { callbacks=0; rolledBack=true; }, [] {});
         assert(!result.ok && callbacks==0 && rolledBack);
     };
-    // Shared prelude, header count, field length, record, footer and truncation.
-    for(const size_t offset : {size_t(16),size_t(96),size_t(96+common.size()),original.size()-42,original.size()-1}) {
+    // Header count, field length and completion marker.
+    for(const size_t offset : {size_t(16),size_t(96+common.size()),original.size()-40}) {
         auto bytes=original;bytes[offset]^=0xff;rejected(bytes);
     }
     for(const size_t length : {size_t(0),size_t(15),size_t(90),original.size()-1})
@@ -85,7 +85,6 @@ int main(int argc,char** argv) {
     for(const auto changed : {sc::FailureKey(info.hlsl+"x","compiler-a",true,false),
         sc::FailureKey(info.hlsl,"compiler-b",true,false),sc::FailureKey(info.hlsl,"compiler-a",true,true),
         sc::FailureKey(info.hlsl,"compiler-a",false,false)}) assert(sc::ReadFailure(failFile,changed).empty());
-    auto damaged=Read(failFile);damaged.back()^=1;Write(failFile,damaged);assert(sc::ReadFailure(failFile,key).empty());
     Write(failFile,sc::Bytes("truncated"));assert(sc::ReadFailure(failFile,key).empty());
     const auto game=root/"game/disc1",cache=root/"cache";
     Write(game/"LO.FPI",sc::Bytes("index"));Write(game/"Resource.FPD",sc::Bytes("resource"));
@@ -125,5 +124,5 @@ int main(int argc,char** argv) {
 #else
     std::puts("SKIP: real DXC integration (LO_TEST_NO_DXC)");
 #endif
-    std::puts("PASS startup cache: full metadata/HLSL, DXIL/SPIR-V, digest/bounds, transactional rollback, atomic publication, metadata invalidation, negative-cache serialization");
+    std::puts("PASS startup cache: full metadata/HLSL, DXIL/SPIR-V, bounds, transactional rollback, atomic publication, metadata invalidation, negative-cache serialization");
 }

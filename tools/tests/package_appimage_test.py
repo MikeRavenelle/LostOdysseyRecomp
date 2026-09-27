@@ -127,14 +127,11 @@ class PackageAppImageTests(unittest.TestCase):
                 module.main()
 
             destination = output / 'LostOdysseyRecomp-linux-x64-v0.5.13.AppImage'
-            checksum = destination.with_suffix('.AppImage.sha256')
             self.assertEqual(len(calls), 2)
             self.assertNotIn('--output', calls[0])
             self.assertIn('--output', calls[1])
             self.assertTrue(destination.is_file())
             self.assertEqual(destination.read_bytes(), b'successful mock package')
-            self.assertTrue(checksum.is_file())
-            self.assertIn(destination.name, checksum.read_text(encoding='utf-8'))
 
     def test_relative_linuxdeploy_is_resolved_before_subprocess_cwd_change(self):
         module = load_packager()

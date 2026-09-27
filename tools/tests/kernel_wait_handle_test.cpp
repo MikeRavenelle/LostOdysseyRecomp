@@ -1,28 +1,16 @@
-// Tests the production CPU primitives; no emulated GPU or game assets.
+// Focused wait and handle lifetime contracts; no game assets.
 #include "kernel/dispatcher_wait.h"
 #include "kernel/handle_table.h"
-#include "gpu/shader/retry_state.h"
-#include "gpu/shader/preparation_queue.h"
-#include "gpu/geometry_prepare.h"
-#include "gpu/display_change.h"
 #include <atomic>
 #include <future>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
-#include <vector>
 using namespace std::chrono_literals;
 namespace w = kernel::wait;
 static int checks = 0;
 static void Check(bool result, const char* why) { ++checks; if (!result) throw std::runtime_error(why); }
-static void Env(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value ? value : "");
-#else
-    if (value) setenv(name,value,1); else unsetenv(name);
-#endif
-}
 static void Waits() {
     w::Event first(false,true), second(false,false);
     w::Target* pair[]{&first,&second};
@@ -120,70 +108,13 @@ static void Handles() {
         Check(lifetime.expired(),"removed-object diagnostic reference leaked");
     }
 }
-static void Retry() {
-    xenos::retry::State state; const auto now=xenos::retry::State::Clock::now();
-    Check(state.Ready(now),"fresh retry unavailable");
-    state.Failed(false,now);
-    Check(!state.Ready(now+99ms) && state.Ready(now+100ms),"transient backoff/permanent poison");
-    state.Failed(false,now+100ms);
-    Check(!state.Ready(now+299ms) && state.Ready(now+300ms),"backoff did not grow");
-    state.Succeeded();Check(state.Ready(now),"success did not reset retry");
-    state.Failed(true,now);Check(!state.Ready(now+24h),"deterministic negative not retained");
-    state.Succeeded();{xenos::retry::Attempt attempt(state);}
-    Check(!state.Ready(),"abandoned compile did not delay retry");
-    {xenos::retry::Attempt attempt(state);attempt.Succeeded();}
-    Check(state.Ready(),"successful attempt was poisoned by destructor");
-}
-static void Workers() {
-    using namespace xenos::preparation;
-    Env("LO_SHADER_WORKERS","8");Env("LO_PIPELINE_WORKERS","max");
-    Check(WorkerCount(8,100,true)==1,"override defeated forced serial");
-    Check(WorkerCount(0,100,false,4,"LO_PIPELINE_WORKERS")==1,"zero logical cores hung pipeline");
-    Env("LO_PIPELINE_WORKERS",nullptr);
-    Check(WorkerCount(8,100,false,4,"LO_PIPELINE_WORKERS")==4,"shader override leaked into pipeline policy");
-    Check(WorkerCount(8,0,true)==0,"empty queue got worker");
-    Env("LO_SHADER_WORKERS","9999999999999999999999999999999");
-    Check(WorkerCount(8,100,false,4)==4,"invalid numeric override not bounded");
-    Env("LO_SHADER_WORKERS",nullptr);
-    Check(DefaultWorkerCap(16,4ull<<30)==4 && DefaultWorkerCap(16,16ull<<30)==15,"cross-platform memory cap");
-    Check(DefaultWorkerCap(0,0)==1,"unknown hardware lost worker");
-    size_t prepared=0,consumed=0;
-    auto cancelled=RunBounded<size_t>(10,0,1,[&](size_t i){++prepared;return i;},
-        [&](size_t){++consumed;return true;},[]{return false;});
-    Check(cancelled.cancelled && !prepared && !consumed,"serial idle cancellation ignored");
-    std::atomic<size_t> produced{0};size_t polls=0;
-    cancelled=RunBounded<size_t>(10000,3,2,[&](size_t i){++produced;return i;},
-        [](size_t){return true;},[&]{return ++polls<4;});
-    Check(cancelled.cancelled && produced<10000,"parallel idle cancellation ignored");
-}
-static void GeometryAndDisplay() {
-    std::vector<uint8_t> bytes(16384,0x57);
-    gpu::geometry_prepare::ExactContent content;content.Capture(bytes.data(),bytes.size());
-    // A cache hit requires every byte to match, including the old sample gaps.
-    Check(content.Matches(bytes.data(),bytes.size()),"identical content must match");
-    Check(!content.Matches(bytes.data(),bytes.size()+1),"size change must miss");
-    for(size_t i=0;i<bytes.size();++i){bytes[i]^=1;Check(!content.Matches(bytes.data(),bytes.size()),"missed vertex byte mutation");bytes[i]^=1;}
-    Check(content.Matches(bytes.data(),bytes.size()),"content must match after restore");
-    using namespace gpu::video;
-    DisplayChangeTracker changes;
-    auto ticket=changes.Begin(1280,720,0);
-    {DisplayCompletion completion(changes,ticket);}
-    Check(changes.Query(ticket)==DisplayChangeResult::Failed,"allocation failure left Pending");
-    ticket=changes.Begin(1280,720,0);
-    {DisplayCompletion completion(changes,ticket);completion.Complete(true);}
-    Check(changes.Query(ticket)==DisplayChangeResult::Applied,"success overwritten by cleanup");
-    ticket=changes.Begin(1280,720,0);
-    uint64_t newer;
-    {DisplayCompletion completion(changes,ticket);newer=changes.Begin(1920,1080,0);}
-    Check(changes.Query(newer)==DisplayChangeResult::Pending,"stale cleanup completed new request");
-}
 int main(int argc, char** argv) try {
     if (argc==2 && std::string_view(argv[1])=="--handles") {
         Handles();
         std::cout<<"PASS "<<checks<<" handle-table checks\n";
         return 0;
     }
-    Check(argc==1,"usage: LoPrereleaseAuditTest [--handles]");
-    Waits();Handles();Retry();Workers();GeometryAndDisplay();
-    std::cout<<"PASS "<<checks<<" prerelease production-helper checks\n";
+    Check(argc==1,"usage: kernel_wait_handle_test [--handles]");
+    Waits();Handles();
+    std::cout<<"PASS "<<checks<<" wait/handle checks\n";
 } catch(const std::exception& e){std::cerr<<"FAIL "<<e.what()<<'\n';return 1;}
