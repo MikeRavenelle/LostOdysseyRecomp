@@ -2,18 +2,12 @@ name: FG P3 production handoff
 on:
   push:
     branches: [feature/fg-p0-p3-foundation]
-    paths: [.github/fg-p3-handoff.patch.gz.b64]
-  pull_request:
-    paths:
-      - LostOdysseyRecomp/gpu/frame_generation*.h
-      - LostOdysseyRecomp/gpu/renderer.cpp
-      - LostOdysseyRecomp/gpu/renderer.h
-      - LostOdysseyRecomp/gpu/video.cpp
-      - tools/tests/frame_generation_handoff_renderer.inc
-      - tools/tests/motion_replay/CMakeLists.txt
-      - .github/workflows/fg-p3-handoff-check.yml
+    paths: [.github/fg-p3-handoff.patch.gz.b64, .github/fg-p3-followup.patch]
 permissions:
   contents: read
+concurrency:
+  group: fg-p3-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   focused:
     strategy:
@@ -34,16 +28,20 @@ jobs:
         run: |
           import base64, gzip, hashlib, pathlib, subprocess
           source = pathlib.Path('.github/fg-p3-handoff.patch.gz.b64')
+          patches = []
           if source.exists():
               patch = gzip.decompress(base64.b64decode(source.read_bytes()))
               assert hashlib.sha256(patch).hexdigest() == '5f03efe522289b968b243d4a4a9467723c6664f6a0494180917a61ac9a301257'
               target = pathlib.Path('out/p3-integration.patch'); target.parent.mkdir(exist_ok=True); target.write_bytes(patch)
-              cmd = ['git', 'apply', '--check', str(target)]
-              if subprocess.run(cmd).returncode == 0:
+              patches.append(target)
+          followup = pathlib.Path('.github/fg-p3-followup.patch')
+          if followup.exists(): patches.append(followup)
+          for target in patches:
+              if subprocess.run(['git', 'apply', '--check', str(target)]).returncode == 0:
                   subprocess.run(['git', 'apply', str(target)], check=True)
               else:
                   subprocess.run(['git', 'apply', '--reverse', '--check', str(target)], check=True)
-                  print('Implementation already applied; testing actual checked-out source.')
+                  print('Already applied:', target)
       - name: Initialize pinned public dependencies
         shell: bash
         run: |
@@ -86,7 +84,7 @@ jobs:
           ctest --test-dir out/p3-gpu -V -R '^frame_generation_(handoff_renderer|snapshot_renderer|snapshot_gpu)$' 2>&1 | tee out/p3-vulkan.log
           if grep -E 'Validation Error|VUID-|SYNC-HAZARD' out/p3-vulkan.log; then exit 1; fi
           out/p3-gpu/LoVideoSubmissionStopTest 2>&1 | tee out/p3-stop.log
-      - name: Prepare Windows SDL and D3D12 headers
+      - name: Prepare Windows SDL and D3D12 headers only
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -94,15 +92,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git -C thirdparty/plume submodule update --init --depth 1 contrib/D3D12MemoryAllocator
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake -S thirdparty/SDL -B out/p3-sdl -G 'Visual Studio 17 2022' -A x64 -T ClangCL -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF -DSDL_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$pwd/out/p3-sdl-install"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build out/p3-sdl --config Release --target install --parallel 2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Windows clang-cl production compile and link
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cmake -S tools/tests/motion_replay -B out/p3-gpu -G 'Visual Studio 17 2022' -A x64 -T ClangCL -DLO_ENABLE_DLSS=OFF -DLO_ENABLE_FSR=OFF -DLO_P2_VIDEO_COMPILE_CHECK=ON -DCMAKE_PREFIX_PATH="$pwd/out/p3-sdl-install" 2>&1 | Tee-Object out/p3-configure.log
+          cmake -S tools/tests/motion_replay -B out/p3-gpu -G 'Visual Studio 17 2022' -A x64 -T ClangCL -DLO_ENABLE_DLSS=OFF -DLO_ENABLE_FSR=OFF -DLO_P2_VIDEO_COMPILE_CHECK=ON -DLO_P2_VIDEO_SDL_HEADERS="$pwd/thirdparty/SDL/include" 2>&1 | Tee-Object out/p3-configure.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build out/p3-gpu --config Release --target LoNativeDlssRendererTest motion_renderer_compile p2_video_compile frame_generation_snapshot_gpu_test LoVideoSubmissionStopTest --parallel 2 2>&1 | Tee-Object out/p3-build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -126,7 +120,7 @@ jobs:
         with:
           ref: feature/fg-p0-p3-foundation
           fetch-depth: 1
-      - name: Apply only the tested patch and fast-forward the same PR branch
+      - name: Apply only the tested patches and fast-forward the same PR branch
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.sha }}
@@ -141,7 +135,11 @@ jobs:
           PY
           git apply --check /tmp/fg-p3.patch
           git apply /tmp/fg-p3.patch
-          git add LostOdysseyRecomp/gpu/frame_generation_handoff.h LostOdysseyRecomp/gpu/frame_generation_present_bridge.h LostOdysseyRecomp/gpu/frame_generation_snapshot.h LostOdysseyRecomp/gpu/renderer.cpp LostOdysseyRecomp/gpu/renderer.h LostOdysseyRecomp/gpu/video.cpp tools/tests/backend_lifecycle_test.cpp tools/tests/frame_generation_handoff_renderer.inc tools/tests/motion_replay/CMakeLists.txt tools/tests/native_dlss_renderer_gpu_test.cpp tools/tests/present_capture_test.cpp
+          if test -f .github/fg-p3-followup.patch; then
+            git apply --check .github/fg-p3-followup.patch
+            git apply .github/fg-p3-followup.patch
+          fi
+          git add LostOdysseyRecomp/gpu/frame_generation_handoff.h LostOdysseyRecomp/gpu/frame_generation_present_bridge.h LostOdysseyRecomp/gpu/frame_generation_snapshot.h LostOdysseyRecomp/gpu/renderer.cpp LostOdysseyRecomp/gpu/renderer.h LostOdysseyRecomp/gpu/video.cpp tools/tests/backend_lifecycle_test.cpp tools/tests/frame_generation_handoff_renderer.inc tools/tests/motion_replay/CMakeLists.txt tools/tests/native_dlss_renderer_gpu_test.cpp tools/tests/present_capture_test.cpp tools/tests/video_submission_stop_test.cpp
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'feat(fg): connect exact producer resolve lineage to video'
