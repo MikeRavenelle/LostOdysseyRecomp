@@ -62,6 +62,17 @@ bool VulkanDispatch::QueryInstance(std::vector<VkExtensionProperties>& ext, std:
 bool VulkanDispatch::QueryDevice(VkInstance instance, VkPhysicalDevice physical,
     std::vector<VkExtensionProperties>& ext, std::string& reason) {
     if (native_.queryDevice && !native_.queryDevice(native_.userData, instance, physical, ext, reason)) return false;
+    // Plume's volkLoadInstance replaces the global enumeration pointer. Explicitly
+    // enumerate through the interposer before device creation to populate its map.
+    auto enumeration = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(sl_.InstanceProc()(instance, "vkEnumeratePhysicalDevices"));
+    if (!enumeration) { reason = "Streamline physical-device enumeration proxy missing"; return false; }
+    uint32_t count{};
+    if (enumeration(instance, &count, nullptr) != VK_SUCCESS || !count) { reason = "SL physical enumeration failed"; return false; }
+    std::vector<VkPhysicalDevice> devices(count);
+    if (enumeration(instance, &count, devices.data()) != VK_SUCCESS ||
+        std::find(devices.begin(), devices.begin() + count, physical) == devices.begin() + count) {
+        reason = "SL enumeration does not include Plume-selected physical device"; return false;
+    }
     featureSupported_ = true;
     sl::AdapterInfo adapter{};
     adapter.vkPhysicalDevice = physical;
@@ -76,17 +87,6 @@ bool VulkanDispatch::QueryDevice(VkInstance instance, VkPhysicalDevice physical,
     }
     for (auto& req : requirements_)
         for (uint32_t j = 0; j < req.vkNumDeviceExtensions; ++j) Append(ext, req.vkDeviceExtensions[j]);
-    // Plume's volkLoadInstance replaces the global enumeration pointer. Explicitly
-    // enumerate through the interposer before device creation to populate its map.
-    auto enumeration = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(sl_.InstanceProc()(instance, "vkEnumeratePhysicalDevices"));
-    if (!enumeration) { reason = "Streamline physical-device enumeration proxy missing"; return false; }
-    uint32_t count{};
-    if (enumeration(instance, &count, nullptr) != VK_SUCCESS || !count) { reason = "SL physical enumeration failed"; return false; }
-    std::vector<VkPhysicalDevice> devices(count);
-    if (enumeration(instance, &count, devices.data()) != VK_SUCCESS ||
-        std::find(devices.begin(), devices.begin() + count, physical) == devices.begin() + count) {
-        reason = "SL enumeration does not include Plume-selected physical device"; return false;
-    }
     proxyCreateDevice_ = reinterpret_cast<PFN_vkCreateDevice>(sl_.InstanceProc()(instance, "vkCreateDevice"));
     if (!proxyCreateDevice_) { reason = "Streamline vkCreateDevice proxy missing"; return false; }
     nativeCreateDevice_ = vkCreateDevice;
