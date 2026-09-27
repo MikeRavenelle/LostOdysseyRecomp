@@ -100,7 +100,7 @@ jobs:
           @echo off
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
           if errorlevel 1 exit /b 1
-          cmake -S tools/tests/streamline_fg -B out/fg-input-native -G Ninja -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DLO_ENABLE_DLSS=ON -DLO_REQUIRE_DLSS=ON -DLO_DLSS_SDK_ROOT="%CD%/out/sdk/ngx" -DLO_STREAMLINE_SDK_ROOT="%LO_CI_STREAMLINE%" -DPLUME_BUILD_EXAMPLES=OFF -DPLUME_SDL_VULKAN_ENABLED=OFF > out/fg-input-configure.log 2>&1
+          cmake -S tools/tests/streamline_fg -B out/fg-input-native -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DLO_ENABLE_DLSS=ON -DLO_REQUIRE_DLSS=ON -DLO_DLSS_SDK_ROOT="%CD%/out/sdk/ngx" -DLO_STREAMLINE_SDK_ROOT="%LO_CI_STREAMLINE%" -DPLUME_BUILD_EXAMPLES=OFF -DPLUME_SDL_VULKAN_ENABLED=OFF > out/fg-input-configure.log 2>&1
           if errorlevel 1 (type out\fg-input-configure.log & exit /b 1)
           type out\fg-input-configure.log
           cmake --build out/fg-input-native --target LoStreamlineFgProbe LoStreamlineFgProbeOptionsTest LoStreamlineFgInputCompletionTest --parallel 2 > out/fg-input-build.log 2>&1
