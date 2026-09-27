@@ -623,7 +623,7 @@ namespace gpu::renderer
             bool fgSnapshotAttempted = false;
             std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
             frame_generation::ResolveHandoffPool fgHandoffPool;
-            const bool fgCompositeEnabled = video::FrameGenerationAvailable();
+            const bool fgCompositeEnabled = video::FrameGenerationInputCaptureEnabled();
             uint64_t fgCompositeAttemptedFrame = ~0ull;
             std::shared_ptr<frame_generation::CompositeHandoff> fgCompositeHandoff;
             const uint64_t fgUiRequestedFrame = [] {

@@ -326,10 +326,20 @@ bool Controller::QueryDeviceExtensions(VkInstance instance, VkPhysicalDevice dev
 #endif
 }
 
-void Controller::ProbeOnce(const plume::VulkanInterface& vulkanInterface, const plume::VulkanDevice& device) {
+void Controller::ProbeOnce(const plume::VulkanInterface& vulkanInterface, const plume::VulkanDevice& device,
+    bool retainRuntimeForFrameGeneration) {
     if (backend_ == Backend::D3D12) return;
     if (probeAttempted_) return;
     probeAttempted_ = true;
+    sharingRuntimeWithFg_ = retainRuntimeForFrameGeneration;
+    if (sharingRuntimeWithFg_) {
+        // Bind even an unavailable SR probe to this live shared device, so a
+        // later sizing request cannot enter the temporary Init/Shutdown path.
+        sessionInterface_ = &vulkanInterface;
+        sessionDevice_ = &device;
+        backend_ = Backend::Vulkan;
+        sessionInstance_ = vulkanInterface.instance;
+    }
     if (report_.deviceName.empty()) report_.deviceName = device.physicalDeviceProperties.deviceName;
     if (report_.vendorId == 0) report_.vendorId = device.physicalDeviceProperties.vendorID;
     if (report_.deviceId == 0) report_.deviceId = device.physicalDeviceProperties.deviceID;
@@ -372,8 +382,9 @@ void Controller::ProbeOnce(const plume::VulkanInterface& vulkanInterface, const 
         return;
     }
 
-    // ProbeOnce deliberately owns a standalone Init/capability/Shutdown cycle.
-    // The retained context is only used by a later persistent EnsureSession.
+    // Standalone probes keep their original bounded Init/Shutdown behavior.
+    // With live Streamline, retain NGX until the final owner shutdown instead:
+    // FSR must not depend on a DLSS-only sizing query to reopen this runtime.
     sessionInterface_ = &vulkanInterface;
     sessionDevice_ = &device;
     backend_ = Backend::Vulkan;
@@ -445,13 +456,24 @@ void Controller::ProbeOnce(const plume::VulkanInterface& vulkanInterface, const 
                 report_.reason = "NGX Super Sampling capability and optimal settings queried";
             }
         }
-        const auto destroyResult = NVSDK_NGX_VULKAN_DestroyParameters(parameters);
-        RecordCall("DestroyParameters", int32_t(destroyResult));
-        if (NVSDK_NGX_FAILED(destroyResult)) {
-            report_.state = ProbeState::ApiError;
-            report_.reason += (report_.reason.empty() ? "" : "; ");
-            report_.reason += "NGX capability parameter destruction failed";
+        if (!retainRuntimeForFrameGeneration) {
+            const auto destroyResult = NVSDK_NGX_VULKAN_DestroyParameters(parameters);
+            RecordCall("DestroyParameters", int32_t(destroyResult));
+            if (NVSDK_NGX_FAILED(destroyResult)) {
+                report_.state = ProbeState::ApiError;
+                report_.reason += (report_.reason.empty() ? "" : "; ");
+                report_.reason += "NGX capability parameter destruction failed";
+            }
         }
+    }
+    if (retainRuntimeForFrameGeneration) {
+        runtimeRetainedForFg_ = true;
+        capabilityParameters_ = parameters;
+        sessionInitialized_ = parameters && report_.state == ProbeState::Available;
+        sessionFailed_ = report_.state == ProbeState::ApiError;
+        sessionRetryable_ = false;
+        report_.reason += "; device runtime retained for Streamline coexistence";
+        return;
     }
     const auto shutdownResult = NVSDK_NGX_VULKAN_Shutdown1(device.vk);
     RecordCall("Shutdown1", int32_t(shutdownResult));
@@ -476,6 +498,10 @@ upscaling::OutputSizing Controller::QueryOutputSizing(const plume::VulkanInterfa
     };
     if (!key.outputWidth || !key.outputHeight) { setAll(upscaling::SizingState::Error); return sizing; }
     if (backend_ == Backend::D3D12) { setAll(upscaling::SizingState::Error); return sizing; }
+    if (sharingRuntimeWithFg_ && (sessionInterface_ != &vulkanInterface || sessionDevice_ != &device)) {
+        setAll(upscaling::SizingState::Error);
+        return sizing; // Never create a temporary session beside a live FG device.
+    }
 #if !defined(LO_DLSS_SDK)
     setAll(upscaling::SizingState::Unavailable);
     return sizing;
@@ -662,6 +688,12 @@ SrStatus Controller::EnsureSession(const plume::VulkanDevice& device) {
     if (sessionDevice_ && sessionDevice_ != &device) return SrStatus::NeedsReconfigure;
     if (sessionInstance_ == VK_NULL_HANDLE) return SrStatus::Bypass;
     if (sessionFailed_) return SrStatus::Failed;
+    if (sharingRuntimeWithFg_) {
+        // Do not Init/Shutdown again to answer an SR request on a shared device.
+        // Unsupported SR does not imply that the FG runtime is unavailable.
+        return sessionInitialized_ && capabilityParameters_ ? SrStatus::Executable :
+            report_.state == ProbeState::Unavailable ? SrStatus::Bypass : SrStatus::Failed;
+    }
     if (sessionInitialized_) return capabilityParameters_ ? SrStatus::Executable : SrStatus::Failed;
     const auto& deviceStatus = device.getExternalExtensionStatus();
     if ((sessionInterface_ && sessionInterface_->getExternalExtensionStatus().state != plume::VulkanExtensionState::Enabled) ||
@@ -1030,7 +1062,7 @@ void Controller::ShutdownAfterGpuDrain() {
         }
         capabilityParameters_ = nullptr;
     }
-    if (sessionInitialized_) {
+    if (sessionInitialized_ || runtimeRetainedForFg_) {
         const auto result =
 #if defined(_WIN32)
             backend_ == Backend::D3D12 && sessionDeviceD3D12_
@@ -1045,6 +1077,8 @@ void Controller::ShutdownAfterGpuDrain() {
     }
 #endif
     sessionInitialized_ = false;
+    runtimeRetainedForFg_ = false;
+    sharingRuntimeWithFg_ = false;
     sessionFailed_ = false;
     sessionRetryable_ = false;
     sessionInterface_ = nullptr;

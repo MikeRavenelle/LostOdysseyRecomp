@@ -63,7 +63,9 @@ namespace gpu::video
     // Window thread publishes a request; only the command/presentation owner
     // may destroy GPU resources and finish process exit.
     bool ExitRequested();
-    // Presentation/renderer owner only; actual initialized feature probe state.
+    // GPU owner-thread queries. Capture is required even while a failed FG
+    // configuration is blocked, so the next valid configuration can recover.
+    bool FrameGenerationInputCaptureEnabled();
     bool FrameGenerationAvailable();
     void RequestExit();
     [[noreturn]] void FinishRequestedExit();

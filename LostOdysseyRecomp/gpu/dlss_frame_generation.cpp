@@ -18,10 +18,11 @@ uint64_t SteadyMs() {
 Session::Session(Runtime& runtime, plume::VulkanDevice& device, plume::VulkanCommandQueue& queue)
     : runtime_(runtime), device_(device), queue_(queue) {}
 Session::~Session() { Shutdown(); }
-bool Session::Check(sl::Result result, const char* operation) {
+bool Session::Check(sl::Result result, const char* operation, bool featureRequest) {
     if (result == sl::Result::eOk) return true;
     LOG_ERROR("DLSS FG: {} result={}", operation, int(result));
-    failed_ = true;
+    if (!featureRequest) failed_ = true;
+    runtimeState_.Fail();
     return false;
 }
 bool Session::Initialize() {
@@ -36,15 +37,17 @@ bool Session::Initialize() {
     if (vkCreateFence(device_.vk, &info, nullptr, &completion_) != VK_SUCCESS) return false;
     options_.numFramesToGenerate = 1;
     options_.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
+    creationFailuresSeen_ = runtime_.FeatureCreationFailureCount();
     ready_ = true;
     return Mode(false);
 }
 bool Session::Mode(bool enabled) {
     options_.mode = enabled ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
-    if (!Check(runtime_.DLSSGSetOptions(viewport_, options_), "FG options")) return false;
-    if (enabled != enabled_) LOG_INFO("DLSS FG: mode={} input=composited_backbuffer ui_separation=unavailable multiplier=2", enabled ? "on" : "off");
+    used_ |= enabled; // Even a failed enable may have partial SDK resources.
+    if (!Check(runtime_.DLSSGSetOptions(viewport_, options_), "FG options", enabled)) return false;
+    if (enabled != enabled_) LOG_INFO("DLSS FG: mode_request={} runtime={} input=composited_backbuffer ui_separation=unavailable multiplier=2", enabled ? "on" : "off", Name(runtimeState_.Phase()));
     enabled_ = enabled;
-    used_ |= enabled;
+    if (!enabled) runtimeState_.SuspendInputs();
     return true;
 }
 void Session::Mark(sl::PCLMarker marker) {
@@ -61,6 +64,7 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
     // A recorded/tagged input without Presented's marker has unknown use.
     // Do not overwrite its only retained owner with the next snapshot.
     if (retained_) FailClosed("prepare before previous input completion");
+    ObserveCreationFailure(); // A worker-thread error may arrive after GetState.
     token_ = nullptr;
     ++frame_;
     if (!Check(runtime_.NewFrameToken(token_, &frame_), "frame token") || !token_) {
@@ -108,6 +112,14 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
         return false;
     }
     const auto& in = inputs->inputs;
+    const bool retry = runtimeState_.Phase() == RuntimePhase::Unavailable;
+    if (!runtimeState_.Request(MakeFeatureKey(in.plan, in.depth.width, in.depth.height,
+            width, height, buffers, uint32_t(format)))) {
+        Disable();
+        ObserveInputs(false, false, Interruption::SdkFailure);
+        return false;
+    }
+    if (retry) LOG_INFO("DLSS FG: retry after feature configuration/resource boundary; runtime=pending provider={} request={} output={}x{}", uint32_t(in.plan.requestedUpscaler), in.plan.requestSignature, width, height);
     if (!hostUse_.Begin(commands)) FailClosed("overlapping FG input recording");
     retained_ = inputs; // Retain source images before recording their GPU read.
     const auto depthBegin = Clock::now();
@@ -145,7 +157,10 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
         Disable(); ObserveInputs(false, false, Interruption::SdkFailure); return false;
     }
     previousPlan_ = in.plan;
-    ObserveInputs(true, reset, Interruption::None);
+    // SetOptions/SetTag succeeding only requests FG. Account this sample after
+    // Present has exposed a runtime status and any deferred creation error.
+    samplePending_ = true;
+    sampleReset_ = reset;
     previousVP_ = in.cameraViewProjection;
     previousRaster_ = in.cameraRaster;
     previousFrame_ = in.renderFrameId; previousEpoch_ = in.temporalEpoch;
@@ -161,7 +176,7 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
 void Session::LogContinuity() {
     const double ratio = continuity_.Samples() ?
         100.0 * double(continuity_.Enabled()) / double(continuity_.Samples()) : 0.0;
-    LOG_INFO("DLSS FG continuity: samples={} enabled_samples={} enabled_percent={} longest_interruption_ms={} resumes={} reset_samples={} reason={} scope=prepare_attempts_not_display",
+    LOG_INFO("DLSS FG continuity: samples={} enabled_samples={} enabled_percent={} longest_interruption_ms={} resumes={} reset_samples={} reason={} scope=present_checked_attempts_not_display",
         continuity_.Samples(), continuity_.Enabled(), ratio, continuity_.LongestInterruption(SteadyMs()),
         continuity_.Resumes(), continuity_.Resets(), Name(continuity_.Reason()));
 }
@@ -212,6 +227,11 @@ void Session::CancelUnsubmitted(plume::RenderCommandList* commands) {
     // Plume's layout cache was changed while recording. An unexecuted image
     // must not enter the completed-input reuse pool with that cached layout.
     depth_.DiscardUnsubmitted();
+    presentCounter_.Reset();
+    if (samplePending_) {
+        ObserveInputs(false, false, Interruption::Canceled);
+        samplePending_ = false;
+    }
     continuity_.Suspend(Interruption::Canceled, SteadyMs());
     LogContinuity();
     token_ = nullptr;
@@ -254,8 +274,19 @@ void Session::DrainInputs() {
         LOG_INFO("DLSS FG input completion: submitted_serial={} completed_serial={} pending=false retained=false evidence=checked_post_present_queue_fence",
             inputCompletion_.SubmittedSerial(), inputCompletion_.CompletedSerial());
 }
+bool Session::ObserveCreationFailure() {
+    const auto count = runtime_.FeatureCreationFailureCount();
+    if (count == creationFailuresSeen_) return false;
+    const auto newFailures = count - creationFailuresSeen_;
+    creationFailuresSeen_ = count;
+    runtimeState_.Fail();
+    Disable(); // Retained input ownership still waits on its checked marker.
+    continuity_.Suspend(Interruption::SdkFailure, SteadyMs());
+    LOG_ERROR("DLSS FG: runtime=unavailable reason=ngx_feature_creation new_failures={} creation_failures={} enabled=false retry=configuration_or_resource_boundary", newFailures, count);
+    return true;
+}
 void Session::Presented(bool accepted) {
-    if (!ready_ || !token_) return;
+    if (!ready_ || !token_) { presentCounter_.Reset(); return; }
     if (retained_ && !hostUse_.Serial()) FailClosed("present before host submission");
     Mark(sl::PCLMarker::ePresentEnd);
     // A rejected Present provides no documented input-completion ordering.
@@ -265,14 +296,37 @@ void Session::Presented(bool accepted) {
     // fails, an accepted Present must still submit and wait its queue marker.
     if (accepted) SignalInputCompletion();
     sl::DLSSGState state{};
-    const bool stateOk = Check(runtime_.DLSSGGetState(viewport_, state, nullptr), "present state");
-    if (accepted && stateOk) actualPresents_ += state.numFramesActuallyPresented;
-    generatedIntervals_ += accepted && enabled_ && stateOk && state.status == sl::DLSSGStatus::eOk && state.numFramesActuallyPresented > 1;
-    if (frame_ <= 5 || frame_ % 60 == 0 || (enabled_ && state.status != sl::DLSSGStatus::eOk))
-        LOG_INFO("DLSS FG: frame={} source_frame={} enabled={} accepted={} status={} actual_presents={} generated_intervals={} total_presents={} sdk_errors={}",
-            frame_, previousFrame_, enabled_, accepted, unsigned(state.status), state.numFramesActuallyPresented,
-            generatedIntervals_, actualPresents_, runtime_.ErrorCount());
-    if (!accepted || !stateOk) Quiesce();
+    const bool stateQueried = enabled_ || runtimeState_.Phase() != RuntimePhase::Unavailable;
+    const bool stateOk = !stateQueried || Check(runtime_.DLSSGGetState(viewport_, state, nullptr), "present state", true);
+    if (!stateOk) {
+        // State retrieval is not the completion boundary. Check the already
+        // submitted post-Present marker before releasing anything; do not
+        // advance the retry generation or add a device-wide wait on failure.
+        Disable();
+        DrainInputs();
+    }
+    const bool creationFailed = ObserveCreationFailure();
+    const bool statusFailed = enabled_ && stateOk && state.status != sl::DLSSGStatus::eOk;
+    if (statusFailed) {
+        runtimeState_.Fail();
+        Disable();
+        LOG_ERROR("DLSS FG: runtime=unavailable reason=runtime_status status={} enabled=false retry=configuration_or_resource_boundary", unsigned(state.status));
+    }
+    if (samplePending_) {
+        runtimeState_.Presented(accepted && stateOk && !failed_ && !creationFailed && !statusFailed);
+        ObserveInputs(runtimeState_.Enabled(), sampleReset_, runtimeState_.Enabled() ?
+            Interruption::None : Interruption::SdkFailure);
+        samplePending_ = false;
+    }
+    if (accepted && stateQueried && stateOk) actualPresents_ += state.numFramesActuallyPresented;
+    const bool active = Available();
+    const bool contiguousDelta = presentCounter_.Observe(stateQueried && stateOk, accepted);
+    generatedIntervals_ += accepted && active && contiguousDelta && state.numFramesActuallyPresented > 1;
+    if (frame_ <= 5 || frame_ % 60 == 0 || creationFailed || statusFailed || !stateOk)
+        LOG_INFO("DLSS FG: frame={} source_frame={} enabled={} mode_requested={} runtime={} accepted={} state_queried={} present_delta_contiguous={} status={} actual_presents={} generated_intervals={} total_presents={} sdk_errors={} creation_failures={}",
+            frame_, previousFrame_, active, enabled_, Name(runtimeState_.Phase()), accepted, stateQueried, contiguousDelta, unsigned(state.status), state.numFramesActuallyPresented,
+            generatedIntervals_, actualPresents_, runtime_.ErrorCount(), creationFailuresSeen_);
+    if (!accepted) Quiesce();
     token_ = nullptr;
     if (!accepted || !stateOk) Disable();
 }
@@ -280,7 +334,9 @@ void Session::Disable() {
     if (!ready_) return;
     // A failed Prepare may already have recorded the depth conversion into
     // the host list. Keep that allocation until Presented's checked fence.
-    if (enabled_) {
+    if (enabled_ || options_.mode != sl::DLSSGMode::eOff) {
+        // A failed eOn call can have partially changed SDK options. Explicitly
+        // confirm eOff even when the host never marked that enable successful.
         if (token_) {
             sl::ResourceTag tags[] = {{nullptr, sl::kBufferTypeDepth, sl::eValidUntilPresent},
                 {nullptr, sl::kBufferTypeMotionVectors, sl::eValidUntilPresent},
@@ -291,6 +347,7 @@ void Session::Disable() {
         }
         if (!Mode(false)) FailClosed("disable options failed");
     }
+    runtimeState_.SuspendInputs();
     previousFrame_ = previousEpoch_ = 0;
     previousProvider_ = upscaling::Upscaler::Off;
 }
@@ -304,6 +361,8 @@ void Session::Quiesce() {
     Disable();
     const auto result = vkDeviceWaitIdle(device_.vk);
     if (result != VK_SUCCESS) FailClosed("SDK quiesce failed", int32_t(result));
+    runtimeState_.ResourceBoundary();
+    presentCounter_.Reset();
     token_ = nullptr;
     LOG_INFO("DLSS FG quiesce: submitted_input_serial={} completed_input_serial={} pending=false retained=false",
         inputCompletion_.SubmittedSerial(), inputCompletion_.CompletedSerial());

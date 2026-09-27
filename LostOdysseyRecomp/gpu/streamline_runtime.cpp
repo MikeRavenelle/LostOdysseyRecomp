@@ -1,6 +1,7 @@
 #if defined(_WIN32) && defined(LO_ENABLE_STREAMLINE_FG)
 
 #include "streamline_runtime.h"
+#include "dlss_fg_runtime_policy.h"
 #include <sl_security.h>
 #include <atomic>
 #include <cstdio>
@@ -10,6 +11,7 @@ namespace gpu::dlss_fg {
 namespace {
 
 std::atomic<unsigned> slErrorCount{};
+std::atomic<unsigned> slFeatureCreationFailures{};
 
 template<class T>
 T Export(HMODULE module, const char* name) {
@@ -19,7 +21,13 @@ T Export(HMODULE module, const char* name) {
 bool Ok(sl::Result result) { return result == sl::Result::eOk; }
 
 void Log(sl::LogType type, const char* message) {
-    if (type == sl::LogType::eError) ++slErrorCount;
+    if (type == sl::LogType::eError) {
+        ++slErrorCount;
+        // This runtime deliberately loads no sl.dlss/sl.dlss_d plugin. Its
+        // only NGX feature creator is DLSS-G. Do not use all SDK errors as a
+        // retry/health signal, and never call back into SL from this callback.
+        if (IsNgxCreationFailure(message)) ++slFeatureCreationFailures;
+    }
     if (type == sl::LogType::eWarn || type == sl::LogType::eError)
         std::fprintf(stderr, "Streamline %s: %s\n", type == sl::LogType::eError ? "error" : "warning",
             message ? message : "(null)");
@@ -29,10 +37,12 @@ void Log(sl::LogType type, const char* message) {
 
 Runtime::~Runtime() { Shutdown(); }
 unsigned Runtime::ErrorCount() const { return slErrorCount.load(); }
+unsigned Runtime::FeatureCreationFailureCount() const { return slFeatureCreationFailures.load(); }
 
 bool Runtime::Initialize(const std::filesystem::path& directory, std::string& reason) {
     if (initialized_ || module_) { reason = "Streamline initialized twice"; return false; }
     slErrorCount.store(0);
+    slFeatureCreationFailures.store(0);
     const auto root = std::filesystem::absolute(directory);
     for (const wchar_t* name : {L"sl.interposer.dll", L"sl.common.dll", L"sl.dlss_g.dll", L"sl.reflex.dll", L"sl.pcl.dll"}) {
         const auto path = root / name;

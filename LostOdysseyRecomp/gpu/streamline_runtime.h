@@ -25,6 +25,7 @@ public:
     bool Requirements(sl::Feature feature, sl::FeatureRequirements& requirements, std::string& reason) const;
     bool ImportFunctions(std::string& reason);
     unsigned ErrorCount() const;
+    unsigned FeatureCreationFailureCount() const;
     PFN_vkGetInstanceProcAddr InstanceProc() const { return instanceProc_; }
     PFN_vkGetDeviceProcAddr DeviceProc() const { return deviceProc_; }
 

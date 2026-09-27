@@ -107,7 +107,10 @@ public:
     ~Controller() = default;
 
     plume::VulkanExtensionHooks ExtensionHooks();
-    void ProbeOnce(const plume::VulkanInterface& vulkanInterface, const plume::VulkanDevice& device);
+    // A live Streamline device shares NGX with native SR. Its probe must not
+    // shut down that device runtime, even when the selected upscaler is FSR.
+    void ProbeOnce(const plume::VulkanInterface& vulkanInterface, const plume::VulkanDevice& device,
+        bool retainRuntimeForFrameGeneration = false);
     upscaling::OutputSizing QueryOutputSizing(const plume::VulkanInterface& vulkanInterface,
         const plume::VulkanDevice& device, const upscaling::SizingKey& key);
 
@@ -148,7 +151,7 @@ public:
     void ShutdownAfterGpuDrain();
     bool ShutdownComplete() const {
         return srUses_.Empty() && !feature_ && !featureParameters_ &&
-            !capabilityParameters_ && !sessionInitialized_;
+            !capabilityParameters_ && !sessionInitialized_ && !runtimeRetainedForFg_;
     }
     void AbandonUsesAfterDeviceLoss();
     const ProbeReport& Report() const { return report_; }
@@ -188,6 +191,10 @@ private:
     bool probeAttempted_ = false;
     bool apiFailure_ = false;
     bool sessionInitialized_ = false;
+    // Device-runtime ownership is separate from SR capability availability.
+    // Cleared only by successful owner shutdown after FG has been released.
+    bool runtimeRetainedForFg_ = false;
+    bool sharingRuntimeWithFg_ = false;
     bool featureConfigValid_ = false;
     bool sessionFailed_ = false;
     // Only bounded sizing requests may reopen a cleaned-up initialization.

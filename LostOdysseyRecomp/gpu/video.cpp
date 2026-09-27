@@ -1363,8 +1363,12 @@ namespace gpu::video
             }
             if (const auto missing = backend::Missing(candidate, backend::Inspect(candidate, g_device.get())); !missing.empty()) return missing;
             if (g_vulkan && g_dlssController) {
+                bool retainNgxForFg = false;
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+                retainNgxForFg = g_fgDispatch && g_fgDispatch->FeatureSupported();
+#endif
                 g_dlssController->ProbeOnce(*static_cast<plume::VulkanInterface*>(g_interface.get()),
-                    *static_cast<plume::VulkanDevice*>(g_device.get()));
+                    *static_cast<plume::VulkanDevice*>(g_device.get()), retainNgxForFg);
                 LogDlssProbe(g_dlssController->Report());
             }
 #ifdef _WIN32
@@ -1470,9 +1474,16 @@ namespace gpu::video
         hid::SetExternalEventPump(false);
     }
 
-    bool FrameGenerationAvailable() {
+    bool FrameGenerationInputCaptureEnabled() {
 #if defined(LO_GPU_PLUME) && defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
         return bool(g_fgSession);
+#else
+        return false;
+#endif
+    }
+    bool FrameGenerationAvailable() {
+#if defined(LO_GPU_PLUME) && defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        return g_fgSession && g_fgSession->Available();
 #else
         return false;
 #endif
