@@ -8,6 +8,7 @@
 
 - [x] **v0.7.0 已发布：**源码 `4142f23`，Release CI [36228746088](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36228746088)。Windows 与 Linux 包见[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.0)。
 - [x] **v0.7.1 已发布：**源码提交 `c585ef820cb72993ad87a90a1a03c1c648fb654c`，打标 `v0.7.1`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1)（2026-09-26T21:51:24Z），Release CI [36274702691](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36274702691)。包含 Gameplay → 导入光盘与 DLC、安全重启至导入器、选择性替换与失败回滚。公开产物已核实 SHA256：Windows 包 `LostOdysseyRecomp-windows-x64-v0.7.1.zip`（243,762,106 字节，SHA256 `e53753a71b06ab39c41a3a5b327a8477523db4b006543c54e70834b183c5291f`），Linux AppImage `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage`（251,038,200 字节，SHA256 `878d04f9a530771fc2ba752842c1c9b5ba1cfc3fea63555a401dd53b46dd6e65`），正式独立 Flatpak `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`（265,618,800 字节，SHA256 `2efe0a4ba556037f9118894b36cba4b7667132b708c9ec3ea325db9c16f71775`，stable 分支），以及 Flathub 输入 runtime `LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz`（SHA256 `661838345ca5e1590dce99e35a9dba2bc1138d073c1c76d947aec34ea4db931f`）。Flatpak 经验证获 psvita 用户验收（严格限制于该验证范围，不推断性能或多场景兼容性）。
+- [x] **v0.7.2 已发布：**merge 源码 `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`，打标 `v0.7.2`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2)（2026-09-27T08:59:13Z），Release CI [36305268629](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36305268629)。新增有界的 Windows D3D12 DLSS/FSR SR、DLAA 尺寸修正，以及原生物体运动不可用时的相机／深度 hybrid motion。10 个资产均与 GitHub SHA-256 和大小记录一致；Windows ZIP、AppImage sidecar 和 Flatpak CI 核验通过。更广场景、画质、性能和其他 GPU 覆盖不在本次发布证据范围内。
 
 ## 已完成功能与已核对跟踪项
 
@@ -37,7 +38,7 @@
 
 规划执行顺序（开发执行安排，不虚构后项对前项的必然技术依赖；P0/P3/P4 为阶段标识，不混同为优先级）：
 
-1. [~] **P0：**共同时序契约已实现；PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) 仍为 OPEN，此前 `6cbfea1` revision 的 5 个检查已在 CI 通过。前台探针在 48 帧中产生 33 个 FG-on `actual_presents=2` 区间，但记录了有界 SDK validation hazards，并以 exit 1 结束且清理失败。本次未观察到旧的宿主代理 layout mismatch，且相同 SDK clone/layout 类别在旧证据中也出现，不能宣称新回归或单一已确认原因。尚无外部显示证据。Gate 1 仍未通过，剩余工作是 SDK hazard 与 clone layout 归因。
+1. [~] **P0：**共同时序契约已实现；PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) 已合并至 `main`，merge commit 为 `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`；此前 `6cbfea1` revision 的 5 个检查已在 CI 通过。前台探针在 48 帧中产生 33 个 FG-on `actual_presents=2` 区间，但记录了有界 SDK validation hazards，并以 exit 1 结束且清理失败。本次未观察到旧的宿主代理 layout mismatch，且相同 SDK clone/layout 类别在旧证据中也出现，不能宣称新回归或单一已确认原因。尚无外部显示证据。Gate 1 仍未通过，剩余工作是 SDK hazard 与 clone layout 归因。
 2. [~] **P3：**已实现 provider-neutral present lease 与最终阶段 straight-alpha HUDless／UI 合成底座。此前 `--separated-ui-only` D3D12／Vulkan 检查已通过，alpha 0/128/255 像素精确，Vulkan 同步验证请求下没有记录 validation message。本地后续改动增加可选的不可变诊断 producer snapshot，复制 5 个 GPU 纹理并在 producer fence 前保留，处理 submit／wait 失败；`LO_FG_SNAPSHOT_FRAME=N` 捕获一次指定真实帧，默认关闭。RTX 5080 Vulkan 的 snapshot GPU／renderer 定向检查通过 2/2，但 snapshot 为 `UI=Unavailable`，没有 final resolve/provider 关联，也没有生产级 separated-UI handoff。生产者资源所有权接线、final-present 关联、真实 UI handoff、真实 provider／Reflex、resize／模式切换实机验证与正式启用 FG 仍待完成。
 3. [ ] **P4：**Windows Vulkan 固定 2× DLSS 插帧，包括 DLSS／DLAA／FSR 组合与安全暂停／恢复。
 4. [ ] **独立 FSR 插帧：**独立目标，不预设 API、平台和倍率。

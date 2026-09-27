@@ -194,7 +194,7 @@ flatpak --system install flathub org.freedesktop.Platform//26.08
 Install the published stable release bundle:
 
 ```bash
-flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.1.flatpak
+flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.2.flatpak
 ```
 
 Or install a locally packaged development bundle:
