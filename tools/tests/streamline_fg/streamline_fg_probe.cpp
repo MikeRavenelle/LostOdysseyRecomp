@@ -2,6 +2,7 @@
 #include "probe_vulkan_dispatch.h"
 #include "streamline_runtime.h"
 #include "ngx_lifecycle_capture.h"
+#include "probe_options.h"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -210,6 +211,7 @@ struct App {
     uint64_t serial{};
     bool fgEnabled{};
     bool noActivate{};
+    bool explicitInputWait{};
     bool fgResourceUsed{};
     bool fgOptionsAwaitPresent{};
     bool fgUnavailableInBackground{};
@@ -222,8 +224,16 @@ struct App {
     uint32_t generatedIntervals{};
     bool finalCleanupOk = true;
     bool cleanedUp{};
+    unsigned sessionValidationErrors{};
+    unsigned sessionSlErrors{};
+    enum class InputOwnership { Clear, Unknown, Pending };
+    InputOwnership inputOwnership = InputOwnership::Clear;
+    VkSemaphore inputCompletionFence{};
+    uint64_t inputCompletionValue{};
+    uint32_t inputCompletionFrame{};
     const std::filesystem::path output = std::filesystem::current_path();
-    explicit App(bool disableActivation) : window(disableActivation), noActivate(disableActivation) {}
+    explicit App(ProbeOptions options)
+        : window(options.noActivate), noActivate(options.noActivate), explicitInputWait(options.explicitInputWait) {}
     ~App() { Cleanup(); }
     void DiscardPendingUse() {
         if (!ngx || !pendingUseId) return;
@@ -242,6 +252,7 @@ struct App {
         window.AbandonAfterDrainFailure();
         finalCleanupOk = false;
         std::printf("LIFECYCLE_GPU_OBJECTS_ABANDONED reason=%s\n", reason);
+        std::puts("LIFECYCLE_CLEANUP_OK=0");
     }
     void InstallValidationMonitor() {
         auto instance = static_cast<VulkanInterface*>(render.get())->instance;
@@ -277,8 +288,33 @@ struct App {
         for (auto semaphore : present) vkDestroySemaphore(gpu->vk, semaphore, nullptr);
         present.clear();
     }
+    void WaitForFgInputs(const char* stage) {
+        if (!explicitInputWait || inputOwnership == InputOwnership::Clear) return;
+        Check(inputOwnership == InputOwnership::Pending,
+            "FG input ownership unresolved after present; tagged resources cannot be reused or destroyed");
+        if (!device || !inputCompletionFence || !inputCompletionValue || !vkWaitSemaphores) {
+            inputOwnership = InputOwnership::Unknown;
+            Fail("FG input completion timeline wait unavailable");
+        }
+        auto* gpu = static_cast<VulkanDevice*>(device.get());
+        VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+        wait.semaphoreCount = 1;
+        wait.pSemaphores = &inputCompletionFence;
+        wait.pValues = &inputCompletionValue;
+        const auto result = vkWaitSemaphores(gpu->vk, &wait, 10'000'000'000ull);
+        if (result != VK_SUCCESS) {
+            inputOwnership = InputOwnership::Unknown;
+            VK(result, "FG input processing timeline wait");
+        }
+        std::printf("FG_INPUT_WAIT stage=%s frame=%u value=%llu result=complete\n", stage,
+            inputCompletionFrame, static_cast<unsigned long long>(inputCompletionValue));
+        inputOwnership = InputOwnership::Clear;
+        inputCompletionFence = {};
+        inputCompletionValue = 0;
+    }
     void Drain() {
         if (!device) return;
+        WaitForFgInputs("boundary_drain");
         auto* gpu = static_cast<VulkanDevice*>(device.get());
         if (inFlight) {
             VK(vkWaitForFences(gpu->vk, 1, &fence, VK_TRUE, 10'000'000'000ull), "host submit fence");
@@ -290,10 +326,13 @@ struct App {
         Memory("boundary");
     }
     void Mode(bool enabled) {
+        WaitForFgInputs("before_mode_change");
         sl::DLSSGOptions options{};
         options.mode = enabled ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
         options.numFramesToGenerate = 1;
-        options.queueParallelismMode = sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
+        options.queueParallelismMode = explicitInputWait
+            ? sl::DLSSGQueueParallelismMode::eBlockNoClientQueues
+            : sl::DLSSGQueueParallelismMode::eBlockPresentingClientQueue;
         options.numBackBuffers = uint32_t(swap.images.size());
         options.colorWidth = swap.extent.width; options.colorHeight = swap.extent.height;
         options.colorBufferFormat = swap.format;
@@ -308,7 +347,10 @@ struct App {
         SL(sl.DLSSGSetOptions(viewport, options), "slDLSSGSetOptions");
         fgEnabled = enabled;
         fgOptionsAwaitPresent = true;
-        std::printf("FG_MODE=%s fixed2x=1 block_presenting_client_queue=1\n", enabled ? "on" : "off");
+        if (explicitInputWait)
+            std::printf("FG_MODE=%s fixed2x=1 block_no_client_queues=1\n", enabled ? "on" : "off");
+        else
+            std::printf("FG_MODE=%s fixed2x=1 block_presenting_client_queue=1\n", enabled ? "on" : "off");
     }
     void ClearTags() {
         if (!sl.SetTagForFrame || !serial) return;
@@ -324,6 +366,14 @@ struct App {
     void Cleanup() noexcept {
         if (cleanedUp) return;
         cleanedUp = true;
+        sessionValidationErrors = validationErrors.load();
+        sessionSlErrors = sl.ErrorCount();
+        std::printf("SESSION_VALIDATION_ERRORS=%u\nSESSION_SL_ERRORS=%u\n",
+            sessionValidationErrors, sessionSlErrors);
+        if (explicitInputWait && inputOwnership == InputOwnership::Unknown) {
+            AbandonGpuObjects("FG_input_ownership_unresolved");
+            return;
+        }
         const auto nativeErrorsBefore = NgxLifecycleErrors();
         const auto step = [this](const char* name, auto action) {
             try { action(); }
@@ -371,8 +421,9 @@ struct App {
         if (device && acquire) vkDestroySemaphore(static_cast<VulkanDevice*>(device.get())->vk, acquire, nullptr);
         prefix.reset(); isolated.reset(); continuation.reset(); queue.reset();
         if (!sl.Shutdown()) finalCleanupOk = false;
-        if (sl.ErrorCount()) {
-            std::fprintf(stderr, "CLEANUP_SL_ERRORS=%u (inspect Streamline log)\n", sl.ErrorCount());
+        const auto cleanupSlErrors = sl.ErrorCount() - sessionSlErrors;
+        if (cleanupSlErrors) {
+            std::fprintf(stderr, "CLEANUP_SL_ERRORS=%u (inspect Streamline log)\n", cleanupSlErrors);
             finalCleanupOk = false;
         }
         if (NgxLifecycleErrors() != nativeErrorsBefore) {
@@ -386,8 +437,9 @@ struct App {
             validationMessenger = {};
         }
         render.reset(); hooks.reset(); ngx.reset();
-        if (validationErrors.load()) {
-            std::fprintf(stderr, "VALIDATION_ERRORS=%u\n", validationErrors.load());
+        const auto cleanupValidationErrors = validationErrors.load() - sessionValidationErrors;
+        if (cleanupValidationErrors) {
+            std::fprintf(stderr, "CLEANUP_VALIDATION_ERRORS=%u\n", cleanupValidationErrors);
             finalCleanupOk = false;
         }
         if (!window.Close()) finalCleanupOk = false;
@@ -424,6 +476,7 @@ struct App {
     void Frame(uint32_t frame, bool capture) {
         const auto start = std::chrono::steady_clock::now();
         auto* gpu = static_cast<VulkanDevice*>(device.get());
+        WaitForFgInputs("before_frame_reuse");
         Check(scene && scene->Ready(), "scene resources unavailable");
         Check(queue && prefix && isolated && continuation, "single DIRECT queue/list unavailable");
         Check(!pendingUseId, "previous native NGX use was not settled");
@@ -480,6 +533,7 @@ struct App {
         info.waitSemaphoreCount = 1; info.pWaitSemaphores = &present[image];
         info.swapchainCount = 1; info.pSwapchains = &swap.swapchain; info.pImageIndices = &image;
         mark(sl::PCLMarker::ePresentStart);
+        if (explicitInputWait && fgEnabled) inputOwnership = InputOwnership::Unknown;
         VK(vkQueuePresentKHR(static_cast<VulkanCommandQueue*>(queue.get())->queue->vk, &info), "one hooked present");
         fgOptionsAwaitPresent = false;
         sceneFirstFrame = false;
@@ -491,6 +545,22 @@ struct App {
             state.numFramesToGenerateMax, state.minWidthOrHeight,
             static_cast<unsigned long long>(state.lastPresentInputsProcessingCompletionFenceValue),
             static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count()));
+        if (explicitInputWait && fgEnabled) {
+            std::printf("FG_INPUT_FENCE_STATE frame=%u fence_nonnull=%d value=%llu\n", frame,
+                int(state.inputsProcessingCompletionFence != nullptr),
+                static_cast<unsigned long long>(state.lastPresentInputsProcessingCompletionFenceValue));
+            Check(state.status == sl::DLSSGStatus::eOk && state.numFramesToGenerateMax >= 1,
+                "FG input ownership unresolved because SDK state is invalid");
+            Check(state.inputsProcessingCompletionFence && state.lastPresentInputsProcessingCompletionFenceValue,
+                "FG present did not return an input processing completion fence/value");
+            static_assert(sizeof(VkSemaphore) == sizeof(void*));
+            std::memcpy(&inputCompletionFence, &state.inputsProcessingCompletionFence, sizeof(inputCompletionFence));
+            inputCompletionValue = state.lastPresentInputsProcessingCompletionFenceValue;
+            inputCompletionFrame = frame;
+            inputOwnership = InputOwnership::Pending;
+            std::printf("FG_INPUT_FENCE frame=%u value=%llu\n", frame,
+                static_cast<unsigned long long>(inputCompletionValue));
+        }
         if (fgEnabled && state.numFramesActuallyPresented > 1 && state.status == sl::DLSSGStatus::eOk) ++generatedIntervals;
         if (!fgEnabled && state.numFramesActuallyPresented != 1)
             Fail("FG off must present exactly one real frame");
@@ -662,13 +732,13 @@ int Run(App& app) {
     Check(app.generatedIntervals >= 2, "SDK did not report actual generated presents in at least two intervals");
     return 0;
 }
-int Execute(bool noActivate) {
-    App app(noActivate);
+int Execute(ProbeOptions options) {
+    App app(options);
     int result = 1;
     try { result = Run(app); }
     catch (const std::exception& ex) { std::fprintf(stderr, "FAIL=%s\n", ex.what()); }
     app.Cleanup();
-    if (!app.finalCleanupOk) return 1;
+    if (!app.finalCleanupOk || app.sessionValidationErrors || app.sessionSlErrors) return 1;
     if (result == 0) {
         std::printf("PASS=actual native NGX SR + Streamline fixed2x FG reported generated presents, generated_intervals=%u\n", app.generatedIntervals);
         std::puts("EXTERNAL_DISPLAY_EVIDENCE=not_collected; physical displayed-frame acceptance pending");
@@ -678,12 +748,13 @@ int Execute(bool noActivate) {
 }
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    if (argc > 2 || (argc == 2 && std::strcmp(argv[1], "--no-activate") != 0)) {
-        std::fprintf(stderr, "USAGE=%s [--no-activate]\n", argv[0]);
+    const auto options = probe::ParseProbeOptions(argc, argv);
+    if (!options) {
+        std::fprintf(stderr, "USAGE=%s [--no-activate] [--explicit-input-wait]\n", argv[0]);
         return 1;
     }
     const auto dpiAware = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     std::printf("WINDOW_DPI_AWARENESS_SET=%d last_error=%lu\n", int(dpiAware), dpiAware ? 0 : GetLastError());
-    try { return Execute(argc == 2); }
+    try { return Execute(*options); }
     catch (const std::exception& ex) { std::fprintf(stderr, "FAIL=%s\n", ex.what()); return 1; }
 }

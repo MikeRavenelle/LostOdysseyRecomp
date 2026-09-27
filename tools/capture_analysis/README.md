@@ -50,6 +50,22 @@ For P6 PPM-to-PNG conversion without third-party dependencies, reuse [`../ppm2pn
 
 The archived `out/battle-flicker-20260907-f2871/inspect_capture.py` and `compare_frames.py` were read-only references. Their machine/date-specific defaults, eager extraction, entire-archive validation, image montage layout, raw depth statistics and capture-specific ROI were not carried into the generic tools. HTTP capture, input control, RenderDoc, GPU replay, screenshots, microcode and binary payloads remain outside this offline migration: they require a running game/device or are capture data rather than reusable analysis code.
 
+## FG UI recomposition diagnostic
+
+`fg_ui_recompose.py` performs a read-only, dual-background replay check for an explicitly supplied capture directory. It reads `manifest.json` plus four tightly packed equal-sized RGBA raw images named by the manifest: `scene`, `black`, `white`, and `final`. The `black` and `white` images must represent the same overlay over numeric RGB zero and one. The tool analyzes RGB attachment values only; input alpha channels are ignored.
+
+```sh
+python -B tools/capture_analysis/fg_ui_recompose.py \
+  --input /path/to/recompose-input \
+  --output /path/to/new/recompose-report
+```
+
+The output directory must be new and outside the input directory. The command writes `report.json`, `recomposed.png`, `absolute_error_x8.png`, and `derived_opacity.png`. It requires Python 3.10+, NumPy, and Pillow; it does not install dependencies, launch the game, call a provider, or modify the input.
+
+The manifest requires positive integer `width`/`height`, `format` `rgba8_unorm` or `rgba16f_le`, `blend_domain` `attachment_numeric`, a boolean `capture_valid`, and `rejection_reason` set to `null` only when valid or to a nonempty explanation when invalid. `overlay_draw_count` must be a nonnegative integer; a valid capture must have a positive count. `images` must contain only relative paths for `scene`, `black`, `white`, and `final`, each with the exact tightly packed RGBA size.
+
+The report exposes `capture_equation_fit`, `equation_scope`, RGB transmission/derived opacity and recomposition error. `capture_equation_fit` is true only when the numeric equation fits and the manifest capture is valid; a mathematically fitting invalid capture remains unqualified. Every report fixes `ui_separation` to `unavailable` and `provider_ready` to `false`. A fitting equation is evidence for this explicitly supplied replay only. It does not prove real HUDless separation, general UI alpha semantics, final-present association, provider readiness, frame generation, hardware behavior, or player acceptance. Do not infer a reusable UI whitelist from one scene, shader, draw ordinal, scissor, or image pair.
+
 ## Jitter candidate triage and reviewed fixtures
 
 `trace.py` reads register deltas and shader IDs from an F1 ZIP or extracted capture. `iter_draw_states` reconstructs each draw's cumulative register state without retaining a full copy per draw. The following tools use that parser and read only capture metadata and shaders; they do not extract binary render surfaces or run the game.

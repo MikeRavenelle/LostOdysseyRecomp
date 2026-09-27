@@ -19,6 +19,8 @@ endif()
 add_executable(LoStreamlineFgProbe
     streamline_fg_probe.cpp streamline_runtime.cpp probe_vulkan_dispatch.cpp probe_scene.cpp ngx_lifecycle_capture.cpp
     "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp")
+add_executable(LoStreamlineFgProbeOptionsTest probe_options_test.cpp)
+set_target_properties(LoStreamlineFgProbeOptionsTest PROPERTIES CXX_SCAN_FOR_MODULES OFF)
 # Capture raw retirement results even after Controller's bounded call report fills.
 set_source_files_properties("${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp" PROPERTIES COMPILE_DEFINITIONS
     "NVSDK_NGX_VULKAN_ReleaseFeature=LoProbeNgxReleaseFeature;NVSDK_NGX_VULKAN_DestroyParameters=LoProbeNgxDestroyParameters;NVSDK_NGX_VULKAN_Shutdown1=LoProbeNgxShutdown1")
