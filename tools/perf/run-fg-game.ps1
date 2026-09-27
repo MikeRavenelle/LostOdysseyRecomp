@@ -5,7 +5,11 @@ param(
     [Parameter(Mandatory)][string]$GameDirectory,
     [ValidateRange(10,600)][int]$Seconds = 120,
     [switch]$DisableFg,
-    [switch]$WindowCycle
+    [switch]$DisableObjectMotion,
+    [switch]$WindowCycle,
+    [ValidateSet('Baseline','D3D12','Vulkan')][string]$Backend = 'Baseline',
+    [ValidateSet('Baseline','Off','Dlss','Fsr')][string]$Upscaler = 'Baseline',
+    [ValidateRange(-1,3)][int]$Quality = -1
 )
 # ACTIVE GAME DRIVER: isolated profile/save/config copies, foreground gameplay,
 # muted audio, bounded automated input, then closes only its own game process.
@@ -25,6 +29,20 @@ foreach ($file in Get-ChildItem -LiteralPath $build -File) {
         Copy-Item -LiteralPath $file.FullName -Destination $run
     }
 }
+# Overrides apply only to the isolated copy, never to the baseline.
+$settingsPath = Join-Path $run 'settings.ini'
+$settingsText = Get-Content -LiteralPath $settingsPath -Raw
+$overrides = @{}
+if ($Backend -ne 'Baseline') { $overrides['graphics_backend'] = $(if ($Backend -eq 'D3D12') { 0 } else { 1 }) }
+if ($Upscaler -ne 'Baseline') { $overrides['upscaler'] = @{Off=0; Dlss=1; Fsr=2}[$Upscaler] }
+if ($Quality -ge 0) { $overrides['dlss_quality'] = $Quality; $overrides['fsr_quality'] = $Quality }
+foreach ($entry in $overrides.GetEnumerator()) {
+    $pattern = '(?m)^' + [regex]::Escape($entry.Key) + '=.*$'
+    $line = $entry.Key + '=' + $entry.Value
+    if ([regex]::IsMatch($settingsText, $pattern)) { $settingsText = [regex]::Replace($settingsText, $pattern, $line) }
+    else { $settingsText += "`n$line`n" }
+}
+if ($overrides.Count) { [IO.File]::WriteAllText($settingsPath, $settingsText) }
 $exe = Join-Path $run 'LostOdysseyRecomp.exe'
 if (!(Test-Path -LiteralPath $exe)) { throw 'BuildDirectory lacks LostOdysseyRecomp.exe' }
 function BaselineMetadata {
@@ -49,6 +67,8 @@ foreach ($name in @($start.Environment.Keys)) {
 }
 $start.ArgumentList.Add('--game'); $start.ArgumentList.Add($game); $start.ArgumentList.Add('--quiet-kernel')
 $start.Environment['LO_DLSS_FG'] = $(if ($DisableFg) { '0' } else { '1' })
+$start.Environment['LO_MV_LOG'] = '1'
+if ($DisableObjectMotion) { $start.Environment['LO_MV_REPLAY'] = '0' }
 $start.Environment['LO_AUDIO_MUTE'] = '1'
 $start.Environment['LO_LOG_FILE'] = Join-Path $run 'runtime.log'
 $start.Environment['LO_SHADER_CACHE_DIR'] = Join-Path $run 'shader-cache'
@@ -61,7 +81,8 @@ $stdout = $process.StandardOutput.ReadToEndAsync()
 $stderr = $process.StandardError.ReadToEndAsync()
 $manifest = [ordered]@{ pid=$process.Id; started=[DateTime]::UtcNow.ToString('o'); exe=$exe;
     sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; fg=!$DisableFg;
-    foreground=$true; muted=$true; game=$game; baseline=$baseline; seconds=$Seconds }
+    foreground=$true; muted=$true; object_motion=!$DisableObjectMotion;
+    backend=$Backend; upscaler=$Upscaler; quality=$Quality; game=$game; baseline=$baseline; seconds=$Seconds }
 $manifest | ConvertTo-Json | Set-Content (Join-Path $run 'run.json')
 # A hidden parent terminal can leave the SDL window hidden even when
 # AppActivate reports success. Restore the actual game HWND before sampling.

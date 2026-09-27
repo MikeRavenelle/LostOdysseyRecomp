@@ -23,6 +23,12 @@ if(WIN32)
 endif()
 add_executable(motion_replay_gpu_test "${ROOT}/tools/tests/motion_replay_gpu_test.cpp" platform_stub.cpp)
 target_link_libraries(motion_replay_gpu_test PRIVATE mv_runtime)
+if(WIN32)
+ add_executable(motion_replay_d3d12_gpu_test "${ROOT}/tools/tests/motion_replay_d3d12_gpu_test.cpp" platform_stub.cpp)
+ target_link_libraries(motion_replay_d3d12_gpu_test PRIVATE mv_runtime)
+ add_test(NAME motion_replay_d3d12_gpu COMMAND motion_replay_d3d12_gpu_test)
+ set_tests_properties(motion_replay_d3d12_gpu PROPERTIES LABELS "motion;d3d12;gpu" TIMEOUT 180 SKIP_RETURN_CODE 77)
+endif()
 add_executable(battle_motion_replay_gpu_test "${ROOT}/tools/tests/battle_motion_replay_gpu_test.cpp" platform_stub.cpp)
 target_link_libraries(battle_motion_replay_gpu_test PRIVATE mv_runtime)
 set(LO_BATTLE_MOTION_SOURCE_ROOT "${ROOT}/out" CACHE PATH "Ignored local battle microcode evidence root")
@@ -122,6 +128,7 @@ if((UNIX AND NOT APPLE) OR WIN32)
  add_executable(LoNativeDlssRendererTest "${ROOT}/tools/tests/native_dlss_renderer_gpu_test.cpp"
   "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp"
   "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
+  "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler_d3d12.cpp"
   "${ROOT}/LostOdysseyRecomp/gpu/presentation.cpp"
   "${ROOT}/LostOdysseyRecomp/gpu/shader/portable_shader_pack.cpp" platform_stub.cpp)
  target_include_directories(LoNativeDlssRendererTest BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/compile_boundary")
@@ -160,8 +167,12 @@ if((UNIX AND NOT APPLE) OR WIN32)
    "${ROOT}/LostOdysseyRecomp/gpu/video.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/temporal_upscaler.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
+   "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler_d3d12.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/upscaling_plan.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp" platform_stub.cpp)
+  if(WIN32)
+   target_sources(LoVideoSubmissionStopTest PRIVATE "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx_d3d12.cpp")
+  endif()
   target_include_directories(LoVideoSubmissionStopTest BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/compile_boundary")
   target_include_directories(LoVideoSubmissionStopTest PRIVATE "${ROOT}/thirdparty/unordered_dense/include")
   target_compile_definitions(LoVideoSubmissionStopTest PRIVATE LO_VIDEO_SUBMISSION_UNIT LO_GPU_PLUME NOMINMAX
@@ -188,6 +199,9 @@ endif()
 add_executable(sr_hybrid_motion_gpu_test "${ROOT}/tools/tests/sr_hybrid_motion_gpu_test.cpp" "${CMAKE_CURRENT_LIST_DIR}/platform_stub.cpp")
 target_link_libraries(sr_hybrid_motion_gpu_test PRIVATE mv_runtime)
 add_test(NAME sr_hybrid_motion_gpu COMMAND sr_hybrid_motion_gpu_test)
+if(WIN32)
+ add_test(NAME sr_hybrid_motion_d3d12 COMMAND sr_hybrid_motion_gpu_test --d3d12)
+endif()
 add_executable(frame_generation_snapshot_gpu_test "${ROOT}/tools/tests/frame_generation_snapshot_gpu_test.cpp" platform_stub.cpp)
 target_link_libraries(frame_generation_snapshot_gpu_test PRIVATE mv_runtime)
 add_test(NAME frame_generation_snapshot_gpu COMMAND frame_generation_snapshot_gpu_test)
@@ -204,6 +218,9 @@ else()
 endif()
 add_test(NAME hybrid_capture_metadata COMMAND LoDlssEvaluateCaptureContractTest --evaluate-capture-contract-only)
 set_tests_properties(sr_hybrid_motion_gpu hybrid_capture_metadata PROPERTIES TIMEOUT 180)
+if(WIN32)
+ set_tests_properties(sr_hybrid_motion_d3d12 PROPERTIES TIMEOUT 180)
+endif()
 
 # Executes actual SR continuation -> full resolve -> production video diagnostic boundary.
 add_test(NAME frame_generation_handoff_renderer COMMAND LoNativeDlssRendererTest --fg-handoff-only)

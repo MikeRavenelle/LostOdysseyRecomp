@@ -12,6 +12,10 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+namespace plume { struct D3D12Device; struct D3D12CommandList; struct D3D12Texture; }
+#endif
+
 namespace gpu::dlss {
 struct EvaluateCapture;
 enum class ProbeState : uint8_t {
@@ -122,6 +126,13 @@ public:
     // or continuation list. output remains renderer-owned.
     SrAttempt RecordIsolated(plume::VulkanCommandList& isolatedCommandList, const SrConfig& config,
         const temporal::TemporalFrameInputs& inputs, plume::VulkanTexture& output, EvaluateCapture* capture = nullptr);
+#if defined(_WIN32)
+    void ProbeOnce(const plume::D3D12Device& device);
+    upscaling::OutputSizing QueryOutputSizing(const plume::D3D12Device& device, const upscaling::SizingKey& key);
+    SrStatus EnsureSession(const plume::D3D12Device& device);
+    SrAttempt RecordIsolated(plume::D3D12CommandList& isolatedCommandList, const SrConfig& config,
+        const temporal::TemporalFrameInputs& inputs, plume::D3D12Texture& output, EvaluateCapture* capture = nullptr);
+#endif
 
     // Lane B reports the prefix/fallback batch outcome. A failed isolated list
     // is never submitted, but its nonzero useId remains live until one of
@@ -148,12 +159,21 @@ private:
     void RecordCall(const char* name, int32_t result, bool failed = false);
     bool CreateApplicationDataPath(std::string& reason);
     SrStatus AllocateParameters();
+#if defined(_WIN32)
+    SrStatus AllocateParametersD3D12();
+#endif
+
+    enum class Backend : uint8_t { None, Vulkan, D3D12 };
 
     std::filesystem::path applicationDataPath_;
     std::filesystem::path runtimePath_;
     ProbeReport report_;
     const plume::VulkanInterface* sessionInterface_ = nullptr;
     const plume::VulkanDevice* sessionDevice_ = nullptr;
+#if defined(_WIN32)
+    const plume::D3D12Device* sessionDeviceD3D12_ = nullptr;
+#endif
+    Backend backend_ = Backend::None;
     VkInstance sessionInstance_ = VK_NULL_HANDLE;
     // Opaque SDK-owned objects keep SDK declarations out of the public API.
     void* capabilityParameters_ = nullptr;

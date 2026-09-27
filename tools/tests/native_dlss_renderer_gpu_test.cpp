@@ -38,6 +38,8 @@ bool rejectSubmit = false;
 bool rejectWaitOnce = false;
 }
 namespace gpu::video {
+plume::RenderDevice* GetDevice() { return fixture::device; }
+plume::RenderCommandQueue* GetQueue() { return fixture::queue; }
 bool GpuWorkStopped() { return fixture::state.Stopped(); }
 void StopGpuWork(int32_t value) { fixture::state.Stop(value); }
 bool BeginGpuCommands(plume::RenderCommandList* list) {
@@ -60,7 +62,8 @@ bool WaitForGpuFence(plume::RenderCommandFence* fence) {
 }
 bool WaitForPresentGpu() { return true; } // No swapchain in this fixture.
 bool SubmitRendererBatch(const plume::RenderCommandList* const* lists, uint32_t count,
-    plume::RenderCommandFence* fence, uint64_t& serial, int32_t& result) {
+    plume::RenderCommandFence* fence, uint64_t& serial, int32_t& result, bool* executionMayBeInFlight) {
+    if (executionMayBeInFlight) *executionMayBeInFlight = false;
     auto* d = static_cast<plume::VulkanDevice*>(fixture::device);
     auto* q = static_cast<plume::VulkanCommandQueue*>(fixture::queue);
     auto* f = static_cast<plume::VulkanCommandFence*>(fence);

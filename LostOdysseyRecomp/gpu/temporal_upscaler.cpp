@@ -129,6 +129,68 @@ SrResult TemporalUpscaler::RecordIsolated(plume::VulkanCommandList& commands,
     return result;
 }
 
+#ifdef _WIN32
+upscaling::OutputSizing TemporalUpscaler::QuerySizing(const plume::D3D12Device& device, const upscaling::SizingKey& key) {
+    if (CanQueryNgxSizing(key))
+        return dlss_.QueryOutputSizing(device, key);
+    upscaling::OutputSizing unavailable{};
+    unavailable.key = key;
+    for (uint32_t i = 0; i < unavailable.modes.size(); ++i) {
+        auto& mode = unavailable.modes[i];
+        mode.state = upscaling::SizingState::Unavailable;
+        if (key.provider == upscaling::Upscaler::Fsr) {
+            if (const auto size = fsr::RecommendedRenderSize({key.outputWidth, key.outputHeight}, upscaling::FsrQuality(i))) {
+                mode.state = upscaling::SizingState::Ready;
+                mode.optimal = mode.minimum = mode.maximum = *size;
+            }
+        }
+    }
+    return unavailable;
+}
+
+SrResult TemporalUpscaler::Prepare(plume::D3D12Device& device, const SrRequest& request) {
+    SrResult result{};
+    result.requestedProvider = request.plan.requestedUpscaler;
+    if (!ValidSrRequest(request)) return result;
+    if (request.plan.requestedUpscaler == upscaling::Upscaler::Fsr) {
+        result.actualProvider = upscaling::Upscaler::Fsr;
+        result.status = FsrMetadata(request).cameraValid ? Convert(fsr_->EnsureSession(device, FsrConfig(request))) :
+            SrResultStatus::InputUnavailable;
+        return result;
+    }
+    result.actualProvider = upscaling::Upscaler::Dlss;
+    result.status = Convert(dlss_.EnsureSession(device));
+    return result;
+}
+
+SrResult TemporalUpscaler::RecordIsolated(plume::D3D12CommandList& commands,
+    const SrRequest& request, plume::D3D12Texture& output, dlss::EvaluateCapture* capture) {
+    SrResult result{};
+    result.requestedProvider = request.plan.requestedUpscaler;
+    if (!ValidSrRequest(request)) return result;
+    if (request.plan.requestedUpscaler == upscaling::Upscaler::Fsr) {
+        const auto attempt = fsr_->RecordIsolated(commands, FsrConfig(request), request.inputs,
+            FsrMetadata(request), output, capture);
+        result.actualProvider = upscaling::Upscaler::Fsr;
+        result.status = Convert(attempt.status);
+        result.rawResult = attempt.sdkResult;
+        result.rawVkResult = attempt.vkResult;
+        if (attempt.useId) result.token = {upscaling::Upscaler::Fsr, request.plan.deviceEpoch,
+            attempt.useId, request.plan.requestSignature, request.plan.geometryEpoch};
+        return result;
+    }
+    const auto attempt = dlss_.RecordIsolated(commands, DlssConfig(request), request.inputs, output, capture);
+    result.actualProvider = upscaling::Upscaler::Dlss;
+    result.status = Convert(attempt.status);
+    result.rawResult = attempt.rawNgxResult;
+    result.rawVkResult = attempt.rawVkResult;
+    if (attempt.useId) result.token = {upscaling::Upscaler::Dlss, request.plan.deviceEpoch, attempt.useId,
+        request.plan.requestSignature, request.plan.geometryEpoch};
+    return result;
+}
+
+#endif
+
 void TemporalUpscaler::OnSubmitted(SrUseToken token, uint64_t checkedSerial) {
     RouteSubmitted(token, checkedSerial, dlss_);
     if (token.provider == upscaling::Upscaler::Fsr && token.useId && checkedSerial) fsr_->OnBatchSubmitted(token.useId, checkedSerial);

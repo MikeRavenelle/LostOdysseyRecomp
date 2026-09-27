@@ -67,7 +67,7 @@ Texture2D<float> geometricInvalidity : register(t2);
 #ifdef __spirv__
 [[vk::binding(3,0)]]
 #endif
-cbuffer Parameters : register(b0) {
+cbuffer Parameters : register(b3) {
     row_major float4x4 inverseCurrent;
     row_major float4x4 previous;
     float4 currentNdc, previousRaster, jitterExtent;

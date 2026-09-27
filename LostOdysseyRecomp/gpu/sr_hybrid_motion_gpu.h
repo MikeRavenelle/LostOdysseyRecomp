@@ -3,6 +3,9 @@
 #ifdef LO_GPU_PLUME
 #include "shader/dxc_compiler.h"
 #include <plume_vulkan.h>
+#ifdef _WIN32
+#include <plume_d3d12.h>
+#endif
 #include <plume_render_interface_builders.h>
 #include <algorithm>
 #include <cstring>
@@ -34,11 +37,21 @@ class SrHybridMotionGPU {
         b.begin(); b.addTexture(0); b.addTexture(1); b.addTexture(2);
         b.addConstantBuffer(3); b.end();
     }
-    // Caller first verifies the Vulkan backend. No base RenderTexture exposes
-    // allocation metadata; validate the native image, exact subresource and layout.
+    // Validate the actual allocation and subresource for the selected backend.
     static bool ImageMatches(plume::RenderTexture* texture, plume::RenderDevice* device,
         uint32_t width, uint32_t height, plume::RenderFormat format, VkFormat nativeFormat) {
-        if (!texture) return false;
+        if (!texture || !device) return false;
+#ifdef _WIN32
+        if (device->getCapabilities().shaderFormat == plume::RenderShaderFormat::DXIL) {
+            const auto& image = *static_cast<const plume::D3D12Texture*>(texture);
+            return image.device == device && image.d3d && image.allocation &&
+                image.desc.width == width && image.desc.height == height && image.desc.format == format &&
+                image.desc.dimension == plume::RenderTextureDimension::TEXTURE_2D &&
+                image.desc.mipLevels == 1 && image.desc.arraySize == 1 &&
+                image.layout == plume::RenderTextureLayout::SHADER_READ;
+        }
+#endif
+        if (device->getCapabilities().shaderFormat != plume::RenderShaderFormat::SPIRV) return false;
         const auto& image = *static_cast<const plume::VulkanTexture*>(texture);
         return image.device == device && image.vk && image.imageView && image.allocation &&
             image.desc.width == width && image.desc.height == height && image.desc.format == format &&
@@ -52,15 +65,18 @@ class SrHybridMotionGPU {
     bool Init(plume::RenderDevice* device) {
         if (initAttempted_) return device == device_ && bool(pipeline_);
         initAttempted_ = true; device_ = device;
-        if (!device || device->getCapabilities().shaderFormat != plume::RenderShaderFormat::SPIRV) return false;
+        if (!device) return false;
+        const auto format = device->getCapabilities().shaderFormat;
+        if (format != plume::RenderShaderFormat::SPIRV && format != plume::RenderShaderFormat::DXIL) return false;
+        const auto binary = format == plume::RenderShaderFormat::SPIRV ? xenos::ShaderBinaryFormat::Spirv : xenos::ShaderBinaryFormat::Dxil;
         plume::RenderDescriptorSetBuilder set; Describe(set);
         plume::RenderPipelineLayoutBuilder b;
         b.begin(false,false); b.addDescriptorSet(set); b.end(); layout_ = b.create(device);
-        auto vs = xenos::CompileCachedHlsl(kSrHybridMotionShader,"vertex","vs_6_0",xenos::ShaderBinaryFormat::Spirv);
-        auto ps = xenos::CompileCachedHlsl(kSrHybridMotionShader,"pixel","ps_6_0",xenos::ShaderBinaryFormat::Spirv);
+        auto vs = xenos::CompileCachedHlsl(kSrHybridMotionShader,"vertex","vs_6_0",binary);
+        auto ps = xenos::CompileCachedHlsl(kSrHybridMotionShader,"pixel","ps_6_0",binary);
         if (!layout_ || !vs.ok || !ps.ok) return false;
-        vertex_ = device->createShader(vs.bytecode.data(),vs.bytecode.size(),"vertex",plume::RenderShaderFormat::SPIRV);
-        pixel_ = device->createShader(ps.bytecode.data(),ps.bytecode.size(),"pixel",plume::RenderShaderFormat::SPIRV);
+        vertex_ = device->createShader(vs.bytecode.data(),vs.bytecode.size(),"vertex",format);
+        pixel_ = device->createShader(ps.bytecode.data(),ps.bytecode.size(),"pixel",format);
         if (!vertex_ || !pixel_) return false;
         plume::RenderGraphicsPipelineDesc desc{};
         desc.pipelineLayout = layout_.get(); desc.vertexShader = vertex_.get(); desc.pixelShader = pixel_.get();
@@ -105,7 +121,7 @@ public:
         const MotionFrameView* geometry, uint64_t frame, uint64_t epoch, uint64_t allocation,
         uint32_t width, uint32_t height, double jx, double jy, bool reset, uint64_t serial) {
         resourceFailed_ = false;
-        if (!device || !commands || !serial || device->getCapabilities().shaderFormat != plume::RenderShaderFormat::SPIRV ||
+        if (!device || !commands || !serial ||
             !ImageMatches(depth,device,width,height,plume::RenderFormat::R32_FLOAT,VK_FORMAT_R32_SFLOAT)) return {};
         // A stale ready view is a contract failure, not a coverage gap.
         if (geometry && geometry->ready && !SrHybridGeometryMatches(*geometry,frame,epoch,allocation,width,height)) return {};

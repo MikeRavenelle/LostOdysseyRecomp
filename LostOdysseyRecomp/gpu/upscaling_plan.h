@@ -180,7 +180,7 @@ struct BackendDeviceSnapshot {
     bool gpuWorkStopped = false;
     bool fsrAvailable = false;
     bool Available(Upscaler provider) const {
-        return backend == backend::Backend::Vulkan && deviceReady && !gpuWorkStopped &&
+        return (backend == backend::Backend::Vulkan || backend == backend::Backend::D3D12) && deviceReady && !gpuWorkStopped &&
             (provider == Upscaler::Dlss ? dlssAvailable : provider == Upscaler::Fsr && fsrAvailable);
     }
     bool operator==(const BackendDeviceSnapshot&) const = default;

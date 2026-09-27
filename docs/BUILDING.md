@@ -36,6 +36,51 @@ Audio configuration fetches the pinned Xenia FFmpeg source via CMake FetchConten
 
 Release builds do not require a separately installed Vulkan SDK. Windows Vulkan headers, volk and VMA come from the patched plume submodule; the GPU driver supplies `vulkan-1.dll` and its ICD. The runtime requests Vulkan 1.2, buffer-device-address, geometry shaders and Win32 WSI. Use the exact paired DXC v1.8.2407 DLLs copied by CMake and tracked in [DXC provenance](../thirdparty/dxc-licenses/PROVENANCE.json); do not substitute one DLL independently. Release packaging ships the single `LostOdysseyRecomp.exe` binary; the updater and importer run from that binary.
 
+### Windows Direct3D 12 DLSS and FSR development paths
+
+The local Windows Direct3D 12 paths for DLSS SR/DLAA and FSR 3.1 are enabled
+by the normal Clang runtime build and have bounded build, fixture and Uhra
+validation; broader game coverage remains experimental. DLSS uses the local NGX SDK root:
+
+```powershell
+cmake -S . -B out/build/d3d12-upscalers -G Ninja `
+  -DLO_ENABLE_DLSS=ON -DLO_REQUIRE_DLSS=ON `
+  -DLO_DLSS_SDK_ROOT='C:\path\to\nvidia-dlss-sdk'
+```
+
+FSR D3D12 additionally requires offline DXIL inputs. Generate the pinned FSR
+shader headers and adapter conversion headers with the repository tools, then
+provide the resulting directories through `LO_FSR_DX12_SHADER_DIR` and
+`LO_FSR_DX12_ADAPTER_DIR`:
+
+```powershell
+python tools/fsr/generate_dx12_shaders.py `
+  --sdk 'C:\path\to\fidelityfx-sdk' `
+  --dxc-dir 'C:\path\to\dxc' `
+  --output 'C:\path\to\fsr-dx12-shaders'
+python tools/fsr/prepare_adapter_shaders_dx12.py `
+  --dxc 'C:\path\to\dxc\dxc.exe' `
+  --output 'C:\path\to\fsr-dx12-adapter'
+```
+
+```powershell
+cmake -S . -B out/build/d3d12-upscalers -G Ninja `
+  -DLO_ENABLE_FSR=ON -DLO_REQUIRE_FSR=ON `
+  -DLO_FSR_SDK_ROOT='C:\path\to\fidelityfx-sdk' `
+  -DLO_FSR_SHADER_DIR='C:\path\to\fsr-vulkan-shaders' `
+  -DLO_FSR_DX12_SHADER_DIR='C:\path\to\fsr-dx12-shaders' `
+  -DLO_FSR_DX12_ADAPTER_DIR='C:\path\to\fsr-dx12-adapter'
+```
+
+The checked local D3D12 evidence now includes a full Windows Clang build,
+RTX 5080 DLSS Quality/DLAA and FSR Quality/Native AA fixture readback, hybrid
+motion checks (D3D12 3527 / Vulkan 3415), and 11 DXIL/SPIR-V motion shader
+compilation checks. It does not establish broad game-scene rendering,
+performance, or player acceptance. Offline
+shader generation belongs to the build pipeline; it is not a player runtime
+step. Linux continues to use the Vulkan FSR path and does not require these
+D3D12 directories.
+
 ## Building on Linux
 
 Building the native Linux ELF works on Linux distributions (such as Ubuntu or Manjaro) or under WSL2.

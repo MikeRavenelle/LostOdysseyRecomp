@@ -500,8 +500,6 @@ namespace gpu::frame_plan
         };
         if (!wantsDlss) return finish(DlssEffectPhase::Inactive, DlssEffectReason::None, false);
         if (device.gpuWorkStopped) return finish(DlssEffectPhase::GpuStopped, DlssEffectReason::GpuWorkStopped, false);
-        if (device.backend != backend::Backend::Vulkan)
-            return finish(DlssEffectPhase::NeedsVulkanRestart, DlssEffectReason::NeedsVulkanRestart, false);
         if (!device.deviceReady || !epochMatches)
             return finish(DlssEffectPhase::TemporaryFallback, DlssEffectReason::DeviceNotReady, false);
         if (!device.dlssAvailable)
@@ -528,7 +526,6 @@ namespace gpu::frame_plan
     {
         if (displayedBackend != running.device.backend) return DlssMenuStatus::BackendChangePending;
         if (displayedUpscaler != upscaling::Upscaler::Dlss) return DlssMenuStatus::Inactive;
-        if (running.device.backend != backend::Backend::Vulkan) return DlssMenuStatus::NeedsVulkanRestart;
         if (running.device.deviceReady && !running.device.dlssAvailable) return DlssMenuStatus::DeviceUnavailable;
         if (!running.device.deviceReady) return DlssMenuStatus::TemporaryFallback;
         if (running.phase == DlssEffectPhase::Active && running.plannedRequest == upscaling::Upscaler::Dlss &&

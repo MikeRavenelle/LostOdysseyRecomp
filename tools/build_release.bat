@@ -11,6 +11,8 @@ if defined LO_ENABLE_FSR set "LO_EXTRA_CMAKE_ARGS=%LO_EXTRA_CMAKE_ARGS% -DLO_ENA
 if defined LO_REQUIRE_FSR set "LO_EXTRA_CMAKE_ARGS=%LO_EXTRA_CMAKE_ARGS% -DLO_REQUIRE_FSR=%LO_REQUIRE_FSR%"
 if defined LO_FSR_SDK_ROOT set LO_EXTRA_CMAKE_ARGS=%LO_EXTRA_CMAKE_ARGS% "-DLO_FSR_SDK_ROOT=%LO_FSR_SDK_ROOT%"
 if defined LO_FSR_SHADER_DIR set LO_EXTRA_CMAKE_ARGS=%LO_EXTRA_CMAKE_ARGS% "-DLO_FSR_SHADER_DIR=%LO_FSR_SHADER_DIR%"
+if defined LO_FSR_DX12_SHADER_DIR set LO_EXTRA_CMAKE_ARGS=%LO_EXTRA_CMAKE_ARGS% "-DLO_FSR_DX12_SHADER_DIR=%LO_FSR_DX12_SHADER_DIR%"
+if defined LO_FSR_DX12_ADAPTER_DIR set LO_EXTRA_CMAKE_ARGS=%LO_EXTRA_CMAKE_ARGS% "-DLO_FSR_DX12_ADAPTER_DIR=%LO_FSR_DX12_ADAPTER_DIR%"
 git -C tools/XenonRecomp apply --reverse --check ../patches/XenonRecomp-lostodyssey.patch >nul 2>&1 || git -C tools/XenonRecomp apply ../patches/XenonRecomp-lostodyssey.patch || exit /b 1
 git -C thirdparty/plume apply --reverse --check ../../tools/patches/plume-lostodyssey.patch >nul 2>&1 || git -C thirdparty/plume apply ../../tools/patches/plume-lostodyssey.patch || exit /b 1
 cmake -S . -B out/build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl %LO_EXTRA_CMAKE_ARGS% || exit /b 1

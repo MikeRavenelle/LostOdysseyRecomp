@@ -8,10 +8,12 @@
 #include <optional>
 #include <string>
 
-namespace plume { struct VulkanCommandList; struct VulkanDevice; struct VulkanTexture; }
+namespace plume { struct VulkanCommandList; struct VulkanDevice; struct VulkanTexture;
+    struct D3D12CommandList; struct D3D12Device; struct D3D12Texture; }
 namespace gpu::dlss { struct EvaluateCapture; }
 
 namespace gpu::fsr {
+class D3D12Backend;
 
 enum class Status : uint8_t { Ready, Unavailable, NeedsReconfigure, Failed, DeviceLost, InputUnavailable };
 
@@ -65,9 +67,13 @@ public:
     Controller& operator=(const Controller&) = delete;
 
     Status EnsureSession(plume::VulkanDevice& device, const Config& config);
+    Status EnsureSession(plume::D3D12Device& device, const Config& config);
     Attempt RecordIsolated(plume::VulkanCommandList& commands, const Config& config,
         const temporal::TemporalFrameInputs& inputs, const FrameMetadata& frame,
         plume::VulkanTexture& output, dlss::EvaluateCapture* capture = nullptr);
+    Attempt RecordIsolated(plume::D3D12CommandList& commands, const Config& config,
+        const temporal::TemporalFrameInputs& inputs, const FrameMetadata& frame,
+        plume::D3D12Texture& output, dlss::EvaluateCapture* capture = nullptr);
     void OnBatchSubmitted(uint64_t useId, uint64_t serial);
     void OnBatchDiscarded(uint64_t useId);
     void ReleaseCompletedThrough(uint64_t serial);
@@ -80,6 +86,7 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    std::unique_ptr<D3D12Backend> dx12_;
 };
 
 } // namespace gpu::fsr

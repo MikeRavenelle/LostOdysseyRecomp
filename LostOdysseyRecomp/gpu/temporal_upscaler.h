@@ -7,7 +7,7 @@
 #include <optional>
 #include <memory>
 
-namespace plume { struct VulkanInterface; struct VulkanDevice; struct VulkanCommandList; struct VulkanTexture; }
+namespace plume { struct VulkanInterface; struct VulkanDevice; struct VulkanCommandList; struct VulkanTexture; struct D3D12Device; struct D3D12CommandList; struct D3D12Texture; }
 namespace gpu::dlss { class Controller; struct EvaluateCapture; }
 namespace gpu::fsr { class Controller; }
 
@@ -89,6 +89,12 @@ public:
     SrResult Prepare(plume::VulkanDevice& device, const SrRequest& request);
     SrResult RecordIsolated(plume::VulkanCommandList& commands, const SrRequest& request,
         plume::VulkanTexture& output, dlss::EvaluateCapture* capture = nullptr);
+#ifdef _WIN32
+    upscaling::OutputSizing QuerySizing(const plume::D3D12Device& device, const upscaling::SizingKey& key);
+    SrResult Prepare(plume::D3D12Device& device, const SrRequest& request);
+    SrResult RecordIsolated(plume::D3D12CommandList& commands, const SrRequest& request,
+        plume::D3D12Texture& output, dlss::EvaluateCapture* capture = nullptr);
+#endif
     void OnSubmitted(SrUseToken token, uint64_t checkedSerial);
     void OnDiscarded(SrUseToken token);
     void ReleaseCompleted(uint64_t completedSerial);

@@ -244,7 +244,7 @@ class PackageFlatpakTest(unittest.TestCase):
                                "rm -rf /app/include /app/lib/*.a /app/lib/cmake /app/lib/pkgconfig"])
             self.assertIn("--filesystem=host", manifest["finish-args"])
             self.assertIn("--share=ipc", manifest["finish-args"])
-            self.assertEqual(flatpak.source_version(ROOT), "0.7.1")
+            self.assertEqual(flatpak.source_version(ROOT), "0.7.2")
 
     def test_only_expected_install_tree_is_exportable(self):
         with tempfile.TemporaryDirectory() as temp:

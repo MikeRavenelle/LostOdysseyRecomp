@@ -76,6 +76,9 @@
 #include <plume_render_interface.h>
 #include <plume_render_interface_builders.h>
 #include <plume_vulkan.h>
+#ifdef _WIN32
+#include <plume_d3d12.h>
+#endif
 #include "sampler_description.h"
 #include "dlss_ngx.h"
 #include "temporal_upscaler.h"
@@ -1671,9 +1674,9 @@ namespace gpu::renderer
                 queue = video::GetQueue();
                 vulkan = video::IsVulkan();
 #if defined(LO_GPU_PLUME)
-                dlssController = vulkan ? video::GetDlssController() : nullptr;
+                dlssController = video::GetDlssController();
 #if !defined(LO_RENDERER_P2_EMBEDDED_TEST)
-                temporalUpscaler = vulkan ? video::GetTemporalUpscaler() : nullptr;
+                temporalUpscaler = video::GetTemporalUpscaler();
 #endif
 #endif
                 const char* batchOverride = getenv("LO_VK_DESCRIPTOR_BATCH_LIMIT");
@@ -1718,7 +1721,7 @@ namespace gpu::renderer
                     auto& g = gpuSlots[i];
                     g.list = queue->createCommandList();
                     if (!g.list) return InitFailure("command_list.create", 0, i);
-                    if (vulkan && dlssController) {
+                    if (dlssController) {
                         g.srIsolated = queue->createCommandList();
                         g.srContinuation = queue->createCommandList();
                         if (!g.srIsolated || !g.srContinuation)
@@ -2128,7 +2131,7 @@ namespace gpu::renderer
                 scratch->guestHeight = scratch->height = std::max(1u, output.height);
                 scratch->resolutionSize = output;
                 scratch->texture = device->createTexture(RenderTextureDesc::Texture2D(scratch->width, scratch->height, 1,
-                    scratch->format, RenderTextureFlag::STORAGE));
+                    scratch->format, RenderTextureFlag::STORAGE | RenderTextureFlag::UNORDERED_ACCESS));
                 scratch->layout = RenderTextureLayout::UNKNOWN;
                 if (!scratch->texture) return nullptr;
                 return scratch;
@@ -2564,7 +2567,7 @@ namespace gpu::renderer
             bool RecordSceneCopyDlssUsing(SrController& controller, HostTexture*& color, HostTexture*& rasterTarget)
             {
                 auto& promotion = sceneCopyPromotion;
-                if (!promotion.activeMapping || !vulkan || !Gpu().srIsolated || !Gpu().srContinuation) return false;
+                if (!promotion.activeMapping || !Gpu().srIsolated || !Gpu().srContinuation) return false;
                 if (activePlan.requestedUpscaler == upscaling::Upscaler::Fsr)
                     CaptureFsrAlphaAtSceneCopy();
                 dlss::SrConfig config{};
@@ -2575,14 +2578,14 @@ namespace gpu::renderer
                 config.colorSpace = promotion.inputs.colorEncoding == temporal::ColorEncoding::Sdr ?
                     dlss::SrColorSpace::DisplayEncoded : dlss::SrColorSpace::Linear;
                 std::shared_ptr<dlss::EvaluateCapture> evidence;
-                if (activePlan.requestedUpscaler == upscaling::Upscaler::Dlss && evaluatePage && evaluatePage->frame == frame && promotion.inputs.color.texture && promotion.scratch) {
+                if (vulkan && activePlan.requestedUpscaler == upscaling::Upscaler::Dlss && evaluatePage && evaluatePage->frame == frame && promotion.inputs.color.texture && promotion.scratch) {
                     try {
                         evidence = evaluatePage->NewAttempt(*device, promotion.inputs, config,
                             *static_cast<plume::VulkanTexture*>(promotion.inputs.color.texture),
                             *static_cast<plume::VulkanTexture*>(promotion.scratch->texture.get()),
                             temporalScene.Color().ordinal, drawsThisFrame);
                     } catch (const std::exception&) { evaluatePage->captureFailed = true; }
-                } else if (activePlan.requestedUpscaler == upscaling::Upscaler::Fsr && evaluatePage &&
+                } else if (vulkan && activePlan.requestedUpscaler == upscaling::Upscaler::Fsr && evaluatePage &&
                     evaluatePage->frame == frame && temporalHistory && promotion.inputs.color.texture &&
                     promotion.inputs.depth.texture && promotion.inputs.motion.texture &&
                     promotion.inputs.motionInvalidity.texture && promotion.scratch) {
@@ -2603,7 +2606,12 @@ namespace gpu::renderer
 #if defined(LO_RENDERER_P2_EMBEDDED_TEST)
                 const bool sessionReady = controller.EnsureSession(*static_cast<plume::VulkanDevice*>(device)) == dlss::SrStatus::Executable;
 #else
-                const auto prepared = controller.Prepare(*static_cast<plume::VulkanDevice*>(device),
+                const auto prepared =
+#ifdef _WIN32
+                    !vulkan ? controller.Prepare(*static_cast<plume::D3D12Device*>(device),
+                        {activePlan, promotion.inputs, promotion.srOptions}) :
+#endif
+                    controller.Prepare(*static_cast<plume::VulkanDevice*>(device),
                     {activePlan, promotion.inputs, promotion.srOptions});
                 const auto prepareAction = FailureAction(prepared.status);
                 const bool sessionReady = prepareAction == SrFailureAction::None;
@@ -2631,12 +2639,12 @@ namespace gpu::renderer
                 // then the original guest copy (including its destination-dependent
                 // alpha blend). The composite below preserves that post-copy alpha;
                 // it never reads SR scratch alpha. A's
-                // fixture contract requires every NGX image to enter GENERAL with
-                // an ALL-stage barrier, regardless of its preceding renderer use.
+                // Vulkan fixture requires GENERAL for NGX; D3D12 inputs use
+                // shader-resource state and its output uses an unordered-access view.
                 std::vector<RenderTextureBarrier> barriers;
                 for (auto* image : {promotion.inputs.color.texture, promotion.inputs.depth.texture,
                                     promotion.inputs.motion.texture, promotion.inputs.motionInvalidity.texture})
-                    if (image) barriers.emplace_back(image, activePlan.requestedUpscaler == upscaling::Upscaler::Fsr ?
+                    if (image) barriers.emplace_back(image, (!vulkan || activePlan.requestedUpscaler == upscaling::Upscaler::Fsr) ?
                         RenderTextureLayout::SHADER_READ : RenderTextureLayout::GENERAL);
                 barriers.emplace_back(promotion.scratch->texture.get(), activePlan.requestedUpscaler == upscaling::Upscaler::Fsr ?
                     RenderTextureLayout::COPY_DEST : RenderTextureLayout::GENERAL);
@@ -2678,7 +2686,13 @@ namespace gpu::renderer
                 const bool inputUnavailable = false; // Legacy embedded NGX fixture contract.
                 Gpu().srUseId = attempt.useId;
 #else
-                auto attempt = controller.RecordIsolated(*static_cast<plume::VulkanCommandList*>(Gpu().srIsolated.get()),
+                auto attempt =
+#ifdef _WIN32
+                    !vulkan ? controller.RecordIsolated(*static_cast<plume::D3D12CommandList*>(Gpu().srIsolated.get()),
+                        {activePlan, promotion.inputs, promotion.srOptions},
+                        *static_cast<plume::D3D12Texture*>(promotion.scratch->texture.get()), evidence.get()) :
+#endif
+                    controller.RecordIsolated(*static_cast<plume::VulkanCommandList*>(Gpu().srIsolated.get()),
                     {activePlan, promotion.inputs, promotion.srOptions},
                     *static_cast<plume::VulkanTexture*>(promotion.scratch->texture.get()), evidence.get());
                 const auto recordAction = FailureAction(attempt.status);
@@ -2788,7 +2802,7 @@ namespace gpu::renderer
                 const bool compositeSnapshot = fgCompositeEnabled && fgCompositeAttemptedFrame != frame &&
                     activePlan.requestedUpscaler == upscaling::Upscaler::Dlss &&
                     activePlan.consumer == upscaling::TemporalConsumer::DlssSr;
-                if (diagnosticSnapshot || compositeSnapshot) {
+                if (vulkan && (diagnosticSnapshot || compositeSnapshot)) {
                     if (diagnosticSnapshot) fgSnapshotAttempted = true;
                     if (compositeSnapshot) fgCompositeAttemptedFrame = frame;
                     // The input is a real Vulkan texture here. Its storage
@@ -3593,11 +3607,19 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 #if defined(LO_GPU_PLUME)
                 int32_t rawVkResult = 0;
                 uint64_t submissionSerial = 0;
-                if (vulkan)
-                    submitted = video::SubmitRendererBatch(lists, listCount, fence, submissionSerial, rawVkResult);
-                else
+                bool executionMayBeInFlight = false;
+                submitted = video::SubmitRendererBatch(lists, listCount, fence, submissionSerial, rawVkResult,
+                    &executionMayBeInFlight);
+                if (!submitted && executionMayBeInFlight) {
+                    // ExecuteCommandLists has no return value. A failed subsequent
+                    // Signal does not prove these lists were discarded. Keep all
+                    // slot resources alive until shutdown establishes a drain.
+                    video::StopGpuWork(rawVkResult);
+                    return false;
+                }
+#else
+                queue->executeCommandLists(lists, listCount, nullptr, 0, nullptr, 0, fence);
 #endif
-                    queue->executeCommandLists(lists, listCount, nullptr, 0, nullptr, 0, fence);
                 if (!submitted) {
 #if defined(LO_GPU_PLUME)
                     for (const auto& capture : Gpu().fgUiUses) {
@@ -3623,7 +3645,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 #endif
                     Gpu().srUseId = {};
                     video::StopGpuWork(rawVkResult);
-                    LOG_ERROR("renderer: Vulkan batch submit failed raw_vk={}; no fallback submission issued", rawVkResult);
+                    LOG_ERROR("renderer: GPU batch submit failed native_result={}; no fallback submission issued", rawVkResult);
 #endif
                     ClearDlssSubmit(Gpu(), true);
                     return false;
@@ -3669,11 +3691,11 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 for (const auto& entry : Gpu().evaluateCaptures) {
                     auto& e = *entry;
                     e.isolatedIncluded = srBatch && e.isolatedAccepted;
-                    e.checkedSubmit = vulkan && e.isolatedIncluded && submissionSerial != 0;
+                    e.checkedSubmit = e.isolatedIncluded && submissionSerial != 0;
                     if (e.checkedSubmit) e.submissionSerial = submissionSerial;
                     else if (e.reason.empty()) e.reason = "discarded_isolated_list";
                 }
-                if (vulkan && srBatch && Gpu().dlssSubmit.pending && submissionSerial)
+                if (srBatch && Gpu().dlssSubmit.pending && submissionSerial)
                     NoteDlssSubmitted(Gpu().dlssSubmit.plan, Gpu().dlssSubmit.renderFrame, submissionSerial);
 #endif
                 ClearDlssSubmit(Gpu(), Gpu().dlssSubmit.pending &&
@@ -5794,7 +5816,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 if(sceneAAConfigFrame!=frame) {
                     sceneAAConfigFrame=frame;
                     frameSrOptions = {};
-                    if (vulkan && activePlan.requestedUpscaler == upscaling::Upscaler::Fsr) {
+                    if (activePlan.requestedUpscaler == upscaling::Upscaler::Fsr) {
                         const uint32_t percent = std::min(settings::GetConfig().fsrSharpnessPercent, 100u);
                         frameSrOptions = {percent != 0, float(percent) / 100.0f};
                     }
@@ -5819,7 +5841,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     frameStart.supportedFrame = temporalSupportedFrame;
                     frameStart.diagnosticJitter = taaDiagnosticJitter;
                     frameStart.diagnosticHistory = taaDiagnosticHistory;
-                    frameStart.motionSupportsDlss = motionOptions.Supports(upscaling::TemporalConsumer::DlssInputs);
+                    frameStart.motionSupportsDlss = motionOptions.Supports(upscaling::TemporalConsumer::DlssInputs) ||
+                        (route.sr && activePlan.frameGeneration == upscaling::FrameGeneration::Off &&
+                         temporal::SrHybridMotionEnabled());
                     const auto started = temporal::ResolveFrameStartConsumers(frameStart);
                     temporalExperiment = started.experiment;
                     temporalAllowHistory = started.allowHistory;
@@ -6600,11 +6624,11 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                     }
                                 };
                                 if (!temporalHistory->CaptureColorInputs(commandList, tex->texture.get(), temporalScene, activePlan, sample,
-                                        qualifiedEncoding, &motionView,
+                                        qualifiedEncoding, motionOptions.consume ? &motionView : nullptr,
                                         srTimeReset ? temporal::TemporalResetReason::FrameDiscontinuity : temporal::TemporalResetReason::None,
-                                        dlssSrRequested && motionOptions.enabled && motionOptions.replay && motionOptions.consume &&
-                                        temporal::SrHybridMotionEnabled() && !motionInitFailed &&
-                                        !(motionReplay && motionReplay->ResourceFailedThisFrame()))) {
+                                        // Camera/depth reconstruction is independent of optional
+                                        // object replay, including replay allocation failures.
+                                        dlssSrRequested && temporal::SrHybridMotionEnabled())) {
                                     const bool frameOnly = temporal::ClassifySrCaptureFailure(temporalHistory->LastInputCaptureFailure()) ==
                                         temporal::SrSceneInputFailure::FrameFallback;
                                     logDlssInputFailure("capture_color_inputs", frameOnly ? "frame_fallback" : "request_failure");
@@ -7083,7 +7107,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 bool scenePromotionActivated = false;
                 if (dlssSrRequested && dlssSceneCopyInputs && fullSceneCopy && !depth
 #if defined(LO_GPU_PLUME)
-                    && vulkan && dlssController
+                    && dlssController
 #else
                     && false
 #endif

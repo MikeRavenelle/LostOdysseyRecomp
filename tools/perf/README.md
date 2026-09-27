@@ -30,8 +30,13 @@ python tools/perf/analyze-city-comparison.py /path/to/run-a/drive-summary.json /
 
 ## DLSS FG game capture
 
-`run-fg-game.ps1` is the bounded foreground driver for the experimental Windows
-Vulkan DLSS SR + Streamline DLSS FG path. It copies `settings.ini`, `save`,
+`run-fg-game.ps1` is the bounded foreground driver for experimental Windows
+DLSS/FSR and Streamline FG paths. Use `-Backend D3D12|Vulkan` and
+`-Upscaler Dlss|Fsr|Off` to override the isolated run configuration; `-Quality`
+accepts values `0..3`. `-DisableObjectMotion` sets `LO_MV_REPLAY=0` for a
+camera/depth hybrid comparison and records `object_motion=false` in `run.json`.
+FG remains the experimental Windows Vulkan path. The
+driver copies `settings.ini`, `save`,
 `profile`, and `shaders` from the supplied baseline into a new output run,
 copies the executable and required DLLs, sets `LO_DLSS_FG=1` (or `0` with
 `-DisableFg`), mutes audio, uses an isolated shader cache, enters the Uhra route,
@@ -39,8 +44,14 @@ and sends bounded movement/input pulses. It stops only the process it started;
 the script records executable identity, stdout/stderr, runtime log, termination
 state, and baseline metadata preservation.
 
-The game path must be built with `LO_ENABLE_STREAMLINE_FG=ON` and a local pinned
-Streamline SDK. The runtime flag is opt-in and defaults to off. A typical paired
+The bounded D3D12 Uhra camera-only runs used `-DisableObjectMotion` for DLSS
+Quality, FSR Quality, DLAA and FSR Native AA; each ran 65 seconds with exit 0,
+no forced stop and preserved the baseline. These runs cover the camera/depth
+hybrid fallback and do not establish broader scene coverage or player
+acceptance.
+
+The FG game path must be built with `LO_ENABLE_STREAMLINE_FG=ON` and a local
+pinned Streamline SDK. The runtime flag is opt-in and defaults to off. A typical paired
 capture is:
 
 ```powershell
