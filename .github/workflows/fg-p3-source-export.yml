@@ -1,0 +1,33 @@
+name: FG P3 asset-free integration workspace
+on:
+  push:
+    branches: [feature/fg-p0-p3-foundation]
+    paths: [.github/workflows/fg-p3-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned public fixture dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 thirdparty/plume tools/XenosRecomp tools/XenonRecomp thirdparty/unordered_dense
+          git -C thirdparty/plume apply ../../tools/patches/plume-lostodyssey.patch
+          git -C thirdparty/plume submodule update --init --depth 1 contrib/volk contrib/Vulkan-Headers contrib/VulkanMemoryAllocator
+          git -C tools/XenosRecomp submodule update --init --recursive --depth 1
+          git -C tools/XenonRecomp submodule update --init --depth 1 thirdparty/tomlplusplus
+          mkdir -p /tmp/fg-p3-export
+          git rev-parse HEAD > /tmp/fg-p3-export/source-commit.txt
+          git submodule status --recursive > /tmp/fg-p3-export/submodules.txt
+          tar --exclude=.git --exclude=out --exclude=.cache -czf /tmp/fg-p3-export/asset-free-source.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fg-p3-asset-free-source
+          path: /tmp/fg-p3-export/
+          retention-days: 3
