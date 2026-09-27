@@ -9,11 +9,15 @@ param(
     [switch]$WindowCycle,
     [ValidateSet('Baseline','D3D12','Vulkan')][string]$Backend = 'Baseline',
     [ValidateSet('Baseline','Off','Dlss','Fsr')][string]$Upscaler = 'Baseline',
-    [ValidateRange(-1,3)][int]$Quality = -1
+    [ValidateRange(-1,3)][int]$Quality = -1,
+    [ValidateSet('Diagnostic','Lightweight')][string]$CaptureMode = 'Diagnostic',
+    [switch]$Background,
+    [switch]$CaptureScreenshots
 )
-# ACTIVE GAME DRIVER: isolated profile/save/config copies, foreground gameplay,
+# ACTIVE GAME DRIVER: isolated profile/save/config copies, optional hidden gameplay,
 # muted audio, bounded automated input, then closes only its own game process.
 $ErrorActionPreference = 'Stop'
+if ($Background -and $WindowCycle) { throw 'WindowCycle requires foreground interaction.' }
 $build = (Resolve-Path -LiteralPath $BuildDirectory).Path
 $baseline = (Resolve-Path -LiteralPath $BaselineDirectory).Path
 $game = (Resolve-Path -LiteralPath $GameDirectory).Path
@@ -60,6 +64,7 @@ $start.WorkingDirectory = $run
 $start.UseShellExecute = $false
 $start.RedirectStandardOutput = $true
 $start.RedirectStandardError = $true
+$start.CreateNoWindow = [bool]$Background
 foreach ($name in @($start.Environment.Keys)) {
     if ($name.StartsWith('LO_') -or $name.StartsWith('VK_LAYER') -or $name.StartsWith('VK_INSTANCE_LAYERS')) {
         $start.Environment.Remove($name) | Out-Null
@@ -67,22 +72,30 @@ foreach ($name in @($start.Environment.Keys)) {
 }
 $start.ArgumentList.Add('--game'); $start.ArgumentList.Add($game); $start.ArgumentList.Add('--quiet-kernel')
 $start.Environment['LO_DLSS_FG'] = $(if ($DisableFg) { '0' } else { '1' })
-$start.Environment['LO_MV_LOG'] = '1'
+if ($CaptureMode -eq 'Diagnostic') { $start.Environment['LO_MV_LOG'] = '1' }
 if ($DisableObjectMotion) { $start.Environment['LO_MV_REPLAY'] = '0' }
 $start.Environment['LO_AUDIO_MUTE'] = '1'
+if ($Background) { $start.Environment['LO_BACKGROUND'] = '1' }
+if ($CaptureScreenshots) {
+    $start.Environment['LO_SCREENSHOT_REQUEST'] = Join-Path $run 'screenshot-request.txt'
+    $start.Environment['LO_SCREENSHOT_PATH'] = Join-Path $run 'scene.ppm'
+}
 $start.Environment['LO_LOG_FILE'] = Join-Path $run 'runtime.log'
 $start.Environment['LO_SHADER_CACHE_DIR'] = Join-Path $run 'shader-cache'
 $start.Environment['LO_AUTO_BUTTONS'] = 's@120,a@240,a@360,a@480,a@700,a@900'
 $start.Environment['LO_AUTO_PULSE'] = '6'
-$start.Environment['LO_RENDER_TIMING'] = '1'
+if ($CaptureMode -eq 'Diagnostic') { $start.Environment['LO_RENDER_TIMING'] = '1' }
 $start.Environment['LO_AUTO_STICK'] = '0,18000,1600,1900'
 $process = [Diagnostics.Process]::Start($start)
 $stdout = $process.StandardOutput.ReadToEndAsync()
 $stderr = $process.StandardError.ReadToEndAsync()
 $manifest = [ordered]@{ pid=$process.Id; started=[DateTime]::UtcNow.ToString('o'); exe=$exe;
     sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; fg=!$DisableFg;
-    foreground=$true; muted=$true; object_motion=!$DisableObjectMotion;
-    backend=$Backend; upscaler=$Upscaler; quality=$Quality; game=$game; baseline=$baseline; seconds=$Seconds }
+    foreground=!$Background; muted=$true; object_motion=!$DisableObjectMotion;
+    screenshot_requests=[bool]$CaptureScreenshots;
+    backend=$Backend; upscaler=$Upscaler; quality=$Quality; capture_mode=$CaptureMode;
+    render_timing=($CaptureMode -eq 'Diagnostic'); mv_log=($CaptureMode -eq 'Diagnostic');
+    game=$game; baseline=$baseline; seconds=$Seconds }
 $manifest | ConvertTo-Json | Set-Content (Join-Path $run 'run.json')
 # A hidden parent terminal can leave the SDL window hidden even when
 # AppActivate reports success. Restore the actual game HWND before sampling.
@@ -90,6 +103,19 @@ Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class FgGameWindow {
+    public delegate bool EnumWindowCallback(IntPtr window, IntPtr state);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowCallback callback, IntPtr state);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
+    public static bool CloseOwnedWindows(uint pid) {
+        bool posted = false;
+        EnumWindows((window, state) => {
+            uint owner; GetWindowThreadProcessId(window, out owner);
+            if (owner == pid) posted |= PostMessage(window, 0x0010, IntPtr.Zero, IntPtr.Zero);
+            return true;
+        }, IntPtr.Zero);
+        return posted;
+    }
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -97,7 +123,7 @@ public static class FgGameWindow {
 }
 '@
 $focusTimer = [Diagnostics.Stopwatch]::StartNew()
-while (!$process.HasExited -and $focusTimer.Elapsed.TotalSeconds -lt 10) {
+while (!$Background -and !$process.HasExited -and $focusTimer.Elapsed.TotalSeconds -lt 10) {
     $process.Refresh()
     if ($process.MainWindowHandle -ne [IntPtr]::Zero) {
         [void][FgGameWindow]::ShowWindow($process.MainWindowHandle, 9)
@@ -159,7 +185,7 @@ public static class FgGameKeys {
 }
 $closed = $false
 if (!$finished) {
-    $closed = $process.CloseMainWindow()
+    $closed = if ($Background) { [FgGameWindow]::CloseOwnedWindows([uint32]$process.Id) } else { $process.CloseMainWindow() }
     $finished = $process.WaitForExit(10000)
     if (!$finished) { $process.Kill(); $process.WaitForExit() }
 }

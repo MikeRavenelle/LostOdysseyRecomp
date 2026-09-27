@@ -46,6 +46,10 @@ template<class Sampler, class DescriptorSet, uint32_t Capacity = 64>
 class Palette {
     static_assert(Capacity > 1 && Capacity <= 64);
 public:
+    struct Diagnostics {
+        uint64_t hits = 0, misses = 0, replacements = 0;
+        uint64_t candidates = 0, published = 0;
+    };
     struct Version {
         uint32_t level = 0;
         std::map<uint64_t, uint32_t> slots;
@@ -60,6 +64,8 @@ public:
     using Lease = std::shared_ptr<const Version>;
     Lease Current() const { return current_; }
     uint32_t Level() const { return current_ ? current_->level : 0; }
+    void EnableDiagnostics(bool enabled) { diagnosticsEnabled_ = enabled; }
+    Diagnostics TakeDiagnostics() { auto result = diagnostics_; diagnostics_ = {}; return result; }
     void BeginDraw() { used_ = 1; } // slot zero is an immutable dummy fallback
 
     template<class MakeSampler, class MakeSet>
@@ -94,9 +100,11 @@ public:
     std::optional<uint32_t> Select(uint64_t recipe, MakeSampler&& makeSampler, MakeSet&& makeSet) {
         if (!current_) return std::nullopt;
         if (const auto found = current_->slots.find(recipe); found != current_->slots.end()) {
+            if (diagnosticsEnabled_) ++diagnostics_.hits;
             used_ |= uint64_t(1) << found->second;
             return found->second;
         }
+        if (diagnosticsEnabled_) ++diagnostics_.misses;
         // Reuse a slot NOT referenced by the current draw. Older draws keep
         // their own immutable versions; new scenes cannot exhaust a global
         // palette forever or silently sample an unrelated slot zero.
@@ -108,11 +116,13 @@ public:
         auto sampler = makeSampler(EffectiveKey(recipe, current_->level));
         if (!sampler) return std::nullopt;
         auto next = std::make_shared<Version>(*current_);
-        if (next->slots.size() == Capacity) next->slots.erase(next->recipes[index]);
+        const bool replacing = next->slots.size() == Capacity;
+        if (replacing) next->slots.erase(next->recipes[index]);
         next->recipes[index] = recipe;
         next->samplers[index] = std::move(sampler);
         next->slots.emplace(recipe, index);
         if (!Publish(std::move(next), makeSet)) return std::nullopt;
+        if (diagnosticsEnabled_ && replacing) ++diagnostics_.replacements;
         used_ |= uint64_t(1) << index;
         return index;
     }
@@ -120,14 +130,18 @@ private:
     template<class MakeSet>
     bool Publish(std::shared_ptr<Version> next, MakeSet&& makeSet) {
         // Do not write the old table, even on a failed candidate construction.
+        if (diagnosticsEnabled_) ++diagnostics_.candidates;
         auto descriptors = makeSet(next->samplers);
         if (!descriptors) return false;
         next->descriptors = std::move(descriptors);
         current_ = std::move(next);
+        if (diagnosticsEnabled_) ++diagnostics_.published;
         return true;
     }
     Lease current_;
     uint64_t used_ = 1;
+    bool diagnosticsEnabled_ = false;
+    Diagnostics diagnostics_{};
 };
 
 // GPU-slot ownership: clearing one completed slot must not release a version

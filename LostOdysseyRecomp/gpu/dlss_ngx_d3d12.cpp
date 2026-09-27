@@ -68,6 +68,8 @@ bool LostDevice(HRESULT result) {
 HRESULT BeginIsolated(plume::D3D12CommandList& list) {
     if (list.open || !list.d3d || !list.commandAllocator || !list.queue ||
         list.queue->type!=plume::RenderCommandListType::DIRECT) return E_INVALIDARG;
+    list.invalidateCachedNativeState();
+    list.resetRootBindingStats();
     HRESULT result=list.commandAllocator->Reset();
     if (SUCCEEDED(result)) result=list.d3d->Reset(list.commandAllocator,nullptr);
     if (SUCCEEDED(result)) list.open=true;
@@ -78,14 +80,7 @@ HRESULT EndIsolated(plume::D3D12CommandList& list) {
     list.resetSamplePositions();
     const HRESULT result=list.d3d->Close();
     list.open=false;
-    list.targetFramebuffer=nullptr;
-    list.targetFramebufferSamplePositionsSet=false;
-    list.activeComputePipelineLayout=nullptr;
-    list.activeGraphicsPipelineLayout=nullptr;
-    list.activeGraphicsPipeline=nullptr;
-    list.activeTopology=D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
-    list.activeStencilRef=0;
-    list.descriptorHeapsSet=false;
+    list.invalidateCachedNativeState();
     return result;
 }
 #endif

@@ -1047,7 +1047,8 @@ namespace gpu::renderer
             // Both diagnostic consumers need CPU segments; ordinary play does not.
             const bool cpuTimingEnabled = getenv("LO_GPU_STATS") != nullptr || render_timing::Enabled();
             uint32_t descriptorBatchLimit = 500;
-            uint32_t descriptorSplits = 0, uploadSplits = 0, arenaSplits = 0;
+            uint32_t descriptorSplits = 0, textureSetSplits = 0, samplerVersionSplits = 0;
+            uint32_t uploadSplits = 0, arenaSplits = 0;
             struct ScopedTimer
             {
                 double& acc;
@@ -1063,6 +1064,9 @@ namespace gpu::renderer
             size_t texBytes = 0;
             void ResetTimers() { tDraw = tShader = tPipeline = tTexture = tResolve = tFlush = 0; tConst = tSets = tVertex = tBind = tIndex = tRecord = 0; tRt = tTaa = tNestedFlush = 0; tShaderLookup = tPipelineLookup = tSceneCopy = 0; nShader = nPipeline = nTexture = nResolve = 0; texBytes = 0; }
             SamplerPalette samplerState;
+            uint64_t samplerTableAttempts = 0, samplerTableCreates = 0;
+            uint64_t samplerViewWrites = 0, samplerWrites = 0, samplerBoundVersions = 0;
+            double samplerTableMs = 0;
             std::shared_ptr<RenderSampler> defaultSampler;
             uint32_t maximumAnisotropy = 0;
             uint32_t lastAnisotropyRequest = UINT32_MAX;
@@ -1808,6 +1812,7 @@ namespace gpu::renderer
                 if (!defaultSampler) return InitFailure("default_sampler.create");
                 for (uint32_t i = 0; i < kSamplerPalette; i++)
                     (vulkan?staticSamplerSet.get():staticSet0.get())->setSampler(samplerDescriptorBase + i, defaultSampler.get());
+                samplerState.EnableDiagnostics(render_timing::Enabled());
                 if (!samplerState.Initialize([&](uint64_t key) { return CreateGuestSampler(key); },
                     [&](const auto& handles) { return CreateSamplerTable(handles); }))
                     return InitFailure("guest_sampler_table.create");
@@ -2752,7 +2757,11 @@ namespace gpu::renderer
                     Gpu().srUseId = {};
                 }
                 Gpu().srIsolatedAccepted = accepted;
-                commandList = Gpu().srContinuation.get(); if (!video::BeginGpuCommands(commandList)) return false; listOpen = true; Gpu().srContinuationOpen = true;
+                commandList = Gpu().srContinuation.get(); if (!video::BeginGpuCommands(commandList)) return false;
+#if defined(LO_GPU_PLUME) && defined(_WIN32)
+                if (!vulkan) static_cast<plume::D3D12CommandList*>(commandList)->captureRootBindingStats = render_timing::Enabled();
+#endif
+                listOpen = true; Gpu().srContinuationOpen = true;
                 // Continuation owns the normal post-NGX layouts. It may record the
                 // RGB-only combine only after a successfully closed isolated list.
                 std::vector<RenderTextureBarrier> continuationBarriers;
@@ -3517,6 +3526,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         timingQueries = Gpu().timingQueries.get();
                     }
                     if (!video::BeginGpuCommands(commandList)) return false;
+#if defined(LO_GPU_PLUME) && defined(_WIN32)
+                    if (!vulkan) static_cast<plume::D3D12CommandList*>(commandList)->captureRootBindingStats = render_timing::Enabled();
+#endif
                     Gpu().drawProbe.Begin(device, commandList, frame);
                     if (timingQueries) {
                         commandList->resetQueryPool(timingQueries, 0, 2);
@@ -3700,6 +3712,42 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 #endif
                 ClearDlssSubmit(Gpu(), Gpu().dlssSubmit.pending &&
                     !(dlssFrame.submitted && dlssFrame.submittedFrame == Gpu().dlssSubmit.renderFrame));
+#if defined(LO_GPU_PLUME) && defined(_WIN32)
+                if (!vulkan && render_timing::Enabled()) {
+                    plume::D3D12CommandList::RootBindingStats totals{};
+                    const auto add = [](auto& dst, const auto& src) {
+                        dst.requests += src.requests;
+                        dst.nativeCalls += src.nativeCalls;
+                        dst.skipped += src.skipped;
+                    };
+                    const auto collect = [&](RenderCommandList* source) {
+                        const auto part = static_cast<plume::D3D12CommandList*>(source)->getRootBindingStats();
+                        add(totals.graphicsViewTables, part.graphicsViewTables);
+                        add(totals.graphicsSamplerTables, part.graphicsSamplerTables);
+                        add(totals.computeViewTables, part.computeViewTables);
+                        add(totals.computeSamplerTables, part.computeSamplerTables);
+                        add(totals.graphicsSignatures, part.graphicsSignatures);
+                        add(totals.computeSignatures, part.computeSignatures);
+                    };
+                    collect(Gpu().list.get());
+                    if (Gpu().srContinuationOpen) collect(Gpu().srContinuation.get());
+                    LOG_INFO("render root bindings frame={} slot={} serial={} "
+                        "graphics_view_requests={} graphics_view_calls={} graphics_view_skipped={} "
+                        "graphics_sampler_requests={} graphics_sampler_calls={} graphics_sampler_skipped={} "
+                        "compute_view_requests={} compute_view_calls={} compute_view_skipped={} "
+                        "compute_sampler_requests={} compute_sampler_calls={} compute_sampler_skipped={} "
+                        "graphics_signature_requests={} graphics_signature_calls={} graphics_signature_skipped={} "
+                        "compute_signature_requests={} compute_signature_calls={} compute_signature_skipped={} "
+                        "scope=submitted_renderer_lists_excludes_ngx_isolated",
+                        frame, gpuSlot, submissionSerial,
+                        totals.graphicsViewTables.requests, totals.graphicsViewTables.nativeCalls, totals.graphicsViewTables.skipped,
+                        totals.graphicsSamplerTables.requests, totals.graphicsSamplerTables.nativeCalls, totals.graphicsSamplerTables.skipped,
+                        totals.computeViewTables.requests, totals.computeViewTables.nativeCalls, totals.computeViewTables.skipped,
+                        totals.computeSamplerTables.requests, totals.computeSamplerTables.nativeCalls, totals.computeSamplerTables.skipped,
+                        totals.graphicsSignatures.requests, totals.graphicsSignatures.nativeCalls, totals.graphicsSignatures.skipped,
+                        totals.computeSignatures.requests, totals.computeSignatures.nativeCalls, totals.computeSignatures.skipped);
+                }
+#endif
                 Gpu().submitted = true;
                 gpuSlot = (gpuSlot + 1) % kGpuSlots;
                 BindGpuSlot();
@@ -3815,6 +3863,8 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             std::shared_ptr<RenderDescriptorSet> CreateSamplerTable(
                 const std::array<std::shared_ptr<RenderSampler>, kSamplerPalette>& handles)
             {
+                ScopedTimer timer{samplerTableMs, render_timing::Enabled()};
+                if (render_timing::Enabled()) ++samplerTableAttempts;
                 // Never mutate a bound descriptor set. D3D12 set zero contains
                 // both the sampler table and the immutable vertex-buffer bank.
                 auto set = setBuilders[vulkan ? 4 : 0].create(device);
@@ -3823,6 +3873,11 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     set->setBuffer(vfetchDescriptorBase + i, vertexArena.get(), gpu::render_arena::kVertexArenaSize);
                 for (uint32_t i = 0; i < kSamplerPalette; ++i)
                     set->setSampler(samplerDescriptorBase + i, handles[i].get());
+                if (render_timing::Enabled()) {
+                    ++samplerTableCreates;
+                    samplerViewWrites += vulkan ? 0 : kVertexFetchSlots;
+                    samplerWrites += kSamplerPalette;
+                }
                 return set;
             }
 
@@ -5572,9 +5627,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 // All resource recycling happens BETWEEN draws: a Flush inside one
                 // would rewind the descriptor pools and upload ring that this draw's
                 // already-recorded state points at.
-                const bool poolsFull = Gpu().setPoolUsed[1] >= descriptorBatchLimit ||
-                    Gpu().setPoolUsed[2] >= descriptorBatchLimit || Gpu().setPoolUsed[3] >= descriptorBatchLimit ||
-                    Gpu().samplerVersions.size() >= kSamplerVersionsPerBatch;
+                const bool textureSetsFull = Gpu().setPoolUsed[1] >= descriptorBatchLimit ||
+                    Gpu().setPoolUsed[2] >= descriptorBatchLimit || Gpu().setPoolUsed[3] >= descriptorBatchLimit;
+                const bool samplerVersionsFull = Gpu().samplerVersions.size() >= kSamplerVersionsPerBatch;
+                const bool poolsFull = textureSetsFull || samplerVersionsFull;
                 const bool ringLow = Gpu().uploadOffset + kUploadHeadroom > kUploadRingSize;
                 const auto wrap = gpu::render_arena::EvaluateWrap(
                     gpuSlot, Gpu().arenaOffset, gpuSlots[(gpuSlot + 1) % kGpuSlots].arenaOffset);
@@ -5584,6 +5640,8 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     render_batch::CpuTimer<> nestedFlushTimer(cpuTimingEnabled);
                     if (cpuTimingEnabled) {
                         descriptorSplits += poolsFull;
+                        textureSetSplits += textureSetsFull;
+                        samplerVersionSplits += samplerVersionsFull;
                         uploadSplits += ringLow;
                         arenaSplits += arenaLow;
                     }
@@ -7247,7 +7305,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 }
                 const auto samplerVersion = samplerState.Current();
                 if (!samplerVersion) return;
+                const auto versionsBefore = Gpu().samplerVersions.size();
                 sampling::Retain(Gpu().samplerVersions, samplerVersion);
+                if (render_timing::Enabled()) samplerBoundVersions += Gpu().samplerVersions.size() - versionsBefore;
                 set0 = vulkan ? staticSet0.get() : samplerVersion->descriptors.get();
                 RenderDescriptorSet* set4 = vulkan ? samplerVersion->descriptors.get() : nullptr;
                 commandList->setPipeline(pipeline);
@@ -10026,9 +10086,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             if (g_renderer->cpuTimingEnabled) {
                 auto& r = *g_renderer;
                 if (render_timing::Enabled() || r.frame % 60 == 0)
-                    LOG_INFO("render batch capacity frame={} limit={} descriptor_splits={} upload_splits={} arena_splits={} descriptor_hits={} descriptor_misses={} scope=current_frame_capacity_checks reasons_may_overlap=true",
-                        r.frame, r.descriptorBatchLimit, r.descriptorSplits, r.uploadSplits, r.arenaSplits, r.descriptorHits, r.descriptorMisses);
-                r.descriptorSplits = r.uploadSplits = r.arenaSplits = 0;
+                    LOG_INFO("render batch capacity frame={} limit={} descriptor_splits={} texture_set_splits={} sampler_version_splits={} upload_splits={} arena_splits={} descriptor_hits={} descriptor_misses={} scope=current_frame_capacity_checks reasons_may_overlap=true",
+                        r.frame, r.descriptorBatchLimit, r.descriptorSplits, r.textureSetSplits, r.samplerVersionSplits,
+                        r.uploadSplits, r.arenaSplits, r.descriptorHits, r.descriptorMisses);
+                r.descriptorSplits = r.textureSetSplits = r.samplerVersionSplits = r.uploadSplits = r.arenaSplits = 0;
                 r.descriptorHits = r.descriptorMisses = 0;
             }
             if (render_timing::Enabled() || g_renderer->frame % 60 == 0)
@@ -10041,6 +10102,14 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             }
             if (render_timing::Enabled()) {
                 Renderer& r = *g_renderer;
+                const auto palette = r.samplerState.TakeDiagnostics();
+                LOG_INFO("render palette frame={} hits={} misses={} replacements={} candidates={} published={} bound_versions={} table_attempts={} table_creates={} table_ms={:.6f} view_writes={} sampler_writes={} scope=current_frame_palette_operations_init_may_appear_in_first_frame",
+                    r.frame, palette.hits, palette.misses, palette.replacements, palette.candidates, palette.published,
+                    r.samplerBoundVersions, r.samplerTableAttempts, r.samplerTableCreates, r.samplerTableMs,
+                    r.samplerViewWrites, r.samplerWrites);
+                r.samplerBoundVersions = r.samplerTableAttempts = r.samplerTableCreates = 0;
+                r.samplerViewWrites = r.samplerWrites = 0;
+                r.samplerTableMs = 0;
                 const render_timing::CpuSegments cpu{r.drawsThisFrame, r.nShader, r.nPipeline, r.nTexture, r.nResolve,
                     r.tDraw, r.tConst, r.tSets, r.tVertex, r.tBind, r.tIndex, r.tRecord,
                     r.tShader, r.tPipeline, r.tTexture, r.tResolve, r.tFlush,

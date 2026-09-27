@@ -30,11 +30,24 @@ python tools/perf/analyze-city-comparison.py /path/to/run-a/drive-summary.json /
 
 ## DLSS FG game capture
 
-`run-fg-game.ps1` is the bounded foreground driver for experimental Windows
+`run-fg-game.ps1` is the bounded game driver for experimental Windows
 DLSS/FSR and Streamline FG paths. Use `-Backend D3D12|Vulkan` and
 `-Upscaler Dlss|Fsr|Off` to override the isolated run configuration; `-Quality`
 accepts values `0..3`. `-DisableObjectMotion` sets `LO_MV_REPLAY=0` for a
 camera/depth hybrid comparison and records `object_motion=false` in `run.json`.
+`-CaptureMode Diagnostic|Lightweight` selects the capture overhead; `Diagnostic`
+is the default and enables `LO_RENDER_TIMING` plus motion logging, while
+`Lightweight` leaves those diagnostics disabled for lower-overhead runs. The
+mode is recorded in `run.json` as `capture_mode`, `render_timing`, and `mv_log`.
+PowerShell syntax parsing passed. The parser check itself does not launch the
+game; bounded runtime evidence is documented separately below.
+`-Background` runs the bounded driver without foreground interaction and uses
+the owned window close path; it cannot be combined with `-WindowCycle`.
+`-CaptureScreenshots` asks the game to write serialised internal screenshots
+through `screenshot-request.txt` in the run directory. Both options are
+recorded in `run.json` and are intended for isolated evidence runs.
+The request file must receive a new nonzero serial and count, for example
+`1 1`, before the game writes a requested screenshot.
 FG remains the experimental Windows Vulkan path. The
 driver copies `settings.ini`, `save`,
 `profile`, and `shaders` from the supplied baseline into a new output run,
@@ -84,3 +97,16 @@ a pass requires runtime mode, resize, and recovery logs. These are bounded runti
 they do not establish
 physical 120 FPS, complete image-quality coverage, provider acceptance, or UI
 separation. The UI separation path remains unavailable.
+
+Issue #70 local substitute-scene evidence is retained under
+`out/issue70-runtime/`. D3D12 and Vulkan each used 2560×1440 DLAA, 16× AF, a
+120 FPS cap, FG disabled, object motion enabled, muted audio, background
+handling, and isolated state for about 120 seconds; both exited 0 through the
+owned-window close path and preserved the baseline. `scene_3195.png` and
+`scene_2507.png` show the Uhra city/plaza route. The 75–115 second Diagnostic
+window recorded 2,400 D3D12 accepted-present intervals with mean/p95/p99
+`16.666/17.977/18.792 ms`, and 2,323 Vulkan intervals with
+`17.219/20.471/23.045 ms`. Both recorded zero AF misses/table creates and zero
+sampler-version splits, with two arena splits. This is a single substitute
+scene window without before/after A/B or a final Lightweight rerun; it does not
+establish an FPS gain or stable 60 FPS.

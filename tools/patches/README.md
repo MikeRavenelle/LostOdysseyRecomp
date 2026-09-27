@@ -29,3 +29,5 @@ Vulkan 改动应从受跟踪的 plume 子模块状态和上方补丁应用；它
 2026-09-07 核验：保留原有 hunk 后，Plume 补丁从固定 HEAD `d890ac8` 应用到隔离 index／object store，所得 Git 规范化 blob 与当前源一致；XenonRecomp 补丁从固定 HEAD `ddd128b` 的同类核验也通过。现有工作树的 CRLF／混合换行导致部分原始文件字节不同，未重写换行或宣称 raw 字节一致；真实子模块源文件、index 和 HEAD 均未改变。证据：`out/v0.4.0-followup/patch-sync-validation.json`。
 
 2026-09-14 精简核验：针对固定 HEAD `d890ac899e505fb30040e037a4037cdeca68f033`，Plume 补丁由 78,500 行／3,398,001 字节缩减为 1,849 行／92,265 字节，保留 6 个真实改动文件（含新增 `plume_log.h`），并消除 3 个同 SHA 的 `-dirty` gitlink 伪差异。正向 `apply --cached --check` 通过，应用后 tree 与旧补丁应用 tree 一致（133 个普通文件规范化内容及 gitlink 均核对）；当前 Plume 工作树 `reverse --check` 通过。未改动源码，未进行构建或游戏运行验证；该补丁尚未发布。
+
+2026-09-27 Issue #70 状态缓存改动：Plume 的 D3D12 graphics/compute root signature 与 root descriptor table 去重，以及 descriptor heap、原生 root signature 变化、native `Reset`/`Close` 和外部状态失效路径已同步到本项目补丁。runtime、NGX/FSR D3D12 fixture、AF measurement fixture 和 root binding fixture 验证通过；独立临时 index 从固定干净 Plume 基线应用补丁并与本地依赖修改一致。未进行补丁发布或目标游戏性能验收。

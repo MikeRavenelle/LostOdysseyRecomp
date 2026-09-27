@@ -63,6 +63,8 @@ prefix = r'''
 #include <stdexcept>
 #define LOG_WARNING(...) ((void)0)
 #define LOG_INFO(...) ((void)0)
+namespace render_timing { bool Enabled() { return true; } }
+struct ScopedTimer { ScopedTimer(double&, bool) {} };
 namespace sampling = gpu::sampling;
 namespace gpu::render_arena { constexpr unsigned kVertexArenaSize = 4096; }
 namespace settings {
@@ -109,6 +111,9 @@ struct Renderer {
     std::unique_ptr<int> vertexArena = std::make_unique<int>(1);
     unsigned vfetchDescriptorBase = 0, samplerDescriptorBase = 96;
     SamplerPalette samplerState;
+    uint64_t samplerTableAttempts = 0, samplerTableCreates = 0;
+    uint64_t samplerViewWrites = 0, samplerWrites = 0;
+    double samplerTableMs = 0;
     std::shared_ptr<RenderSampler> defaultSampler;
     uint32_t maximumAnisotropy = 16, lastAnisotropyRequest = UINT32_MAX, frame = 0;
     uint64_t anisotropyConfigFrame = ~0ull, samplerFailureFrame = ~0ull;
@@ -128,6 +133,8 @@ void Test(bool vulkan) {
     const auto initial = r.samplerState.Current();
     Check(initial->descriptors->buffers == (vulkan ? 0u : 96u), "D3D12 vertices / Vulkan separate bank");
     Check(initial->descriptors->writes == 64, "complete table");
+    Check(r.samplerTableCreates == 1 && r.samplerViewWrites == (vulkan ? 0u : 96u) &&
+        r.samplerWrites == 64, "initial table writes accounted");
     r.RefreshAnisotropicFiltering();
     r.samplerState.BeginDraw();
     const auto slot = r.GetSamplerIndex(0x15,true); Check(bool(slot), "material selection");
@@ -139,6 +146,8 @@ void Test(bool vulkan) {
         Check(r.GetSamplerIndex(0x15,true) == slot, "hot cache");
     }
     Check(settings::reads == 1 && r.device->creations == createCount && r.device->sets == setCount, "no per-texture lock or allocation");
+    Check(r.samplerTableCreates == 2 && r.samplerTableAttempts == 2,
+        "steady-state palette lookup creates no table");
     settings::config.anisotropicFiltering = 16;
     r.RefreshAnisotropicFiltering(); Check(r.samplerState.Level() == 0, "coherent frame snapshot");
     ++r.frame; r.RefreshAnisotropicFiltering(); Check(r.samplerState.Level() == 16, "live next frame");

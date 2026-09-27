@@ -67,6 +67,29 @@ For runtime investigation, start with `LO_IO_DIAGNOSTICS=1`, then manually call 
 
 ## Render batch policy and descriptor cache
 
+## Issue #70 native binding and scaler fixtures
+
+The current Issue #70 change adds DX12 native root binding de-duplication and
+cache invalidation at descriptor heaps, native root signature changes, native
+`Reset`/`Close`, and external-state boundaries. Runtime plus
+`LoNativeDlssD3D12ExecutionTest` built with
+exit 0. The no-window NGX fixture ran with Quality 853×480→1280×720 and DLAA
+1280×720→1280×720, with readback `3400,3800,3000,3c00`. The D3D12 FSR fixture
+built and ran with NativeAA 64×64→64×64 and Quality 64×64→96×96; both reported
+center `102,51,25,191`. See `out/issue70-validation/` for the retained logs.
+The `LoD3D12RootBindingTest` built and ran with exit 0, covering repeated
+bindings, view-slot changes, same handles at different root indices,
+graphics/compute switching, A→B→A signatures, external heap switch and
+recovery, external signature rewrite, reset, independent continuation, and
+descriptor address reuse. `D3D12GetDebugInterface` was unavailable, so the
+debug layer was not verified; the fixture records and closes command lists
+without draw/dispatch/readback or injected isolated failure.
+
+The anisotropic-filtering measurement fixture in `out/issue70-af-measurement`
+passed 2/2, including 93,237 AF palette checks and the synthetic renderer
+fixture; the `run-fg-game.ps1` PowerShell AST parse also passed. These checks do not establish
+target-game output, DX12/Vulkan frame-time parity, or Issue #70 resolution.
+
 ## v0.5.9 Vulkan selectors
 
 The Vulkan depth-clear and binding-cache checks are selected targets for the

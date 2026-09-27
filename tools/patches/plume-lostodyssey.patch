@@ -1,5 +1,5 @@
 diff --git a/plume_d3d12.cpp b/plume_d3d12.cpp
-index 2cdcf18..39a4f6e 100644
+index 2cdcf18..388fd7f 100644
 --- a/plume_d3d12.cpp
 +++ b/plume_d3d12.cpp
 @@ -6,6 +6,7 @@
@@ -155,7 +155,66 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
  
-@@ -2287,7 +2298,19 @@ namespace plume {
+@@ -1878,6 +1889,8 @@ namespace plume {
+     void D3D12CommandList::begin() {
+         assert(!open);
+ 
++        invalidateCachedNativeState();
++        resetRootBindingStats();
+         commandAllocator->Reset();
+         d3d->Reset(commandAllocator, nullptr);
+         open = true;
+@@ -1891,14 +1904,7 @@ namespace plume {
+ 
+         d3d->Close();
+         open = false;
+-        targetFramebuffer = nullptr;
+-        targetFramebufferSamplePositionsSet = false;
+-        activeComputePipelineLayout = nullptr;
+-        activeGraphicsPipelineLayout = nullptr;
+-        activeGraphicsPipeline = nullptr;
+-        activeTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+-        activeStencilRef = 0;
+-        descriptorHeapsSet = false;
++        invalidateCachedNativeState();
+     }
+     
+     void D3D12CommandList::barriers(RenderBarrierStages stages, const RenderBufferBarrier *bufferBarriers, uint32_t bufferBarriersCount, const RenderTextureBarrier *textureBarriers, uint32_t textureBarriersCount) {
+@@ -2065,7 +2071,15 @@ namespace plume {
+         assert(pipelineLayout != nullptr);
+ 
+         const D3D12PipelineLayout *interfacePipelineLayout = static_cast<const D3D12PipelineLayout *>(pipelineLayout);
+-        d3d->SetComputeRootSignature(interfacePipelineLayout->rootSignature);
++        if (captureRootBindingStats) rootBindingStats.computeSignatures.requests++;
++        if (!computeRootSignatureValid || activeComputeRootSignature != interfacePipelineLayout->rootSignature) {
++            d3d->SetComputeRootSignature(interfacePipelineLayout->rootSignature);
++            activeComputeRootSignature = interfacePipelineLayout->rootSignature;
++            computeRootSignatureValid = true;
++            computeRootTables.clear();
++            if (captureRootBindingStats) rootBindingStats.computeSignatures.nativeCalls++;
++        }
++        else if (captureRootBindingStats) rootBindingStats.computeSignatures.skipped++;
+         activeComputePipelineLayout = interfacePipelineLayout;
+     }
+ 
+@@ -2091,7 +2105,15 @@ namespace plume {
+         assert(pipelineLayout != nullptr);
+ 
+         const D3D12PipelineLayout *interfacePipelineLayout = static_cast<const D3D12PipelineLayout *>(pipelineLayout);
+-        d3d->SetGraphicsRootSignature(interfacePipelineLayout->rootSignature);
++        if (captureRootBindingStats) rootBindingStats.graphicsSignatures.requests++;
++        if (!graphicsRootSignatureValid || activeGraphicsRootSignature != interfacePipelineLayout->rootSignature) {
++            d3d->SetGraphicsRootSignature(interfacePipelineLayout->rootSignature);
++            activeGraphicsRootSignature = interfacePipelineLayout->rootSignature;
++            graphicsRootSignatureValid = true;
++            graphicsRootTables.clear();
++            if (captureRootBindingStats) rootBindingStats.graphicsSignatures.nativeCalls++;
++        }
++        else if (captureRootBindingStats) rootBindingStats.graphicsSignatures.skipped++;
+         activeGraphicsPipelineLayout = interfacePipelineLayout;
+     }
+ 
+@@ -2287,7 +2309,19 @@ namespace plume {
          if (clearStencil) {
              clearFlags |= D3D12_CLEAR_FLAG_STENCIL;
          }
@@ -176,7 +235,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      void D3D12CommandList::copyBufferRegion(RenderBufferReference dstBuffer, RenderBufferReference srcBuffer, uint64_t size) {
-@@ -2312,9 +2335,14 @@ namespace plume {
+@@ -2312,9 +2346,14 @@ namespace plume {
  
          const D3D12_TEXTURE_COPY_LOCATION copyDstLocation = toD3D12(dstLocation);
          const D3D12_TEXTURE_COPY_LOCATION copySrcLocation = toD3D12(srcLocation);
@@ -193,7 +252,78 @@ index 2cdcf18..39a4f6e 100644
      }
  
      void D3D12CommandList::copyBuffer(const RenderBuffer *dstBuffer, const RenderBuffer *srcBuffer) {
-@@ -2587,11 +2615,15 @@ namespace plume {
+@@ -2441,11 +2480,43 @@ namespace plume {
+             ID3D12DescriptorHeap *descriptorHeaps[] = { queue->device->viewHeapAllocator->heap, queue->device->samplerHeapAllocator->heap };
+             d3d->SetDescriptorHeaps(std::size(descriptorHeaps), descriptorHeaps);
+             descriptorHeapsSet = true;
++            invalidateRootTables();
+         }
+     }
+ 
+     void D3D12CommandList::notifyDescriptorHeapWasChangedExternally() {
+         descriptorHeapsSet = false;
++        invalidateRootTables();
++    }
++
++    void D3D12CommandList::invalidateRootTables() {
++        graphicsRootTables.clear();
++        computeRootTables.clear();
++    }
++
++    void D3D12CommandList::invalidateCachedNativeState() {
++        targetFramebuffer = nullptr;
++        targetFramebufferSamplePositionsSet = false;
++        activeComputePipelineLayout = nullptr;
++        activeGraphicsPipelineLayout = nullptr;
++        activeGraphicsPipeline = nullptr;
++        activeGraphicsRootSignature = nullptr;
++        activeComputeRootSignature = nullptr;
++        graphicsRootSignatureValid = false;
++        computeRootSignatureValid = false;
++        activeTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
++        activeStencilRef = UINT32_MAX;
++        activeSamplePositions = false;
++        descriptorHeapsSet = false;
++        invalidateRootTables();
++    }
++
++    D3D12CommandList::RootBindingStats D3D12CommandList::getRootBindingStats() const {
++        return rootBindingStats;
++    }
++
++    void D3D12CommandList::resetRootBindingStats() {
++        rootBindingStats = {};
+     }
+ 
+     void D3D12CommandList::checkTopology() {
+@@ -2529,13 +2600,26 @@ namespace plume {
+             return;
+         }
+ 
++        checkDescriptorHeaps();
+         const D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = heapAllocator->getGPUHandleAt(heapAllocation.offset);
++        auto &rootTables = setCompute ? computeRootTables : graphicsRootTables;
++        RootBindingCount &count = setCompute ?
++            (heapAllocator == queue->device->viewHeapAllocator.get() ? rootBindingStats.computeViewTables : rootBindingStats.computeSamplerTables) :
++            (heapAllocator == queue->device->viewHeapAllocator.get() ? rootBindingStats.graphicsViewTables : rootBindingStats.graphicsSamplerTables);
++        if (captureRootBindingStats) count.requests++;
++        if (rootIndex < rootTables.size() && rootTables[rootIndex].valid && rootTables[rootIndex].handle == gpuHandle.ptr) {
++            if (captureRootBindingStats) count.skipped++;
++            return;
++        }
+         if (setCompute) {
+             d3d->SetComputeRootDescriptorTable(rootIndex, gpuHandle);
+         }
+         else {
+             d3d->SetGraphicsRootDescriptorTable(rootIndex, gpuHandle);
+         }
++        if (rootIndex >= rootTables.size()) rootTables.resize(rootIndex + 1);
++        rootTables[rootIndex] = { gpuHandle.ptr, true };
++        if (captureRootBindingStats) count.nativeCalls++;
+     }
+ 
+     void D3D12CommandList::setRootDescriptor(const D3D12PipelineLayout* activePipelineLayout, RenderBufferReference bufferReference, uint32_t rootDescriptorIndex, bool setCompute) {
+@@ -2587,11 +2671,15 @@ namespace plume {
  
          HRESULT res = device->d3d->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&d3d));
          if (FAILED(res)) {
@@ -210,7 +340,7 @@ index 2cdcf18..39a4f6e 100644
          fenceValue = 1;
      }
  
-@@ -2614,7 +2646,7 @@ namespace plume {
+@@ -2614,7 +2702,7 @@ namespace plume {
  
          HRESULT res = device->d3d->CreateFence(1, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&d3d));
          if (FAILED(res)) {
@@ -219,7 +349,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
  
-@@ -2657,7 +2689,7 @@ namespace plume {
+@@ -2657,7 +2745,7 @@ namespace plume {
  
          HRESULT res = device->d3d->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&d3d));
          if (FAILED(res)) {
@@ -228,7 +358,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
      }
-@@ -2669,11 +2701,15 @@ namespace plume {
+@@ -2669,11 +2757,15 @@ namespace plume {
      }
  
      std::unique_ptr<RenderCommandList> D3D12CommandQueue::createCommandList() {
@@ -246,7 +376,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      void D3D12CommandQueue::executeCommandLists(const RenderCommandList **commandLists, uint32_t commandListCount, RenderCommandSemaphore **waitSemaphores, uint32_t waitSemaphoreCount, RenderCommandSemaphore **signalSemaphores, uint32_t signalSemaphoreCount, RenderCommandFence *signalFence) {
-@@ -2762,7 +2798,10 @@ namespace plume {
+@@ -2762,7 +2854,10 @@ namespace plume {
  
          HRESULT res = device->allocator->CreateResource(&allocationDesc, &resourceDesc, resourceStates, nullptr, &allocation, IID_PPV_ARGS(&d3d));
          if (FAILED(res)) {
@@ -258,7 +388,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
      }
-@@ -2782,7 +2821,15 @@ namespace plume {
+@@ -2782,7 +2877,15 @@ namespace plume {
          }
  
          void *outputData = nullptr;
@@ -275,7 +405,7 @@ index 2cdcf18..39a4f6e 100644
          return outputData;
      }
  
-@@ -2878,7 +2925,11 @@ namespace plume {
+@@ -2878,7 +2981,11 @@ namespace plume {
  
          HRESULT res = device->allocator->CreateResource(&allocationDesc, &resourceDesc, resourceStates, (desc.optimizedClearValue != nullptr) ? &optimizedClearValue : nullptr, &allocation, IID_PPV_ARGS(&d3d));
          if (FAILED(res)) {
@@ -288,7 +418,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
      }
-@@ -2941,7 +2992,7 @@ namespace plume {
+@@ -2941,7 +3048,7 @@ namespace plume {
  
          HRESULT res = device->allocator->CreatePool(&poolDesc, &d3d);
          if (FAILED(res)) {
@@ -297,7 +427,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
      }
-@@ -2957,7 +3008,9 @@ namespace plume {
+@@ -2957,7 +3064,9 @@ namespace plume {
      }
  
      std::unique_ptr<RenderTexture> D3D12Pool::createTexture(const RenderTextureDesc &desc) {
@@ -308,7 +438,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      // D3D12Shader
-@@ -3054,7 +3107,11 @@ namespace plume {
+@@ -3054,7 +3163,11 @@ namespace plume {
          psoDesc.pRootSignature = rootSignature->rootSignature;
          psoDesc.CS.pShaderBytecode = computeShader->d3d.data();
          psoDesc.CS.BytecodeLength = computeShader->d3d.size();
@@ -321,7 +451,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      D3D12ComputePipeline::~D3D12ComputePipeline() {
-@@ -3075,6 +3132,7 @@ namespace plume {
+@@ -3075,6 +3188,7 @@ namespace plume {
      // D3D12GraphicsPipeline
  
      D3D12GraphicsPipeline::D3D12GraphicsPipeline(D3D12Device *device, const RenderGraphicsPipelineDesc &desc) : D3D12Pipeline(device, Type::Graphics) {
@@ -329,7 +459,7 @@ index 2cdcf18..39a4f6e 100644
          assert(desc.pipelineLayout != nullptr);
  
          topology = toD3D12(desc.primitiveTopology);
-@@ -3199,7 +3257,14 @@ namespace plume {
+@@ -3199,7 +3313,14 @@ namespace plume {
  
          psoDesc.InputLayout = { inputElements.data(), UINT(inputElements.size()) };
  
@@ -345,7 +475,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      D3D12GraphicsPipeline::~D3D12GraphicsPipeline() {
-@@ -3393,21 +3458,21 @@ namespace plume {
+@@ -3393,21 +3514,21 @@ namespace plume {
              const D3D12RaytracingPipeline *previousRaytracingPipeline = static_cast<const D3D12RaytracingPipeline *>(previousPipeline);
              HRESULT res = device->d3d->AddToStateObject(&pipelineDesc, previousRaytracingPipeline->stateObject, IID_PPV_ARGS(&stateObject));
              if (FAILED(res)) {
@@ -370,7 +500,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
  
-@@ -3621,13 +3686,14 @@ namespace plume {
+@@ -3621,13 +3742,14 @@ namespace plume {
          ID3DBlob *errorBlob;
          HRESULT res = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &signatureBlob, &errorBlob);
          if (FAILED(res)) {
@@ -387,7 +517,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
      }
-@@ -3673,18 +3739,16 @@ namespace plume {
+@@ -3673,18 +3795,16 @@ namespace plume {
              const D3D_SHADER_MODEL supportedShaderModels[] = { D3D_SHADER_MODEL_6_0 };
  #       endif
              D3D12_FEATURE_DATA_SHADER_MODEL dataShaderModel = {};
@@ -413,7 +543,7 @@ index 2cdcf18..39a4f6e 100644
              }
  
              // Determine if the device supports sample locations.
-@@ -3754,6 +3818,7 @@ namespace plume {
+@@ -3754,6 +3874,7 @@ namespace plume {
                  adapter = adapterOption;
                  d3d = deviceOption;
                  shaderModel = dataShaderModel.HighestShaderModel;
@@ -421,7 +551,7 @@ index 2cdcf18..39a4f6e 100644
                  capabilities.geometryShader = true;
                  capabilities.raytracing = rtSupportOption;
                  capabilities.raytracingStateUpdate = rtStateUpdateSupportOption;
-@@ -3790,7 +3855,7 @@ namespace plume {
+@@ -3790,7 +3911,7 @@ namespace plume {
          }
  
          if (d3d == nullptr) {
@@ -430,7 +560,7 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
  
-@@ -3806,7 +3871,7 @@ namespace plume {
+@@ -3806,7 +3927,7 @@ namespace plume {
  
          res = D3D12MA::CreateAllocator(&allocatorDesc, &allocator);
          if (FAILED(res)) {
@@ -439,7 +569,7 @@ index 2cdcf18..39a4f6e 100644
              release();
              return;
          }
-@@ -3881,7 +3946,7 @@ namespace plume {
+@@ -3881,7 +4002,7 @@ namespace plume {
          std::unique_ptr<D3D12CommandQueue> timestampCommandQueue = std::make_unique<D3D12CommandQueue>(this, RenderCommandListType::DIRECT);
          res = timestampCommandQueue->d3d->GetTimestampFrequency(&timestampFrequency);
          if (FAILED(res)) {
@@ -448,7 +578,7 @@ index 2cdcf18..39a4f6e 100644
          }
      }
  
-@@ -3894,7 +3959,10 @@ namespace plume {
+@@ -3894,7 +4015,10 @@ namespace plume {
      }
  
      std::unique_ptr<RenderDescriptorSet> D3D12Device::createDescriptorSet(const RenderDescriptorSetDesc &desc) {
@@ -460,7 +590,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      std::unique_ptr<RenderShader> D3D12Device::createShader(const void *data, uint64_t size, const char *entryPointName, RenderShaderFormat format) {
-@@ -3906,11 +3974,15 @@ namespace plume {
+@@ -3906,11 +4030,15 @@ namespace plume {
      }
  
      std::unique_ptr<RenderPipeline> D3D12Device::createComputePipeline(const RenderComputePipelineDesc &desc) {
@@ -478,7 +608,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      std::unique_ptr<RenderPipeline> D3D12Device::createRaytracingPipeline(const RenderRaytracingPipelineDesc &desc, const RenderPipeline *previousPipeline) {
-@@ -3918,20 +3990,28 @@ namespace plume {
+@@ -3918,20 +4046,28 @@ namespace plume {
      }
  
      std::unique_ptr<RenderCommandQueue> D3D12Device::createCommandQueue(RenderCommandListType type) {
@@ -511,7 +641,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      std::unique_ptr<RenderAccelerationStructure> D3D12Device::createAccelerationStructure(const RenderAccelerationStructureDesc &desc) {
-@@ -3943,15 +4023,21 @@ namespace plume {
+@@ -3943,15 +4079,21 @@ namespace plume {
      }
  
      std::unique_ptr<RenderPipelineLayout> D3D12Device::createPipelineLayout(const RenderPipelineLayoutDesc &desc) {
@@ -536,7 +666,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      std::unique_ptr<RenderFramebuffer> D3D12Device::createFramebuffer(const RenderFramebufferDesc &desc) {
-@@ -4161,7 +4247,9 @@ namespace plume {
+@@ -4161,7 +4303,9 @@ namespace plume {
      }
  
      bool D3D12Device::isValid() const {
@@ -547,7 +677,7 @@ index 2cdcf18..39a4f6e 100644
      }
  
      bool D3D12Device::beginCapture() {
-@@ -4195,7 +4283,7 @@ namespace plume {
+@@ -4195,7 +4339,7 @@ namespace plume {
  
          HRESULT res = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&dxgiFactory));
          if (FAILED(res)) {
@@ -556,6 +686,196 @@ index 2cdcf18..39a4f6e 100644
              return;
          }
  
+diff --git a/plume_d3d12.h b/plume_d3d12.h
+index 4827452..669f568 100644
+--- a/plume_d3d12.h
++++ b/plume_d3d12.h
+@@ -166,6 +166,24 @@ namespace plume {
+     };
+ 
+     struct D3D12CommandList : RenderCommandList {
++        struct RootBindingCount {
++            uint64_t requests = 0;
++            uint64_t nativeCalls = 0;
++            uint64_t skipped = 0;
++        };
++        struct RootBindingStats {
++            RootBindingCount graphicsViewTables;
++            RootBindingCount graphicsSamplerTables;
++            RootBindingCount computeViewTables;
++            RootBindingCount computeSamplerTables;
++            RootBindingCount graphicsSignatures;
++            RootBindingCount computeSignatures;
++        };
++        struct RootTableBinding {
++            uint64_t handle = 0;
++            bool valid = false;
++        };
++
+         ID3D12GraphicsCommandList *d3d = nullptr;
+         ID3D12GraphicsCommandList1 *d3dV1 = nullptr;
+         ID3D12GraphicsCommandList4 *d3dV4 = nullptr;
+@@ -181,6 +199,14 @@ namespace plume {
+         const D3D12PipelineLayout *activeGraphicsPipelineLayout = nullptr;
+         const D3D12GraphicsPipeline *activeGraphicsPipeline = nullptr;
+         bool descriptorHeapsSet = false;
++        ID3D12RootSignature *activeGraphicsRootSignature = nullptr;
++        ID3D12RootSignature *activeComputeRootSignature = nullptr;
++        bool graphicsRootSignatureValid = false;
++        bool computeRootSignatureValid = false;
++        std::vector<RootTableBinding> graphicsRootTables;
++        std::vector<RootTableBinding> computeRootTables;
++        bool captureRootBindingStats = false;
++        RootBindingStats rootBindingStats;
+         D3D12_PRIMITIVE_TOPOLOGY activeTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+         uint32_t activeStencilRef = 0;
+         bool activeSamplePositions = false;
+@@ -226,6 +252,11 @@ namespace plume {
+         void writeTimestamp(const RenderQueryPool *queryPool, uint32_t queryIndex) override;
+         void checkDescriptorHeaps();
+         void notifyDescriptorHeapWasChangedExternally();
++        // Call around native command-list operations whose Plume state is not tracked.
++        void invalidateCachedNativeState();
++        RootBindingStats getRootBindingStats() const;
++        void resetRootBindingStats();
++        void invalidateRootTables();
+         void checkTopology();
+         void checkStencilRef();
+         void checkFramebufferSamplePositions();
+diff --git a/plume_log.h b/plume_log.h
+new file mode 100644
+index 0000000..2f83160
+--- /dev/null
++++ b/plume_log.h
+@@ -0,0 +1,128 @@
++// Lightweight backend error reporting; independent of the host application's logger.
++#pragma once
++
++#include <atomic>
++#include <cstdarg>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <limits>
++
++namespace plume {
++    enum class LogSeverity { Error, Warning };
++#ifdef None
++#pragma push_macro("None")
++#undef None
++#define PLUME_RESTORE_NONE
++#endif
++    enum class LogErrorDomain { None, HResult, VkResult, Win32, SDL };
++#ifdef PLUME_RESTORE_NONE
++#pragma pop_macro("None")
++#undef PLUME_RESTORE_NONE
++#endif
++
++    struct LogRecord {
++        LogSeverity severity;
++        const char *backend;
++        const char *api;
++        LogErrorDomain domain;
++        uint32_t rawCode; // Original 32 bits, including negative HRESULT/VkResult values.
++        const char *detail;
++        uint32_t occurrence; // Per failure call site; gaps indicate suppressed repeats.
++    };
++
++    // Delivery is synchronous. Record strings are borrowed for this call only.
++    // Register before backend creation; callback code must outlive backend threads.
++    // A callback owns delivery completely, including its own last-resort sink.
++    using LogCallback = void (*)(const LogRecord &);
++
++    namespace log_detail {
++        inline std::atomic<LogCallback> callback{nullptr};
++        inline thread_local bool delivering = false;
++    }
++
++    inline void SetLogCallback(LogCallback callback) noexcept {
++        log_detail::callback.store(callback, std::memory_order_release);
++    }
++
++    inline const char *LogErrorDomainName(LogErrorDomain domain) noexcept {
++        switch (domain) {
++        case LogErrorDomain::HResult: return "HRESULT";
++        case LogErrorDomain::VkResult: return "VkResult";
++        case LogErrorDomain::Win32: return "Win32";
++        case LogErrorDomain::SDL: return "SDL";
++        default: return "none";
++        }
++    }
++
++    // The first eight failures and subsequent powers of two retain evidence while
++    // bounding repeated per-frame failures to logarithmic output. Only failures
++    // touch this counter; successful graphics operations do no logging work.
++    struct LogSite {
++        std::atomic<uint32_t> count{0};
++
++        uint32_t Next() noexcept {
++            uint32_t current = count.load(std::memory_order_relaxed);
++            while (current != (std::numeric_limits<uint32_t>::max)()) {
++                if (count.compare_exchange_weak(current, current + 1, std::memory_order_relaxed)) {
++                    const uint32_t next = current + 1;
++                    return (next <= 8 || (next & (next - 1)) == 0) ? next : 0;
++                }
++            }
++            return 0;
++        }
++    };
++
++    inline void LogMessage(LogSite &site, LogSeverity severity, const char *backend,
++        const char *api, LogErrorDomain domain, uint32_t rawCode, const char *format, ...) noexcept {
++        // Do not recursively invoke either the host logger or stderr, including
++        // when a callback changes the registration before reporting another error.
++        if (log_detail::delivering) return;
++        const uint32_t occurrence = site.Next();
++        if (occurrence == 0) return;
++
++        char detail[1024] = {};
++        va_list args;
++        va_start(args, format);
++        const int length = std::vsnprintf(detail, sizeof(detail), format ? format : "", args);
++        va_end(args);
++        if (length < 0) {
++            std::snprintf(detail, sizeof(detail), "%s", "diagnostic formatting failed");
++        }
++        else if (static_cast<size_t>(length) >= sizeof(detail)) {
++            constexpr char suffix[] = " [truncated]";
++            std::memcpy(detail + sizeof(detail) - sizeof(suffix), suffix, sizeof(suffix));
++        }
++        // Keep each event a single record even when a driver provides newlines.
++        for (char *c = detail; *c; ++c) {
++            if (*c == '\r' || *c == '\n') *c = ' ';
++        }
++
++        const LogRecord record{severity, backend ? backend : "unknown", api ? api : "unknown",
++            domain, rawCode, detail, occurrence};
++        const LogCallback callback = log_detail::callback.load(std::memory_order_acquire);
++        log_detail::delivering = true;
++        if (callback) {
++            try { callback(record); }
++            catch (...) { /* A diagnostic callback must not change API failure behavior. */ }
++        }
++        else {
++            std::fprintf(stderr, "plume: severity=%s backend=%s api=%s domain=%s code=0x%08X occurrence=%u %s\n",
++                severity == LogSeverity::Error ? "error" : "warning", record.backend, record.api,
++                LogErrorDomainName(domain), static_cast<unsigned>(rawCode), static_cast<unsigned>(occurrence), detail);
++        }
++        log_detail::delivering = false;
++    }
++}
++
++#define PLUME_LOG_ERROR(backend, api, domain, code, ...) do { \
++    static ::plume::LogSite plumeErrorSite; \
++    ::plume::LogMessage(plumeErrorSite, ::plume::LogSeverity::Error, backend, api, domain, \
++        static_cast<uint32_t>(code), __VA_ARGS__); \
++} while (0)
++
++#define PLUME_LOG_WARNING(backend, api, domain, code, ...) do { \
++    static ::plume::LogSite plumeWarningSite; \
++    ::plume::LogMessage(plumeWarningSite, ::plume::LogSeverity::Warning, backend, api, domain, \
++        static_cast<uint32_t>(code), __VA_ARGS__); \
++} while (0)
 diff --git a/plume_render_interface.h b/plume_render_interface.h
 index 2048557..25e1318 100644
 --- a/plume_render_interface.h
@@ -2073,137 +2393,3 @@ index 0a1edbe..f065217 100644
 +    std::unique_ptr<RenderInterface> CreateVulkanInterface(const VulkanExtensionHooks &extensionHooks);
 +#   endif
  };
-diff --git a/plume_log.h b/plume_log.h
-new file mode 100644
-index 0000000..2f83160
---- /dev/null
-+++ b/plume_log.h
-@@ -0,0 +1,128 @@
-+// Lightweight backend error reporting; independent of the host application's logger.
-+#pragma once
-+
-+#include <atomic>
-+#include <cstdarg>
-+#include <cstdint>
-+#include <cstdio>
-+#include <cstring>
-+#include <limits>
-+
-+namespace plume {
-+    enum class LogSeverity { Error, Warning };
-+#ifdef None
-+#pragma push_macro("None")
-+#undef None
-+#define PLUME_RESTORE_NONE
-+#endif
-+    enum class LogErrorDomain { None, HResult, VkResult, Win32, SDL };
-+#ifdef PLUME_RESTORE_NONE
-+#pragma pop_macro("None")
-+#undef PLUME_RESTORE_NONE
-+#endif
-+
-+    struct LogRecord {
-+        LogSeverity severity;
-+        const char *backend;
-+        const char *api;
-+        LogErrorDomain domain;
-+        uint32_t rawCode; // Original 32 bits, including negative HRESULT/VkResult values.
-+        const char *detail;
-+        uint32_t occurrence; // Per failure call site; gaps indicate suppressed repeats.
-+    };
-+
-+    // Delivery is synchronous. Record strings are borrowed for this call only.
-+    // Register before backend creation; callback code must outlive backend threads.
-+    // A callback owns delivery completely, including its own last-resort sink.
-+    using LogCallback = void (*)(const LogRecord &);
-+
-+    namespace log_detail {
-+        inline std::atomic<LogCallback> callback{nullptr};
-+        inline thread_local bool delivering = false;
-+    }
-+
-+    inline void SetLogCallback(LogCallback callback) noexcept {
-+        log_detail::callback.store(callback, std::memory_order_release);
-+    }
-+
-+    inline const char *LogErrorDomainName(LogErrorDomain domain) noexcept {
-+        switch (domain) {
-+        case LogErrorDomain::HResult: return "HRESULT";
-+        case LogErrorDomain::VkResult: return "VkResult";
-+        case LogErrorDomain::Win32: return "Win32";
-+        case LogErrorDomain::SDL: return "SDL";
-+        default: return "none";
-+        }
-+    }
-+
-+    // The first eight failures and subsequent powers of two retain evidence while
-+    // bounding repeated per-frame failures to logarithmic output. Only failures
-+    // touch this counter; successful graphics operations do no logging work.
-+    struct LogSite {
-+        std::atomic<uint32_t> count{0};
-+
-+        uint32_t Next() noexcept {
-+            uint32_t current = count.load(std::memory_order_relaxed);
-+            while (current != (std::numeric_limits<uint32_t>::max)()) {
-+                if (count.compare_exchange_weak(current, current + 1, std::memory_order_relaxed)) {
-+                    const uint32_t next = current + 1;
-+                    return (next <= 8 || (next & (next - 1)) == 0) ? next : 0;
-+                }
-+            }
-+            return 0;
-+        }
-+    };
-+
-+    inline void LogMessage(LogSite &site, LogSeverity severity, const char *backend,
-+        const char *api, LogErrorDomain domain, uint32_t rawCode, const char *format, ...) noexcept {
-+        // Do not recursively invoke either the host logger or stderr, including
-+        // when a callback changes the registration before reporting another error.
-+        if (log_detail::delivering) return;
-+        const uint32_t occurrence = site.Next();
-+        if (occurrence == 0) return;
-+
-+        char detail[1024] = {};
-+        va_list args;
-+        va_start(args, format);
-+        const int length = std::vsnprintf(detail, sizeof(detail), format ? format : "", args);
-+        va_end(args);
-+        if (length < 0) {
-+            std::snprintf(detail, sizeof(detail), "%s", "diagnostic formatting failed");
-+        }
-+        else if (static_cast<size_t>(length) >= sizeof(detail)) {
-+            constexpr char suffix[] = " [truncated]";
-+            std::memcpy(detail + sizeof(detail) - sizeof(suffix), suffix, sizeof(suffix));
-+        }
-+        // Keep each event a single record even when a driver provides newlines.
-+        for (char *c = detail; *c; ++c) {
-+            if (*c == '\r' || *c == '\n') *c = ' ';
-+        }
-+
-+        const LogRecord record{severity, backend ? backend : "unknown", api ? api : "unknown",
-+            domain, rawCode, detail, occurrence};
-+        const LogCallback callback = log_detail::callback.load(std::memory_order_acquire);
-+        log_detail::delivering = true;
-+        if (callback) {
-+            try { callback(record); }
-+            catch (...) { /* A diagnostic callback must not change API failure behavior. */ }
-+        }
-+        else {
-+            std::fprintf(stderr, "plume: severity=%s backend=%s api=%s domain=%s code=0x%08X occurrence=%u %s\n",
-+                severity == LogSeverity::Error ? "error" : "warning", record.backend, record.api,
-+                LogErrorDomainName(domain), static_cast<unsigned>(rawCode), static_cast<unsigned>(occurrence), detail);
-+        }
-+        log_detail::delivering = false;
-+    }
-+}
-+
-+#define PLUME_LOG_ERROR(backend, api, domain, code, ...) do { \
-+    static ::plume::LogSite plumeErrorSite; \
-+    ::plume::LogMessage(plumeErrorSite, ::plume::LogSeverity::Error, backend, api, domain, \
-+        static_cast<uint32_t>(code), __VA_ARGS__); \
-+} while (0)
-+
-+#define PLUME_LOG_WARNING(backend, api, domain, code, ...) do { \
-+    static ::plume::LogSite plumeWarningSite; \
-+    ::plume::LogMessage(plumeWarningSite, ::plume::LogSeverity::Warning, backend, api, domain, \
-+        static_cast<uint32_t>(code), __VA_ARGS__); \
-+} while (0)

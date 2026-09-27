@@ -33,14 +33,14 @@ Windows 在 Direct3D 12 与 Vulkan 上提供实验性的 DLSS/FSR 超分，Linux
 
 ## 路线图
 
-**v0.7.2** 发布版本承接 v0.7.1 的游戏内光盘与 DLC 重新导入、官方 Linux Flatpak 独立打包，以及 v0.7.0 的性能优化、PlayStation 手柄按键提示、v1 图像 Mod API 和原生 DLSS/DLAA 与 FSR 超分辨率。新增有界的 Windows D3D12 DLSS/FSR 超分、DLAA 尺寸恢复，以及原生物体运动不可用时的相机／深度 hybrid motion；更广场景与玩家验收仍待完成。已规划至 **v0.8.0** 的路线图目标包括 DLSS 插帧（保留 Windows Vulkan 下固定 2× DLSS FG，并纳入 D3D12 DLSS FG）、动态多帧生成、独立 FSR 插帧、原生独立 120 FPS 候选评估（`LO_EXPERIMENTAL_120=1`）、移除既有 PM4 数据包转换层、Linux AArch64、macOS AArch64（Apple Silicon）以及实验性 Android 支持。实验性插帧仍受构建开关控制且默认关闭，不是 v0.7.2 已启用功能；开发顺序见[路线图](docs/ROADMAP.zh-CN.md)。
+**v0.7.3** 发布版本承接 v0.7.2 的 DLAA 尺寸修正与 Windows D3D12 超分工作，新增 DX12 原生 root signature 与 descriptor table 去重及生命周期失效，并提供按需 render timing 与 Diagnostic/Lightweight 采集模式。验证边界保持明确：Issue #70 的 Uhra 替代场景未进行优化前后 A/B、全游戏性能研究或玩家验收。已规划至 **v0.8.0** 的路线图目标包括 DLSS 插帧（保留 Windows Vulkan 下固定 2× DLSS FG，并纳入 D3D12 DLSS FG）、动态多帧生成、独立 FSR 插帧、原生独立 120 FPS 候选评估（`LO_EXPERIMENTAL_120=1`）、移除既有 PM4 数据包转换层、Linux AArch64、macOS AArch64（Apple Silicon）以及实验性 Android 支持。实验性插帧仍受构建开关控制且默认关闭，不是 v0.7.3 已启用功能；开发顺序见[路线图](docs/ROADMAP.zh-CN.md)。
 
 历史版本发布说明与详细变更记录见[更新日志](CHANGELOG.md)。
 
 ## 开始游戏
 
 ### Windows
-1. 从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** v0.7.2 Windows 发布包（`LostOdysseyRecomp-windows-x64-v0.7.2.zip`），放在可写入的文件夹中。
+1. 从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** v0.7.3 Windows 发布包（`LostOdysseyRecomp-windows-x64-v0.7.3.zip`），放在可写入的文件夹中。
 2. **运行 `LostOdysseyRecomp.exe` 并按提示导入游戏文件**。支持已提取文件夹、`default.xex`、XDVDFS ISO 或 GOD 容器。
 3. **选择语言和图形设置**，设置与着色器预编译完成后继续进入游戏。
 
@@ -49,12 +49,12 @@ Windows 在 Direct3D 12 与 Vulkan 上提供实验性的 DLSS/FSR 超分，Linux
   ```bash
   flatpak --system install flathub org.freedesktop.Platform//26.08
   ```
-  从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载 v0.7.2 独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.2.flatpak`）并执行安装：
+  从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载 v0.7.3 独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.3.flatpak`）并执行安装：
   ```bash
-  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.2.flatpak
+  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.3.flatpak
   flatpak run io.github.freefrank.LostOdysseyRecomp
   ```
-- **AppImage**：下载 `LostOdysseyRecomp-linux-x64-v0.7.2.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
+- **AppImage**：下载 `LostOdysseyRecomp-linux-x64-v0.7.3.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
 
 发布包不需要安装 Python 或 Visual Studio。后续启动会复用着色器缓存；更新程序时请保留存档和档案文件夹。
 
@@ -89,7 +89,7 @@ Windows 在 Direct3D 12 与 Vulkan 上提供实验性的 DLSS/FSR 超分，Linux
 | CPU 使用率 | 减少不必要的轮询，复用渲染计算 |
 | 输入与调试 | 手柄和键盘输入；英文／简体中文游戏内浮层调试菜单（F1 或手柄 LB+RB）提供捕获、地图信息与同地图 POI 传送 |
 
-发布包通过 `LostOdysseyRecomp.exe` 的 **Files** 或 **Folder** 导入游戏光盘和受支持的 DLC。自 v0.7.1 起新增 **Gameplay → 导入光盘与 DLC** 入口，可重新打开导入器并替换所选光盘与 DLC。v0.7.2 提供 Windows ZIP、Linux AppImage 与 Linux Flatpak 独立安装包。验证边界见[安装说明](docs/INSTALLING.md#automatic-content-import)、[构建说明](docs/BUILDING.md#packaging-flatpak)和[开发状态](docs/STATUS.md)。
+发布包通过 `LostOdysseyRecomp.exe` 的 **Files** 或 **Folder** 导入游戏光盘和受支持的 DLC。自 v0.7.1 起新增 **Gameplay → 导入光盘与 DLC** 入口，可重新打开导入器并替换所选光盘与 DLC。v0.7.3 提供 Windows ZIP、Linux AppImage 与 Linux Flatpak 独立安装包。验证边界见[安装说明](docs/INSTALLING.md#automatic-content-import)、[构建说明](docs/BUILDING.md#packaging-flatpak)和[开发状态](docs/STATUS.md)。
 
 验证进展和剩余工作见[公开维护者 Project](https://github.com/users/freefrank/projects/3)。
 

@@ -148,9 +148,35 @@ void CapacityAndInitialization() {
         Check(previous->descriptors->Intact(), "eviction keeps old GPU snapshot intact");
     }
 }
+void DiagnosticAccounting() {
+    Factory f; Palette<Sampler,Set,4> c;
+    c.EnableDiagnostics(true);
+    Check(c.Initialize(f.Samplers(), f.Sets()), "diagnostic initialize");
+    Check(c.Select(DefaultKey, f.Samplers(), f.Sets()).has_value(), "diagnostic cache hit");
+    for (uint64_t key : {0x15ull,0x16ull,0x17ull}) {
+        c.BeginDraw();
+        Check(c.Select(key, f.Samplers(), f.Sets()).has_value(), "diagnostic fill");
+    }
+    c.BeginDraw();
+    Check(c.Select(0x18, f.Samplers(), f.Sets()).has_value(), "diagnostic replacement");
+    const auto filled = c.TakeDiagnostics();
+    Check(filled.hits == 1 && filled.misses == 4 && filled.replacements == 1 &&
+        filled.candidates == 5 && filled.published == 5, "diagnostic hit/miss/publication counts");
+    const auto before = c.Current();
+    f.failSet = true;
+    c.BeginDraw();
+    Check(!c.Select(0x19, f.Samplers(), f.Sets()) && c.Current() == before,
+        "failed diagnostic candidate preserves table");
+    const auto failed = c.TakeDiagnostics();
+    Check(failed.hits == 0 && failed.misses == 1 && failed.replacements == 0 &&
+        failed.candidates == 1 && failed.published == 0, "failed candidate accounted separately");
+    const auto empty = c.TakeDiagnostics();
+    Check(empty.hits == 0 && empty.misses == 0 && empty.candidates == 0,
+        "diagnostic collection resets frame counts");
+}
 }
 int main() {
-    try { Policy(); SwitchingAndFailure(); CapacityAndInitialization(); }
+    try { Policy(); SwitchingAndFailure(); CapacityAndInitialization(); DiagnosticAccounting(); }
     catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
     std::cout << "AF palette: " << checks << " checks passed\n";
 }

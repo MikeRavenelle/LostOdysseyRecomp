@@ -440,6 +440,8 @@ Attempt D3D12Backend::RecordIsolated(plume::D3D12CommandList& commands, const Co
     use.initializedShared = !impl_->sharedInitialized;
     attempt.useId = use.id;
     impl_->uses.push_back(std::move(use));
+    commands.invalidateCachedNativeState();
+    commands.resetRootBindingStats();
     const HRESULT allocatorResult = commands.commandAllocator->Reset();
     const HRESULT resetResult = SUCCEEDED(allocatorResult) ?
         commands.d3d->Reset(commands.commandAllocator, nullptr) : allocatorResult;
@@ -538,11 +540,7 @@ Attempt D3D12Backend::RecordIsolated(plume::D3D12CommandList& commands, const Co
     const HRESULT closeResult = cmd->Close();
     attempt.vkResult = int32_t(closeResult);
     commands.open = false;
-    commands.targetFramebuffer = nullptr;
-    commands.activeComputePipelineLayout = nullptr;
-    commands.activeGraphicsPipelineLayout = nullptr;
-    commands.activeGraphicsPipeline = nullptr;
-    commands.descriptorHeapsSet = false;
+    commands.invalidateCachedNativeState();
     const bool ready = sdkResult == FFX_OK && SUCCEEDED(closeResult);
     const HRESULT removedReason = sdkResult == FFX_OK ? S_OK : impl_->device->d3d->GetDeviceRemovedReason();
     attempt.status = DeviceLost(closeResult) || DeviceLost(removedReason) ? Status::DeviceLost :

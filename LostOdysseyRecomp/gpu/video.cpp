@@ -853,6 +853,8 @@ namespace gpu::video
             if (!native->d3d || !native->commandAllocator || native->open) {
                 StopGpuWork(submission::VulkanState::InvalidState); return false;
             }
+            native->invalidateCachedNativeState();
+            native->resetRootBindingStats();
             HRESULT result = native->commandAllocator->Reset();
             if (SUCCEEDED(result)) result = native->d3d->Reset(native->commandAllocator, nullptr);
             if (FAILED(result)) { StopGpuWork(int32_t(result)); return false; }
@@ -878,14 +880,7 @@ namespace gpu::video
             native->resetSamplePositions();
             const HRESULT result = native->d3d->Close();
             native->open = false;
-            native->targetFramebuffer = nullptr;
-            native->targetFramebufferSamplePositionsSet = false;
-            native->activeComputePipelineLayout = nullptr;
-            native->activeGraphicsPipelineLayout = nullptr;
-            native->activeGraphicsPipeline = nullptr;
-            native->activeTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
-            native->activeStencilRef = 0;
-            native->descriptorHeapsSet = false;
+            native->invalidateCachedNativeState();
             if (FAILED(result)) { StopGpuWork(int32_t(result)); return false; }
             return true;
 #else

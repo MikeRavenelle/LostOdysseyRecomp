@@ -200,6 +200,11 @@ endif()
 lo_enable_dlss(LoNativeDlssExecutionTest)
 
 if(WIN32)
+    add_executable(LoD3D12RootBindingTest EXCLUDE_FROM_ALL d3d12_root_binding_test.cpp)
+    target_include_directories(LoD3D12RootBindingTest PRIVATE ${LO_NATIVE_DLSS_ROOT}/thirdparty/plume)
+    target_compile_features(LoD3D12RootBindingTest PRIVATE cxx_std_20)
+    target_link_libraries(LoD3D12RootBindingTest PRIVATE plume d3d12 dxgi)
+
     add_executable(LoNativeDlssD3D12ExecutionTest EXCLUDE_FROM_ALL
         native_dlss_d3d12_execution_test.cpp
         ${LO_NATIVE_DLSS_ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp
@@ -248,6 +253,8 @@ if(BUILD_TESTING)
     add_test(NAME LoNativeDlssExecutionTest COMMAND LoNativeDlssExecutionTest)
     set_tests_properties(LoNativeDlssExecutionTest PROPERTIES SKIP_RETURN_CODE 77)
     if(WIN32)
+        add_test(NAME LoD3D12RootBindingTest COMMAND LoD3D12RootBindingTest)
+        set_tests_properties(LoD3D12RootBindingTest PROPERTIES SKIP_RETURN_CODE 77)
         add_test(NAME LoNativeDlssD3D12ExecutionTest COMMAND LoNativeDlssD3D12ExecutionTest)
         set_tests_properties(LoNativeDlssD3D12ExecutionTest PROPERTIES SKIP_RETURN_CODE 77)
     endif()
