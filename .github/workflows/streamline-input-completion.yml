@@ -1,0 +1,119 @@
+name: Streamline input completion
+on:
+  pull_request:
+    paths:
+      - tools/tests/streamline_fg/**
+      - cmake/LoStreamline.cmake
+      - cmake/LoDlss.cmake
+      - .github/workflows/streamline-input-completion.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: streamline-input-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contracts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and execute CPU ownership contracts
+        run: |
+          cmake -S tools/tests/streamline_fg -B out/fg-input-cpu -DLO_STREAMLINE_FG_CPU_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/fg-input-cpu --config Release --parallel 2
+          ctest --test-dir out/fg-input-cpu -C Release --output-on-failure
+      - name: Clang address and undefined-behavior sanitizers
+        if: runner.os == 'Linux'
+        run: |
+          clang++ -std=c++20 -Wall -Wextra -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer tools/tests/streamline_fg/input_completion_test.cpp -o out/fg-input-sanitized
+          out/fg-input-sanitized
+  vulkan-sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare software Vulkan with validation
+        run: sudo apt-get update -qq && sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
+      - name: Execute native queue and timeline synchronization fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name '*lvp*.json' | head -1)"
+          test -n "$VK_ICD_FILENAMES"
+          cmake -S tools/tests/streamline_fg -B out/fg-input-vulkan -DLO_STREAMLINE_FG_CPU_ONLY=ON -DLO_STREAMLINE_FG_VULKAN_TEST=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/fg-input-vulkan --parallel 2
+          ctest --test-dir out/fg-input-vulkan -V 2>&1 | tee out/fg-input-vulkan.log
+          if grep -E 'Validation Error|VALIDATION_ERROR|VUID-|SYNC-HAZARD' out/fg-input-vulkan.log; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: streamline-input-vulkan-logs
+          path: out/fg-input-vulkan.log
+          if-no-files-found: ignore
+  windows-probe-build:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Preserve source line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned Plume sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 thirdparty/plume
+          git -C thirdparty/plume apply ../../tools/patches/plume-lostodyssey.patch
+          git -C thirdparty/plume submodule update --init --depth 1 contrib/volk contrib/Vulkan-Headers contrib/VulkanMemoryAllocator contrib/D3D12MemoryAllocator
+      - name: Prepare official pinned SDKs (no game assets)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force out/sdk | Out-Null
+          $manifest = Get-Content tools/tests/streamline_fg/sdk-manifest.json -Raw | ConvertFrom-Json
+          curl.exe --fail --location --retry 2 "https://github.com/NVIDIA-RTX/Streamline/releases/download/$($manifest.release)/$($manifest.asset)" -o out/sdk/streamline.zip
+          if ($LASTEXITCODE) { throw 'Streamline download failed' }
+          if ((Get-Item out/sdk/streamline.zip).Length -ne $manifest.asset_size -or (Get-FileHash out/sdk/streamline.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.asset_sha256) { throw 'Streamline SDK identity mismatch' }
+          Expand-Archive out/sdk/streamline.zip out/sdk/streamline
+          $header = Get-ChildItem out/sdk/streamline -Filter sl.h -Recurse | Where-Object { $_.Directory.Name -eq 'include' } | Select-Object -First 1
+          if (!$header) { throw 'Streamline headers missing' }
+          "LO_CI_STREAMLINE=$($header.Directory.Parent.FullName)" >> $env:GITHUB_ENV
+          git init out/sdk/ngx
+          git -C out/sdk/ngx remote add origin https://github.com/NVIDIA/DLSS.git
+          git -C out/sdk/ngx fetch --depth 1 origin 374959484e79a640feaba44c93ac8cfb0a03f5b5
+          if ($LASTEXITCODE) { throw 'NGX fetch failed' }
+          git -C out/sdk/ngx checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE) { throw 'NGX checkout failed' }
+      - name: Compile and link the actual Windows Vulkan probe (no GPU execution)
+        shell: cmd
+        run: |
+          @echo off
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          cmake -S tools/tests/streamline_fg -B out/fg-input-native -G Ninja -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DLO_ENABLE_DLSS=ON -DLO_REQUIRE_DLSS=ON -DLO_DLSS_SDK_ROOT="%CD%/out/sdk/ngx" -DLO_STREAMLINE_SDK_ROOT="%LO_CI_STREAMLINE%" -DPLUME_BUILD_EXAMPLES=OFF -DPLUME_SDL_VULKAN_ENABLED=OFF > out/fg-input-configure.log 2>&1
+          if errorlevel 1 (type out\fg-input-configure.log & exit /b 1)
+          type out\fg-input-configure.log
+          cmake --build out/fg-input-native --target LoStreamlineFgProbe LoStreamlineFgProbeOptionsTest LoStreamlineFgInputCompletionTest --parallel 2 > out/fg-input-build.log 2>&1
+          if errorlevel 1 (type out\fg-input-build.log & exit /b 1)
+          type out\fg-input-build.log
+          ctest --test-dir out/fg-input-native --output-on-failure
+          if errorlevel 1 exit /b 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: streamline-input-windows-build-logs
+          path: |
+            out/fg-input-configure.log
+            out/fg-input-build.log
+            out/fg-input-native/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
