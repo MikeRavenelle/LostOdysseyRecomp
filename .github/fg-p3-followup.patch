@@ -41,7 +41,17 @@ diff --git a/tools/tests/motion_replay/CMakeLists.txt b/tools/tests/motion_repla
  endif()
  
  # Full production target-map/command route with only NGX and the platform
-@@ -149,9 +162,11 @@
+@@ -103,6 +116,9 @@
+ if((UNIX AND NOT APPLE) OR WIN32)
+  include("${ROOT}/cmake/LoDlss.cmake")
+  include("${ROOT}/cmake/LoFsr.cmake")
++ if(TARGET p2_video_compile)
++  lo_enable_fsr(p2_video_compile)
++ endif()
+  add_executable(LoNativeDlssRendererTest "${ROOT}/tools/tests/native_dlss_renderer_gpu_test.cpp"
+   "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp"
+   "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
+@@ -149,9 +165,11 @@
    target_compile_definitions(LoVideoSubmissionStopTest PRIVATE LO_VIDEO_SUBMISSION_UNIT LO_GPU_PLUME NOMINMAX
     LO_SOURCE_VERSION="video-submission-stop")
    if(MSVC)
