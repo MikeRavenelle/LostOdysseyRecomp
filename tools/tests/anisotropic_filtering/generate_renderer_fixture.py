@@ -22,7 +22,28 @@ assert 'RefreshAnisotropicFiltering();' not in source[bind_start:bind_end]
 assert '!(shared.vtxFmt & 1)' in source[bind_start:bind_end]
 assert '!((vs->info.textureSlotMask >> slot) & 1)' in source[bind_start:bind_end]
 recycle = source[source.index('            bool RecycleSlot('):source.index('            bool WaitForGpu(')]
-assert recycle.index('if (!video::WaitForGpuFence(s.fence.get())) return false;') < recycle.index('s.samplerVersions.clear();')
+# Check the failed-wait branch, not its former single-line spelling. P3 may
+# record pending diagnostic state here, but must still return before reclaiming
+# any sampler generation or marking the slot unsubmitted.
+wait_guard = 'if (!video::WaitForGpuFence(s.fence.get()))'
+assert recycle.count(wait_guard) == 1
+wait_start = recycle.index(wait_guard)
+failure = recycle[wait_start + len(wait_guard):].lstrip()
+if failure.startswith('{'):
+    depth = 0
+    for offset, character in enumerate(failure):
+        depth += (character == '{') - (character == '}')
+        if depth == 0:
+            failure = failure[1:offset].strip()
+            break
+    else:
+        raise AssertionError('Unterminated failed-wait branch')
+else:
+    failure = failure[:failure.index(';') + 1].strip()
+assert failure.endswith('return false;')
+assert 's.samplerVersions' not in failure
+assert 's.submitted = false;' not in failure
+assert wait_start < recycle.index('s.submitted = false;') < recycle.index('s.samplerVersions.clear();')
 assert source.count('s.samplerVersions.clear();') == 1
 assert 'Gpu().samplerVersions.size() >= kSamplerVersionsPerBatch' in source
 assert source.count('samplerState.BeginDraw();') == 1
