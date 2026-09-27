@@ -9163,6 +9163,19 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     PlanSuppressed() || video::GpuWorkStopped()) return false;
                 auto* rs = NewestResolved(address & 0x1FFFFFFF);
                 auto packet = rs ? rs->fgComposite.lock() : nullptr;
+                if (motionOptions.log && frame % 120 == 0) {
+                    const auto* input = packet && packet->producer ? &packet->producer->inputs : nullptr;
+                    LOG_INFO("renderer FG admission: frame={} resolved={} packet={} latest={} metadata={} ordered={} motion={} input_frame={} input_epoch={} depth={}x{} motion_extent={}x{} resolved_frame={} source_plan={} device_epoch={}/{} output={}x{} target={}x{}",
+                        frame, bool(rs), bool(packet), packet && fgCompositeHandoff == packet,
+                        packet && packet->MetadataReady(), packet && packet->ReadyForOrderedSubmission(),
+                        input ? uint32_t(input->motionState) : 0, input ? input->renderFrameId : 0,
+                        input ? input->temporalEpoch : 0, input ? input->depth.width : 0, input ? input->depth.height : 0,
+                        input ? input->motion.width : 0, input ? input->motion.height : 0,
+                        rs ? rs->frame : 0, rs && rs->sourcePlanValid,
+                        packet ? packet->plan.deviceEpoch : 0, activePlan.deviceEpoch,
+                        packet ? packet->outputWidth : 0, packet ? packet->outputHeight : 0,
+                        rs && rs->tex ? rs->tex->width : 0, rs && rs->tex ? rs->tex->height : 0);
+                }
                 if (!packet || fgCompositeHandoff != packet || !rs->tex ||
                     rs->frame + 1 != frame ||
                     rs->writeOrdinal != packet->resolveOrdinal ||

@@ -43,11 +43,23 @@ PowerShell syntax parsing passed. The parser check itself does not launch the
 game; bounded runtime evidence is documented separately below.
 `-Background` runs the bounded driver without foreground interaction and uses
 the owned window close path; it cannot be combined with `-WindowCycle`.
+`-DisableHybridMotion` sets `LO_SR_HYBRID_MV=0` only for the isolated child
+process and records `hybrid_motion=false` in `run.json`. `-HiddenResizeCycle`
+requires `-Background`; it resizes the owned hidden SDL window around 35 seconds
+and restores its original client size around 50 seconds. The before/after window
+and foreground measurements, actual client-size changes, and failures are saved
+in `hidden-resize-cycle.json`.
 `-CaptureScreenshots` asks the game to write serialised internal screenshots
 through `screenshot-request.txt` in the run directory. Both options are
 recorded in `run.json` and are intended for isolated evidence runs.
 The request file must receive a new nonzero serial and count, for example
 `1 1`, before the game writes a requested screenshot.
+`-ValidationLayerDirectory` optionally injects the Vulkan validation layer from
+the supplied directory. The directory must contain
+`VkLayer_khronos_validation.json`; the driver enables synchronization
+validation and records the requested directory and settings in `run.json`.
+The validation log and loaded-layer evidence still determine whether a run is
+clean; passing this option alone is not a validation result.
 FG remains the experimental Windows Vulkan path. The
 driver copies `settings.ini`, `save`,
 `profile`, and `shaders` from the supplied baseline into a new output run,

@@ -121,11 +121,13 @@ struct TemporalFrameInputs {
 
     // The composited FG path retains only depth and motion. Its producer has
     // already qualified color/invalidity before copying. Do not reuse the SR
-    // predicate here: Hybrid is valid for SR with FG off, never FG evidence.
+    // predicate here. Hybrid preserves valid object vectors and fills gaps with
+    // camera/depth motion; its admission does not certify dynamic-object coverage.
     bool CompleteForFrameGeneration() const {
         return currentInputsComplete && renderFrameId && temporalEpoch && cameraValid &&
             KnownDepthConvention(depthConvention) &&
-            (motionState == MotionState::Tracked || motionState == MotionState::ResetInitialization) &&
+            (motionState == MotionState::Tracked || motionState == MotionState::ResetInitialization ||
+             motionState == MotionState::Hybrid) &&
             depth.Complete() && motion.Complete() &&
             !depth.x && !depth.y && !motion.x && !motion.y &&
             depth.width == motion.width && depth.height == motion.height;

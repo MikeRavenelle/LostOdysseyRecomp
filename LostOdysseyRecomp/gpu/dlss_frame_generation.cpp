@@ -84,6 +84,14 @@ bool Session::Prepare(const std::shared_ptr<frame_generation::ProducerSnapshot>&
         width != inputs->inputs.plan.output.width || height != inputs->inputs.plan.output.height ||
         !commands || !BuildConstants(inputs->inputs, reset ? nullptr : &previousVP_, constants, &remap,
             reset ? nullptr : &previousRaster_)) {
+        if (frame_ % 120 == 0 && std::getenv("LO_MV_LOG"))
+            LOG_INFO("DLSS FG rejected: frame={} failed={} inputs={} qualified={} motion={} input_epoch={} producer_serial={} on_queue={} discarded={} wait_failed={} canceled={} output={}x{} plan_output={}x{} buffers={} format={} commands={} reset={}",
+                frame_, failed_, bool(inputs), inputs && inputs->inputsQualifiedAtCapture,
+                inputs ? uint32_t(inputs->inputs.motionState) : 0, inputs ? inputs->inputs.temporalEpoch : 0,
+                inputs ? inputs->producerSerial : 0, inputs && inputs->producerOnPresentQueue,
+                inputs && inputs->producerDiscarded, inputs && inputs->producerWaitFailed, inputs && inputs->lineageCanceled,
+                width, height, inputs ? inputs->inputs.plan.output.width : 0, inputs ? inputs->inputs.plan.output.height : 0,
+                buffers, uint32_t(format), commands != nullptr, reset);
         Disable();
         return false;
     }

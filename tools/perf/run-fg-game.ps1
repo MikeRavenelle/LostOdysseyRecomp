@@ -6,21 +6,30 @@ param(
     [ValidateRange(10,600)][int]$Seconds = 120,
     [switch]$DisableFg,
     [switch]$DisableObjectMotion,
+    [switch]$DisableHybridMotion,
     [switch]$WindowCycle,
+    [switch]$HiddenResizeCycle,
     [ValidateSet('Baseline','D3D12','Vulkan')][string]$Backend = 'Baseline',
     [ValidateSet('Baseline','Off','Dlss','Fsr')][string]$Upscaler = 'Baseline',
     [ValidateRange(-1,3)][int]$Quality = -1,
     [ValidateSet('Diagnostic','Lightweight')][string]$CaptureMode = 'Diagnostic',
     [switch]$Background,
-    [switch]$CaptureScreenshots
+    [switch]$CaptureScreenshots,
+    [string]$ValidationLayerDirectory
 )
 # ACTIVE GAME DRIVER: isolated profile/save/config copies, optional hidden gameplay,
 # muted audio, bounded automated input, then closes only its own game process.
 $ErrorActionPreference = 'Stop'
 if ($Background -and $WindowCycle) { throw 'WindowCycle requires foreground interaction.' }
+if ($HiddenResizeCycle -and !$Background) { throw 'HiddenResizeCycle requires Background.' }
+if ($HiddenResizeCycle -and $WindowCycle) { throw 'HiddenResizeCycle and WindowCycle are mutually exclusive.' }
 $build = (Resolve-Path -LiteralPath $BuildDirectory).Path
 $baseline = (Resolve-Path -LiteralPath $BaselineDirectory).Path
 $game = (Resolve-Path -LiteralPath $GameDirectory).Path
+$validationLayer = if ($ValidationLayerDirectory) { (Resolve-Path -LiteralPath $ValidationLayerDirectory).Path } else { $null }
+if ($validationLayer -and !(Test-Path -LiteralPath (Join-Path $validationLayer 'VkLayer_khronos_validation.json'))) {
+    throw 'ValidationLayerDirectory lacks VkLayer_khronos_validation.json'
+}
 $run = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $run) { throw 'OutputDirectory must be new; evidence is never overwritten.' }
 New-Item -ItemType Directory -Path $run | Out-Null
@@ -74,7 +83,19 @@ $start.ArgumentList.Add('--game'); $start.ArgumentList.Add($game); $start.Argume
 $start.Environment['LO_DLSS_FG'] = $(if ($DisableFg) { '0' } else { '1' })
 if ($CaptureMode -eq 'Diagnostic') { $start.Environment['LO_MV_LOG'] = '1' }
 if ($DisableObjectMotion) { $start.Environment['LO_MV_REPLAY'] = '0' }
+if ($DisableHybridMotion) { $start.Environment['LO_SR_HYBRID_MV'] = '0' }
 $start.Environment['LO_AUDIO_MUTE'] = '1'
+if ($validationLayer) {
+    $start.Environment['VK_LAYER_PATH'] = $validationLayer
+    $start.Environment['VK_INSTANCE_LAYERS'] = 'VK_LAYER_KHRONOS_validation'
+    $start.Environment['VK_LAYER_SETTINGS_PATH'] = $run
+    @(
+        'khronos_validation.validate_sync = true'
+        'khronos_validation.report_flags = error,warn,info'
+        'khronos_validation.debug_action = VK_DBG_LAYER_ACTION_LOG_MSG'
+        ('khronos_validation.log_filename = ' + (Join-Path $run 'validation.log'))
+    ) | Set-Content -LiteralPath (Join-Path $run 'vk_layer_settings.txt')
+}
 if ($Background) { $start.Environment['LO_BACKGROUND'] = '1' }
 if ($CaptureScreenshots) {
     $start.Environment['LO_SCREENSHOT_REQUEST'] = Join-Path $run 'screenshot-request.txt'
@@ -92,6 +113,8 @@ $stderr = $process.StandardError.ReadToEndAsync()
 $manifest = [ordered]@{ pid=$process.Id; started=[DateTime]::UtcNow.ToString('o'); exe=$exe;
     sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; fg=!$DisableFg;
     foreground=!$Background; muted=$true; object_motion=!$DisableObjectMotion;
+    hybrid_motion=!$DisableHybridMotion; hidden_resize_cycle=[bool]$HiddenResizeCycle;
+    validation_layer_directory=$validationLayer; synchronization_validation_requested=[bool]$validationLayer;
     screenshot_requests=[bool]$CaptureScreenshots;
     backend=$Backend; upscaler=$Upscaler; quality=$Quality; capture_mode=$CaptureMode;
     render_timing=($CaptureMode -eq 'Diagnostic'); mv_log=($CaptureMode -eq 'Diagnostic');
@@ -143,7 +166,155 @@ while (!$Background -and !$process.HasExited -and $focusTimer.Elapsed.TotalSecon
 [ordered]@{ visible_window=$process.MainWindowHandle.ToInt64();
     foreground=([FgGameWindow]::GetForegroundWindow() -eq $process.MainWindowHandle) } |
     ConvertTo-Json | Set-Content (Join-Path $run 'window-focus.json')
-if ($WindowCycle) {
+if ($HiddenResizeCycle) {
+    # SDL registers its game windows as SDL_app. MainWindowHandle is zero while hidden.
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class FgGameHiddenResize {
+    public delegate bool EnumWindowCallback(IntPtr window, IntPtr state);
+    [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+    public sealed class WindowState {
+        public string TimeUtc { get; set; }
+        public long Hwnd { get; set; }
+        public uint Pid { get; set; }
+        public string ClassName { get; set; }
+        public bool IsWindow { get; set; }
+        public int ClientWidth { get; set; }
+        public int ClientHeight { get; set; }
+        public int WindowLeft { get; set; }
+        public int WindowTop { get; set; }
+        public int WindowWidth { get; set; }
+        public int WindowHeight { get; set; }
+        public long ForegroundHwnd { get; set; }
+        public uint ForegroundPid { get; set; }
+    }
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowCallback callback, IntPtr state);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int maxCount);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    static string WindowClass(IntPtr window) {
+        var name = new StringBuilder(256);
+        return GetClassName(window, name, name.Capacity) > 0 ? name.ToString() : "";
+    }
+    public static IntPtr FindOwnedSdl(uint pid) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((window, state) => {
+            uint owner;
+            GetWindowThreadProcessId(window, out owner);
+            if (IsWindow(window) && owner == pid && WindowClass(window) == "SDL_app") {
+                found = window;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+    public static bool IsOwnedSdl(IntPtr window, uint pid) {
+        if (window == IntPtr.Zero || !IsWindow(window) || WindowClass(window) != "SDL_app") return false;
+        uint owner;
+        GetWindowThreadProcessId(window, out owner);
+        return owner == pid;
+    }
+    public static WindowState Snapshot(IntPtr window) {
+        var result = new WindowState { TimeUtc = DateTime.UtcNow.ToString("o"), Hwnd = window.ToInt64() };
+        var foreground = GetForegroundWindow();
+        result.ForegroundHwnd = foreground.ToInt64();
+        uint foregroundPid;
+        GetWindowThreadProcessId(foreground, out foregroundPid);
+        result.ForegroundPid = foregroundPid;
+        result.IsWindow = window != IntPtr.Zero && IsWindow(window);
+        if (result.IsWindow) {
+            uint pid;
+            GetWindowThreadProcessId(window, out pid);
+            result.Pid = pid;
+            result.ClassName = WindowClass(window);
+            Rect client, outer;
+            if (GetClientRect(window, out client)) {
+                result.ClientWidth = client.Right - client.Left;
+                result.ClientHeight = client.Bottom - client.Top;
+            }
+            if (GetWindowRect(window, out outer)) {
+                result.WindowLeft = outer.Left;
+                result.WindowTop = outer.Top;
+                result.WindowWidth = outer.Right - outer.Left;
+                result.WindowHeight = outer.Bottom - outer.Top;
+            }
+        }
+        return result;
+    }
+    public static bool SetClientSize(IntPtr window, uint pid, int width, int height) {
+        if (!IsOwnedSdl(window, pid)) return false;
+        Rect client, outer;
+        if (!GetClientRect(window, out client) || !GetWindowRect(window, out outer)) return false;
+        int outerWidth = outer.Right - outer.Left + width - (client.Right - client.Left);
+        int outerHeight = outer.Bottom - outer.Top + height - (client.Bottom - client.Top);
+        const uint flags = 0x0002 | 0x0004 | 0x0010 | 0x0200; // NOMOVE | NOZORDER | NOACTIVATE | NOOWNERZORDER
+        return SetWindowPos(window, IntPtr.Zero, 0, 0, outerWidth, outerHeight, flags);
+    }
+}
+'@
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $events = @()
+    $resizeWindow = [IntPtr]::Zero
+    $originalWidth = 0
+    $originalHeight = 0
+    $cycle = 0
+    while (!($finished = $process.WaitForExit(250)) -and $timer.Elapsed.TotalSeconds -lt $Seconds) {
+        if ($cycle -eq 0 -and $timer.Elapsed.TotalSeconds -ge 35) {
+            $resizeWindow = [FgGameHiddenResize]::FindOwnedSdl([uint32]$process.Id)
+            $beforeSize = [FgGameHiddenResize]::Snapshot($resizeWindow)
+            $originalWidth = $beforeSize.ClientWidth
+            $originalHeight = $beforeSize.ClientHeight
+            $targetWidth = [Math]::Max(640, [int][Math]::Round($originalWidth * 0.8))
+            $targetHeight = [Math]::Max(360, [int][Math]::Round($originalHeight * 0.8))
+            $reason = $null
+            $sent = $false
+            if (![FgGameHiddenResize]::IsOwnedSdl($resizeWindow, [uint32]$process.Id)) { $reason = 'owned_sdl_window_unavailable' }
+            elseif ($originalWidth -le 0 -or $originalHeight -le 0) { $reason = 'client_size_unavailable' }
+            elseif ($targetWidth -eq $originalWidth -and $targetHeight -eq $originalHeight) { $reason = 'target_equals_original' }
+            else { $sent = [FgGameHiddenResize]::SetClientSize($resizeWindow, [uint32]$process.Id, $targetWidth, $targetHeight) }
+            $afterSize = [FgGameHiddenResize]::Snapshot($resizeWindow)
+            $changed = $afterSize.ClientWidth -ne $beforeSize.ClientWidth -or $afterSize.ClientHeight -ne $beforeSize.ClientHeight
+            $reached = $afterSize.ClientWidth -eq $targetWidth -and $afterSize.ClientHeight -eq $targetHeight
+            if (!$reason -and !$sent) { $reason = 'set_window_pos_failed_or_window_changed' }
+            elseif (!$reason -and (!$changed -or !$reached)) { $reason = 'client_size_did_not_reach_target' }
+            $events += [ordered]@{ action='resize'; seconds=$timer.Elapsed.TotalSeconds; target=@{ width=$targetWidth; height=$targetHeight };
+                set_window_pos=$sent; size_changed=$changed; target_reached=$reached; reason=$reason;
+                before=$beforeSize; after=$afterSize }
+            $events | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $run 'hidden-resize-cycle.json')
+            $cycle = 1
+        }
+        if ($cycle -eq 1 -and $timer.Elapsed.TotalSeconds -ge 50) {
+            $beforeSize = [FgGameHiddenResize]::Snapshot($resizeWindow)
+            $reason = $null
+            $sent = $false
+            if (![FgGameHiddenResize]::IsOwnedSdl($resizeWindow, [uint32]$process.Id)) { $reason = 'owned_sdl_window_unavailable' }
+            elseif ($originalWidth -le 0 -or $originalHeight -le 0) { $reason = 'original_client_size_unavailable' }
+            else { $sent = [FgGameHiddenResize]::SetClientSize($resizeWindow, [uint32]$process.Id, $originalWidth, $originalHeight) }
+            $afterSize = [FgGameHiddenResize]::Snapshot($resizeWindow)
+            $changed = $afterSize.ClientWidth -ne $beforeSize.ClientWidth -or $afterSize.ClientHeight -ne $beforeSize.ClientHeight
+            $reached = $afterSize.ClientWidth -eq $originalWidth -and $afterSize.ClientHeight -eq $originalHeight
+            if (!$reason -and !$sent) { $reason = 'set_window_pos_failed_or_window_changed' }
+            elseif (!$reason -and (!$changed -or !$reached)) { $reason = 'client_size_did_not_restore' }
+            $events += [ordered]@{ action='restore'; seconds=$timer.Elapsed.TotalSeconds; target=@{ width=$originalWidth; height=$originalHeight };
+                set_window_pos=$sent; size_changed=$changed; target_reached=$reached; reason=$reason;
+                before=$beforeSize; after=$afterSize }
+            $events | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $run 'hidden-resize-cycle.json')
+            $cycle = 2
+        }
+    }
+    if (!$events.Count) {
+        [ordered]@{ reason=$(if ($finished) { 'process_exited_before_resize' } else { 'duration_before_resize' });
+            elapsed_seconds=$timer.Elapsed.TotalSeconds; pid=$process.Id; time_utc=[DateTime]::UtcNow.ToString('o') } |
+            ConvertTo-Json | Set-Content (Join-Path $run 'hidden-resize-cycle.json')
+    }
+} elseif ($WindowCycle) {
     $shell = New-Object -ComObject WScript.Shell
     Add-Type @'
 using System;

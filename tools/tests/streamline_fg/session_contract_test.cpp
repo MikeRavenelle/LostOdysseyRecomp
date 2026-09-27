@@ -62,7 +62,7 @@ void InputContract() {
         in.plan.fsrQuality = quality;
         const auto plan = in.plan;
         Check(in.CompleteForConsumer(), "P1 retains Hybrid SR input eligibility with FG off");
-        Check(!in.CompleteForFrameGeneration(), "Hybrid SR cannot qualify as FG motion");
+        Check(in.CompleteForFrameGeneration(), "same-frame Hybrid can feed experimental composited FG");
         Check(in.plan == plan, "FG admission must not rewrite FSR ownership/quality/geometry");
     }
     in.plan.frameGeneration = upscaling::FrameGeneration::Dlss2x;
@@ -91,6 +91,13 @@ void InputContract() {
     in = good; in.depth.texture = nullptr; Check(!in.CompleteForFrameGeneration(), "missing depth texture blocks FG");
     in = good; in.motion.x = 1; --in.motion.width;
     Check(!in.CompleteForFrameGeneration(), "offset motion region blocks this full-frame FG contract");
+    in = good; in.motionState = temporal::MotionState::Hybrid;
+    in.color = {}; in.motionInvalidity = {};
+    Check(in.CompleteForFrameGeneration(), "Hybrid retains eligibility in the depth/motion-only snapshot");
+    in.currentInputsComplete = false;
+    Check(!in.CompleteForFrameGeneration(), "Hybrid cannot cover an incomplete capture");
+    in = good; in.motionState = temporal::MotionState::Hybrid; --in.motion.width;
+    Check(!in.CompleteForFrameGeneration(), "Hybrid cannot cover a mismatched depth/motion extent");
 }
 #endif
 }

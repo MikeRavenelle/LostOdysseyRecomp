@@ -2128,6 +2128,10 @@ namespace gpu::video
                     const bool matched = renderer::AcquireFgCompositeInputs(physicalAddress & 0x1FFFFFFF, composite) &&
                         composite.ReadyForOrderedSubmission() && composite.outputWidth == sourceWidth && composite.outputHeight == sourceHeight &&
                         sourceWidth == g_swapChain->getWidth() && sourceHeight == g_swapChain->getHeight();
+                    if (std::getenv("LO_MV_LOG") && composite.frame % 120 == 119)
+                        LOG_INFO("video FG admission: frame={} matched={} window_change={} source={}x{} swapchain={}x{} composite={}x{}",
+                            composite.frame, matched, g_fgWindowChange.load(), sourceWidth, sourceHeight,
+                            g_swapChain->getWidth(), g_swapChain->getHeight(), composite.outputWidth, composite.outputHeight);
                     if (!matched || g_fgWindowChange.load() != 0) composite = {};
                     fgProducerWaitMs = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - fgAcquireBegin).count();
@@ -2156,8 +2160,10 @@ namespace gpu::video
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
                 if (g_fgSession) {
                     auto* swap = static_cast<plume::VulkanSwapChain*>(g_swapChain.get());
+                    // Borrowed swapchain texture wrappers leave imageFormat undefined.
+                    // Use the format actually passed to vkCreateSwapchainKHR.
                     g_fgSession->Prepare(composite.producer, g_swapChain->getWidth(), g_swapChain->getHeight(),
-                        uint32_t(swap->textures.size()), swap->textures.front().imageFormat, g_commandList.get(), fgProducerWaitMs);
+                        uint32_t(swap->textures.size()), swap->createInfo.imageFormat, g_commandList.get(), fgProducerWaitMs);
                 }
 #endif
                 if(g_presentation) {
