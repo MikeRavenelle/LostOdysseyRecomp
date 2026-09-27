@@ -2,6 +2,8 @@
 
 This note records the host-side repair work on the Gate 1 validation branch. It is development evidence, not a release or acceptance record.
 
+The repair was merged into [`main`](https://github.com/freefrank/LostOdysseyRecomp/commit/95f96e161f33a1fd0c35ee9316f683cb5f49d01c) on 2026-09-27. No release or tag was created.
+
 ## Scope
 
 The repair covers renderer descriptor-set reuse, point-size translation, and shader-cache invalidation. Reused descriptor sets now clear stale image bindings before the next recording pass, preventing a released FSR scratch binding from crossing slot generations. Point-size translation accepts the builtin and guest-register/default or vertex-export forms, applies the host point-size limit, and updates the cache key. The shared constants block remains 1024 bytes and its transfer field remains the 16-byte region at offset 240, so the transfer ABI is unchanged. The Vulkan square-point limitation for non-square guest point sizes remains outside this evidence and is not a claim of complete cross-platform point-size equivalence.
