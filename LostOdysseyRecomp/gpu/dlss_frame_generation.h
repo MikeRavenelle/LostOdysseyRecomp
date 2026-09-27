@@ -3,6 +3,7 @@
 #include "streamline_runtime.h"
 #include "frame_generation_snapshot.h"
 #include "dlss_fg_depth.h"
+#include "dlss_fg_completion.h"
 
 namespace gpu::dlss_fg {
 // Presentation-thread owner. The first implementation serializes input reuse
@@ -28,6 +29,7 @@ private:
     void Mark(sl::PCLMarker marker);
     void DrainInputs();
     void SignalInputCompletion();
+    [[noreturn]] void FailClosed(const char* operation, int32_t nativeResult = 0);
     Runtime& runtime_;
     plume::VulkanDevice& device_;
     plume::VulkanCommandQueue& queue_;
@@ -35,12 +37,13 @@ private:
     sl::FrameToken* token_ = nullptr;
     sl::DLSSGOptions options_{};
     VkFence completion_ = VK_NULL_HANDLE;
-    bool completionPending_ = false;
+    PresentQueueCompletion inputCompletion_;
     std::shared_ptr<frame_generation::ProducerSnapshot> retained_;
     temporal::Matrix previousVP_{};
     temporal::Viewport previousRaster_{};
     DepthRemapper depth_;
     uint64_t previousFrame_ = 0, previousEpoch_ = 0;
+    upscaling::Upscaler previousProvider_ = upscaling::Upscaler::Off;
     uint64_t generatedIntervals_ = 0, actualPresents_ = 0;
     uint32_t frame_ = 0;
     bool enabled_ = false, ready_ = false, failed_ = false, used_ = false;

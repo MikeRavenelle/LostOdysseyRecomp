@@ -119,6 +119,18 @@ struct TemporalFrameInputs {
     bool currentInputsComplete = false, resetHistory = true;
     TemporalResetReason resetReasons = TemporalResetReason::FirstFrame;
 
+    // The composited FG path retains only depth and motion. Its producer has
+    // already qualified color/invalidity before copying. Do not reuse the SR
+    // predicate here: Hybrid is valid for SR with FG off, never FG evidence.
+    bool CompleteForFrameGeneration() const {
+        return currentInputsComplete && renderFrameId && temporalEpoch && cameraValid &&
+            KnownDepthConvention(depthConvention) &&
+            (motionState == MotionState::Tracked || motionState == MotionState::ResetInitialization) &&
+            depth.Complete() && motion.Complete() &&
+            !depth.x && !depth.y && !motion.x && !motion.y &&
+            depth.width == motion.width && depth.height == motion.height;
+    }
+
     bool CompleteForConsumer() const {
         if (!currentInputsComplete || !color.Complete() || !depth.Complete()) return false;
         return !upscaling::RequiresMotionDepth(plan.consumer, plan.frameGeneration) ||

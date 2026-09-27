@@ -52,18 +52,14 @@ struct CompositeHandoff {
             !p.sourceColor.region.texture && !p.sourceColor.lifetime &&
             !p.motionInvalidity.region.texture && !p.motionInvalidity.lifetime &&
             !p.sceneColorCandidate.region.texture && !p.sceneColorCandidate.lifetime;
-        return plan.requestedUpscaler == upscaling::Upscaler::Dlss &&
-            plan.consumer == upscaling::TemporalConsumer::DlssSr &&
+        return upscaling::IsSrConsumer(plan.consumer) &&
+            upscaling::MatchesSrProvider(plan.requestedUpscaler, plan.consumer) &&
             p.ui == UiSeparation::Unavailable &&
             !p.lineageCanceled && !p.producerDiscarded && !p.producerWaitFailed &&
             !resolveDiscarded && !resolveWaitFailed &&
             p.inputsQualifiedAtCapture &&
             (diagnosticInputs || compositedInputs) &&
-            input.currentInputsComplete &&
-            temporal::KnownDepthConvention(input.depthConvention) &&
-            input.motionState != temporal::MotionState::Unavailable &&
-            uint32_t(input.motionState) <= uint32_t(temporal::MotionState::Hybrid) &&
-            input.cameraValid &&
+            input.CompleteForFrameGeneration() &&
             std::isfinite(input.cameraRaster.width) && input.cameraRaster.width > 0.0 &&
             std::isfinite(input.cameraRaster.height) && input.cameraRaster.height > 0.0 &&
             std::isfinite(input.frameTimeDeltaMilliseconds) &&
