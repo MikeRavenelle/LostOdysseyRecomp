@@ -11,6 +11,10 @@
 #include <cstdlib>
 #include <stdexcept>
 
+// The standalone fixture has no settings/status logger. Capability publication
+// and the production stop path remain real.
+namespace gpu::frame_plan { void NoteCurrentDlssStatus() {} }
+
 namespace gpu::video {
 void ConfigureSubmissionProbe(plume::RenderCommandQueue* queue, int32_t submitFault, int32_t waitFault, bool resetStop);
 }

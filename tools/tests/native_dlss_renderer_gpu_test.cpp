@@ -4,6 +4,7 @@
 #include <gpu/renderer.cpp>
 #include <gpu/vulkan_command_recording.h>
 #include <gpu/vulkan_submission_state.h>
+#include <gpu/frame_generation_present_bridge.h>
 #include <gpu/fsr_upscaler.h>
 #include <cfloat>
 #include <stdexcept>
@@ -89,6 +90,13 @@ void ReportDlssExecution(const DlssExecutionObservation& observation) {
 }
 }
 namespace gpu::taa_collection { bool Enabled() { return false; } }
+// Only the resolve's swap-red/blue MMIO bit is used by the new asset-free case.
+// Register setup is synthetic; actual resolve/copy and handoff code is unchanged.
+namespace gpu {
+CommandProcessor g_commandProcessor;
+uint32_t CommandProcessor::ReadRegister(uint32_t) { return 0; }
+}
+
 
 namespace {
 using namespace gpu::renderer;
@@ -287,6 +295,7 @@ public:
         }
         if (nativeController) nativeController->ShutdownAfterGpuDrain();
     }
+    #include "frame_generation_handoff_renderer.inc"
     void NativeRun(gpu::upscaling::DlssQuality quality, uint32_t outputWidth, uint32_t outputHeight,
         bool reset, bool injectedFailure = false) {
         Require(bool(nativeController), "native mode required");
@@ -1355,11 +1364,20 @@ int main(int argc, char** argv) {
         const bool planIdentity = argc == 2 && std::string_view(argv[1]) == "--plan-identity";
         const bool evaluateCapture = argc == 2 && std::string_view(argv[1]) == "--evaluate-capture-only";
         const bool fgSnapshotOnly = argc == 2 && std::string_view(argv[1]) == "--fg-snapshot-only";
-        if (argc > 1 && !native && !extentOnly && !statusOnly && !planIdentity && !evaluateCapture && !fsrScratchOnly && !fsrFallbackOnly && !fgSnapshotOnly) {
+        const bool fgHandoffOnly = argc == 2 && std::string_view(argv[1]) == "--fg-handoff-only";
+        if (argc > 1 && !fgHandoffOnly && !native && !extentOnly && !statusOnly && !planIdentity && !evaluateCapture && !fsrScratchOnly && !fsrFallbackOnly && !fgSnapshotOnly) {
             std::fprintf(stderr, "usage: %s [--native|--extent-only|--status-only|--plan-identity|--evaluate-capture-only|--fsr-scratch-only|--fsr-fallback-only|--fg-snapshot-only]\n", argv[0]);
             return 2;
         }
         std::setvbuf(stdout, nullptr, _IONBF, 0);
+        if (fgHandoffOnly) {
+            for (unsigned mode = 0; mode != 10; ++mode) {
+                fixture::state = {}; fixture::rejectSubmit = fixture::rejectWaitOnce = false;
+                Harness h; h.Init(); h.RunFgHandoff(mode);
+            }
+            std::printf("PASS: %u production renderer/resolve/video-boundary checks; synthetic vendor, no physical display or provider FG\n", fixture::checks);
+            return 0;
+        }
         Harness harness;
         harness.Init(native, std::filesystem::absolute(argv[0]).parent_path());
         if (fgSnapshotOnly) {

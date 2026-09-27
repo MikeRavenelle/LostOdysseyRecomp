@@ -70,13 +70,15 @@ void Shutdown() {}
 void WaitDebugCaptureArchive() {}
 void SetOutputSize(uint32_t, uint32_t) {}
 void ScaleResolvedSize(uint32_t, uint32_t& width, uint32_t& height) { width = fixture::sourceWidth; height = fixture::sourceHeight; }
-plume::RenderTexture* AcquireResolvedSurface(uint32_t, uint32_t& width, uint32_t& height, uint32_t& format, frame_plan::FramePlan* plan) {
+plume::RenderTexture* AcquireResolvedSurface(uint32_t, uint32_t& width, uint32_t& height, uint32_t& format, frame_plan::FramePlan* plan, frame_generation::ResolvedHandoff* handoff) {
+    if (handoff) *handoff = {};
     width = fixture::sourceWidth; height = fixture::sourceHeight; format = fixture::sourceFormat;
     if (plan) { plan->cpuSerial = 1; plan->effectiveAA = 1; plan->scalingQuality = 0; }
     return fixture::source;
 }
 bool SceneAAApplied(uint32_t) { return fixture::sceneComposite; }
 bool SuppressPresent() { return false; }
+void CancelFgHandoffs() {}
 bool ReadbackResolvedSurface(uint32_t, std::vector<uint32_t>&, uint32_t&, uint32_t&) { return false; }
 std::vector<uint32_t> GetResolvedAddresses() { return {}; }
 void DumpRenderTargets(const char*) {}

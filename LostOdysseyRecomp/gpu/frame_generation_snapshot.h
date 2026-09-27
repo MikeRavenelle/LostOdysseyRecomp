@@ -18,7 +18,12 @@ struct ProducerSnapshot {
     temporal::TemporalFrameInputs inputs{};
     TextureLease sourceColor{}, depth{}, motion{}, motionInvalidity{};
     TextureLease sceneColorCandidate{};
+    std::array<plume::RenderFormat, 5> storageFormats{};
+    // Set at the successful SR composite boundary, from the actual HostTexture.
+    uint64_t lineageOwner = 0, resolveSourceAllocation = 0, resolveSourceGeneration = 0;
     uint64_t producerSerial = 0;
+    bool producerWaitFailed = false;
+    bool lineageCanceled = false; // cancellation does not fabricate GPU completion/discard
     bool producerCompleted = false;
     bool producerDiscarded = false;
     UiSeparation ui = UiSeparation::Unavailable;
@@ -76,6 +81,7 @@ inline std::shared_ptr<ProducerSnapshot> RecordProducerSnapshot(
     }
     auto snapshot = std::make_shared<ProducerSnapshot>();
     snapshot->inputs = inputs;
+    snapshot->storageFormats = formats;
     auto lease = [&](size_t i) {
         TextureLease value;
         value.region = {copies[i].get(), sizes[i], 0, 0, sizes[i].width, sizes[i].height};

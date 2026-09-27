@@ -38,6 +38,7 @@
 #include "presentation.h"
 #if defined(LO_GPU_PLUME)
 #include "frame_generation_snapshot.h"
+#include "frame_generation_handoff.h"
 #endif
 #include <settings/config.h>
 #include <hid/hid.h>
@@ -311,6 +312,10 @@ namespace gpu::renderer
         struct HostTexture
         {
             uint64_t allocationSerial = 0; // Render-target identity, never a recycled host pointer.
+            // Opt-in conservative per-allocation write generation. Writable
+            // binding invalidates the SR lineage, even for a same-layout write.
+            uint64_t fgWriteGeneration = 0;
+            std::weak_ptr<frame_generation::ProducerSnapshot> fgSnapshot;
             binding::Producer bindingProducer;
             uint32_t bindingWidth = 0, bindingHeight = 0; // Actual uploaded allocation extent, when block-padded.
             scene_aa::Provenance aaProvenance;
@@ -461,6 +466,7 @@ namespace gpu::renderer
                 std::vector<std::shared_ptr<fsr_alpha::MaskLease>> fsrAlphaBridgeUses;
                 std::vector<std::shared_ptr<FsrAlphaBridgeDiagnostic>> fsrAlphaBridgeDiagnostics;
                 std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
+                std::vector<std::shared_ptr<frame_generation::ResolvePacket>> fgResolvePackets;
 #endif
                 // Copied at srApplied. Flush must not read activePlan; resolution
                 // changes replace that plan before they submit.
@@ -568,6 +574,8 @@ namespace gpu::renderer
                 uint64_t sdrWriteOrdinal = 0;
                 frame_plan::FramePlan sourcePlan{};
                 bool sourcePlanValid = false;
+                uint64_t fgOwner = 0, fgEpoch = 0, fgSourceAllocation = 0, fgSourceGeneration = 0;
+                std::weak_ptr<frame_generation::ResolvePacket> fgPacket;
 
             };
             // Keyed by destination address, one entry per destination format: the
@@ -605,6 +613,7 @@ namespace gpu::renderer
             }();
             bool fgSnapshotAttempted = false;
             std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
+            frame_generation::ResolveHandoffPool fgHandoffPool;
             const bool fsrAlphaReplayEnabled = [] {
                 const char* value = getenv("LO_FSR_ALPHA_REPLAY");
                 return !value || std::string_view(value) != "0";
@@ -2753,6 +2762,10 @@ namespace gpu::renderer
                         promotion.inputs, sourceFormat, promotion.scratch->texture.get(),
                         promotion.scratch->format, {activePlan.output.width, activePlan.output.height});
                     if (snapshot) {
+                        snapshot->lineageOwner = fgHandoffPool.Owner();
+                        snapshot->resolveSourceAllocation = color->allocationSerial;
+                        snapshot->resolveSourceGeneration = color->fgWriteGeneration;
+                        color->fgSnapshot = snapshot;
                         Gpu().fgInputSnapshot = snapshot;
                         fgInputSnapshot = std::move(snapshot);
                     }
@@ -3142,10 +3155,17 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 #endif
             void DiscardFgInputSnapshot(GpuSlot& slot)
             {
-                if (!slot.fgInputSnapshot) return;
-                slot.fgInputSnapshot->producerDiscarded = true;
-                if (fgInputSnapshot == slot.fgInputSnapshot) fgInputSnapshot.reset();
-                slot.fgInputSnapshot.reset();
+                for (const auto& p : slot.fgResolvePackets) {
+                    p->resolveDiscarded = true;
+                    p->Cancel(frame_generation::HandoffCancel::SubmitFailure);
+                }
+                slot.fgResolvePackets.clear();
+                if (slot.fgInputSnapshot) {
+                    slot.fgInputSnapshot->producerDiscarded = true;
+                    if (fgInputSnapshot == slot.fgInputSnapshot) fgInputSnapshot.reset();
+                    slot.fgInputSnapshot.reset();
+                }
+                fgHandoffPool.Collect();
             }
             bool RecycleSlot(uint32_t i)
             {
@@ -3154,17 +3174,26 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     return true;
                 {
                     ScopedTimer timer{ tFlush, cpuTimingEnabled };
-                    if (!video::WaitForGpuFence(s.fence.get())) return false;
+                    if (!video::WaitForGpuFence(s.fence.get())) {
+                        if (s.fgInputSnapshot) s.fgInputSnapshot->producerWaitFailed = true;
+                        for (auto& p : s.fgResolvePackets) p->resolveWaitFailed = true;
+                        return false;
+                    }
                 }
                 s.submitted = false;
 #if defined(LO_GPU_PLUME)
                 if (s.fgInputSnapshot) {
                     s.fgInputSnapshot->producerCompleted = true;
+                    s.fgInputSnapshot->producerWaitFailed = false;
                     LOG_INFO("renderer: FG input snapshot frame={} completed_serial={} ui=unavailable provider_ready=0",
                         s.fgInputSnapshot->inputs.renderFrameId, s.fgInputSnapshot->producerSerial);
                     s.fgInputSnapshot.reset();
                 }
 #endif
+                for (auto& p : s.fgResolvePackets)
+                    p->CompleteOrderedGraphics(p->identity.plan.deviceEpoch, p->resolveSerial);
+                s.fgResolvePackets.clear();
+                fgHandoffPool.Collect();
                 for (const auto& e : s.evaluateCaptures) if (e->checkedSubmit) e->completed = true;
                 s.evaluateCaptures.clear();
                 if (s.timingQueries) {
@@ -3245,6 +3274,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 
             bool Begin()
             {
+                fgHandoffPool.Advance(frame, temporalEpoch, activePlan);
+                if (fgInputSnapshot && fgInputSnapshot->inputs.renderFrameId != frame)
+                    fgInputSnapshot.reset(); // submitted slots / exact resolve packets retain their own copies
                 if (video::GpuWorkStopped() || !RecycleSlot(gpuSlot)) return false;
                 BindGpuSlot();
                 if (!listOpen)
@@ -3369,6 +3401,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 }
 #if defined(LO_GPU_PLUME)
                 if (Gpu().fgInputSnapshot) Gpu().fgInputSnapshot->producerSerial = submissionSerial;
+                for (auto& p : Gpu().fgResolvePackets) p->resolveSerial = submissionSerial;
                 for (const auto& use : Gpu().fsrAlphaBatches)
                     use->submissionSerial = submissionSerial;
                 for (const auto& capture : Gpu().fsrAlphaCaptures)
@@ -3478,8 +3511,18 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 return set;
             }
 
+            void MarkFgWritable(HostTexture& tex)
+            {
+                if (fgSnapshotRequestedFrame == ~0ull) return;
+                tex.fgSnapshot.reset();
+                // Saturation permanently makes this allocation unavailable.
+                if (tex.fgWriteGeneration != UINT64_MAX) ++tex.fgWriteGeneration;
+            }
             void Transition(HostTexture& tex, RenderTextureLayout layout, RenderBarrierStages stages)
             {
+                if (layout == RenderTextureLayout::COLOR_WRITE || layout == RenderTextureLayout::COPY_DEST ||
+                    layout == RenderTextureLayout::GENERAL || layout == RenderTextureLayout::DEPTH_WRITE)
+                    MarkFgWritable(tex);
                 if (tex.layout == layout)
                     return;
                 commandList->barriers(stages, RenderTextureBarrier(tex.texture.get(), layout));
@@ -4520,6 +4563,8 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 
             RenderFramebuffer* GetFramebuffer(HostTexture* color, HostTexture* depth)
             {
+                if (color) MarkFgWritable(*color);
+                if (depth) MarkFgWritable(*depth);
                 auto key = std::make_pair(color ? color->texture.get() : nullptr, depth ? depth->texture.get() : nullptr);
                 auto it = framebuffers.find(key);
                 if (it != framebuffers.end())
@@ -8494,6 +8539,102 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     resolveSeq - 1, destBase, tex.width, tex.height, lo, hi, sum / std::max(1u, samples), over1 * 100 / std::max(1u, samples));
             }
 
+            // The public XE_SWAP Flush advances real-frame identity only AFTER
+            // successful submission. Internal mid-frame Flush never calls this.
+            void AdvanceAfterPublicFlush() { ++frame; drawsThisFrame = 0; drops = {}; }
+            frame_generation::ResolveIdentity FgIdentity(const ResolvedSurface& rs) const
+            {
+                frame_generation::ResolveIdentity id;
+                if (!rs.tex || !rs.sourcePlanValid) return id;
+                id.owner = rs.fgOwner; id.frame = rs.frame; id.historyEpoch = rs.fgEpoch;
+                id.sourceAllocation = rs.fgSourceAllocation; id.sourceGeneration = rs.fgSourceGeneration;
+                id.resolve = rs.writeOrdinal; id.allocation = rs.tex->allocationSerial;
+                id.generation = rs.tex->fgWriteGeneration;
+                id.width = rs.tex->width; id.height = rs.tex->height;
+                id.x = rs.writeX; id.y = rs.writeY; id.writeWidth = rs.writeWidth; id.writeHeight = rs.writeHeight;
+                id.guestFormat = rs.destFormat; id.pitch = rs.destPitch; id.swapRedBlue = rs.swapRedBlue;
+                id.format = rs.tex->format; id.plan = rs.sourcePlan;
+                return id;
+            }
+            void CancelFgSnapshots(frame_generation::HandoffCancel reason)
+            {
+                if (fgInputSnapshot) fgInputSnapshot->lineageCanceled = true;
+                for (auto& slot : gpuSlots)
+                    if (slot.fgInputSnapshot) slot.fgInputSnapshot->lineageCanceled = true;
+                fgHandoffPool.CancelAll(reason);
+            }
+            void InvalidateFgResolve(ResolvedSurface& rs)
+            {
+                if (auto old = rs.fgPacket.lock(); old && !old->selected)
+                    old->Cancel(frame_generation::HandoffCancel::Superseded);
+                rs.fgPacket.reset();
+                rs.fgOwner = rs.fgEpoch = rs.fgSourceAllocation = rs.fgSourceGeneration = 0;
+            }
+            void RecordFgResolve(HostTexture& source, ResolvedSurface& rs)
+            {
+                auto snapshot = source.fgSnapshot.lock();
+                if (!snapshot || snapshot->producerDiscarded || snapshot->lineageCanceled || !rs.sourcePlanValid || !rs.tex ||
+                    snapshot->lineageOwner != fgHandoffPool.Owner() || snapshot->inputs.renderFrameId != frame ||
+                    snapshot->inputs.temporalEpoch != temporalEpoch || snapshot->inputs.plan != rs.sourcePlan ||
+                    snapshot->resolveSourceAllocation != source.allocationSerial ||
+                    snapshot->resolveSourceGeneration != source.fgWriteGeneration ||
+                    !source.fgWriteGeneration || source.fgWriteGeneration == UINT64_MAX ||
+                    !fgHandoffPool.HasCapacity()) return;
+                rs.fgOwner = snapshot->lineageOwner; rs.fgEpoch = snapshot->inputs.temporalEpoch;
+                rs.fgSourceAllocation = source.allocationSerial; rs.fgSourceGeneration = source.fgWriteGeneration;
+                const auto identity = FgIdentity(rs);
+                if (!identity.Complete()) return;
+                std::shared_ptr<frame_generation::ResolvePacket> packet;
+                try {
+                    std::shared_ptr<RenderTexture> copy = device->createTexture(RenderTextureDesc::Texture2D(
+                        identity.width, identity.height, 1, identity.format));
+                    if (!copy) return; // optional diagnostic allocation; ordinary resolve already succeeded
+                    frame_generation::TextureLease image{{copy.get(), {identity.width, identity.height},
+                        0, 0, identity.width, identity.height}, copy, 0};
+                    packet = std::make_shared<frame_generation::ResolvePacket>(
+                        frame_generation::ResolvePacket{identity, snapshot, std::move(image)});
+                    if (!fgHandoffPool.Retain(packet)) return;
+                    // Retain BEFORE recording any command referencing the image.
+                    Gpu().fgResolvePackets.push_back(packet);
+                } catch (const std::bad_alloc&) {
+                    if (packet) {
+                        packet->resolveDiscarded = true;
+                        packet->Cancel(frame_generation::HandoffCancel::SubmitFailure);
+                    }
+                    fgHandoffPool.Collect(); return;
+                }
+                Transition(*rs.tex, RenderTextureLayout::COPY_SOURCE, RenderBarrierStage::COPY);
+                commandList->barriers(RenderBarrierStage::COPY,
+                    RenderTextureBarrier(packet->finalColor.region.texture, RenderTextureLayout::COPY_DEST));
+                commandList->copyTextureRegion(RenderTextureCopyLocation::Subresource(packet->finalColor.region.texture),
+                    RenderTextureCopyLocation::Subresource(rs.tex->texture.get()));
+                commandList->barriers(RenderBarrierStage::ALL,
+                    RenderTextureBarrier(packet->finalColor.region.texture, RenderTextureLayout::SHADER_READ));
+                Transition(*rs.tex, RenderTextureLayout::SHADER_READ, RenderBarrierStage::GRAPHICS);
+                rs.fgPacket = packet;
+                LOG_INFO("renderer: FG resolve owner={} frame={} epoch={} source={}:{} resolve={} target={}:{} output={}x{} ui=unavailable",
+                    identity.owner, identity.frame, identity.historyEpoch, identity.sourceAllocation, identity.sourceGeneration,
+                    identity.resolve, identity.allocation, identity.generation, identity.width, identity.height);
+            }
+            // Used by both the public renderer entry and the real renderer GPU
+            // fixture. NewestResolved's existing format-variant selector is unchanged.
+            RenderTexture* AcquireResolvedForPresent(uint32_t address, uint32_t& width, uint32_t& height,
+                uint32_t& format, frame_plan::FramePlan* plan, frame_generation::ResolvedHandoff* handoff)
+            {
+                if (handoff) *handoff = {};
+                if (PlanSuppressed()) return nullptr;
+                consecutiveResolveCopies.Invalidate();
+                auto* rs = NewestResolved(address & 0x1FFFFFFF);
+                if (!rs) return nullptr;
+                width = rs->tex->width; height = rs->tex->height; format = uint32_t(rs->tex->format);
+                if (plan) *plan = rs->sourcePlanValid ? rs->sourcePlan : frame_plan::FramePlan{};
+                if (handoff) {
+                    frame_generation::ResolvedHandoff candidate{rs->fgPacket.lock(), FgIdentity(*rs), frame, temporalEpoch};
+                    if (!video::GpuWorkStopped() && candidate.Matches()) *handoff = std::move(candidate);
+                }
+                return rs->tex->texture.get();
+            }
+
             // ---- resolve --------------------------------------------------------------------
             // Depth resolve: the depth plane is copied into an R32_FLOAT surface that
             // k_24_8 / k_24_8_FLOAT fetches read (.x = stored depth, our reversed
@@ -8514,6 +8655,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 w = depth.ScaleX(x0 + w) - depth.ScaleX(x0); h = depth.ScaleY(y0 + h) - depth.ScaleY(y0);
                 x0 = depth.ScaleX(x0); y0 = depth.ScaleY(y0);
                 ResolvedSurface& rs = ResolvedSlot(destBase, destFormat);
+                InvalidateFgResolve(rs);
                 if (!rs.tex || rs.tex->format != RenderFormat::R32_FLOAT || rs.tex->width != texW || rs.tex->height != texH)
                 {
                     if (rs.tex) Gpu().retiredTextures.push_back(std::move(rs.tex));
@@ -8607,6 +8749,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 // frontbuffer stays 8888 even though EDRAM is kept in FP16.
                 const RenderFormat destHost = (destFormat == 32 || destFormat == 7) ? RenderFormat::R16G16B16A16_FLOAT : RenderFormat::R8G8B8A8_UNORM;
                 ResolvedSurface& rs = ResolvedSlot(destBase, destFormat);
+                InvalidateFgResolve(rs);
                 if (!rs.tex || rs.tex->format != destHost || rs.tex->width != texW || rs.tex->height != texH)
                 {
                     consecutiveResolveCopies.Invalidate();
@@ -8696,6 +8839,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 // It must not hand presentation a fabricated whole-surface plan.
                 rs.sourcePlanValid = fullResolved&&activePlan.cpuSerial!=0;
                 if (rs.sourcePlanValid) rs.sourcePlan = activePlan;
+                RecordFgResolve(color, rs);
                 if (taa_collection::Enabled())
                     rs.tex->bindingProducer.Copy(color.bindingProducer, taa_collection::ConsentEpoch(), frame,
                         x0 == 0 && y0 == 0 && w == texW && h == texH);
@@ -9012,6 +9156,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
         WaitDebugCaptureArchive();
         if (g_renderer)
         {
+            g_renderer->CancelFgSnapshots(frame_generation::HandoffCancel::Shutdown);
             g_renderer->Flush();
             g_renderer->WaitForGpu();
             if (!g_renderer->fsrCapturePages.empty()) g_renderer->FinishFsrCapture();
@@ -9568,9 +9713,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     g_renderer->frame, g_renderer->preparedPipelineHits, g_renderer->usedPreparedPipelineKeys.size(),
                     g_renderer->preparedPipelineKeys.size(), g_renderer->runtimePipelineCreates, g_renderer->pipelineRecipes.size());
             g_renderer->PollPsTraceRequest();
-            g_renderer->frame++;
-            g_renderer->drawsThisFrame = 0;
-            g_renderer->drops = {};
+            g_renderer->AdvanceAfterPublicFlush();
         }
     }
 
@@ -9584,23 +9727,15 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
     }
 
     plume::RenderTexture* AcquireResolvedSurface(uint32_t physicalAddress, uint32_t& width, uint32_t& height, uint32_t& format,
-        frame_plan::FramePlan* sourcePlan)
+        frame_plan::FramePlan* sourcePlan, frame_generation::ResolvedHandoff* handoff)
     {
-        if (!g_renderer)
-            return nullptr;
-        if (g_renderer->PlanSuppressed())
-            return nullptr;
-        g_renderer->consecutiveResolveCopies.Invalidate();
-        auto* rs = g_renderer->NewestResolved(physicalAddress & 0x1FFFFFFF);
-        if (!rs)
-            return nullptr;
-        HostTexture& tex = *rs->tex;
-        width = tex.width;
-        height = tex.height;
-        format = uint32_t(tex.format);
-        if (sourcePlan)
-            *sourcePlan = rs->sourcePlanValid ? rs->sourcePlan : frame_plan::FramePlan{};
-        return tex.texture.get();
+        if (handoff) *handoff = {};
+        return g_renderer ? g_renderer->AcquireResolvedForPresent(physicalAddress, width, height, format,
+            sourcePlan, handoff) : nullptr;
+    }
+    void CancelFgHandoffs()
+    {
+        if (g_renderer) g_renderer->CancelFgSnapshots(frame_generation::HandoffCancel::DisplayChange);
     }
 
     bool SceneAAApplied(uint32_t physicalAddress)
@@ -9868,7 +10003,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
     bool SuppressPresent() { return false; }
     void InvalidateGuestRange(uint32_t, uint32_t) {}
     bool SceneAAApplied(uint32_t) { return false; }
-    plume::RenderTexture* AcquireResolvedSurface(uint32_t, uint32_t&, uint32_t&, uint32_t&, frame_plan::FramePlan*) { return nullptr; }
+    plume::RenderTexture* AcquireResolvedSurface(uint32_t, uint32_t&, uint32_t&, uint32_t&,
+        frame_plan::FramePlan*, frame_generation::ResolvedHandoff*) { return nullptr; }
+    void CancelFgHandoffs() {}
     bool ReadbackResolvedSurface(uint32_t, std::vector<uint32_t>&, uint32_t&, uint32_t&) { return false; }
     std::vector<uint32_t> GetResolvedAddresses() { return {}; }
     void DumpRenderTargets(const char*) {}

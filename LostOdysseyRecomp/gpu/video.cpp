@@ -3,6 +3,7 @@
 #include <stdafx.h>
 #endif
 #include "video.h"
+#include "frame_plan.h"
 #if defined(LO_GPU_PLUME) || defined(LO_VIDEO_SUBMISSION_UNIT)
 #include "backend_device.h"
 #include "vulkan_submission_state.h"
@@ -15,6 +16,9 @@
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
 #include "renderer.h"
 #include "presentation.h"
+#if defined(LO_GPU_PLUME)
+#include "frame_generation_present_bridge.h"
+#endif
 #include "command_processor.h"
 #include "frame_plan.h"
 #include <settings/config.h>
@@ -265,6 +269,8 @@ namespace gpu::video
         uint64_t g_uploadCapacity = uint64_t(kMaxWidth) * kMaxHeight * 4;
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
         std::unique_ptr<Presentation> g_presentation;
+        FgPresentBridge g_fgPresent;
+        uint64_t g_fgPresentSerial = 0;
 #endif
         std::unique_ptr<plume::RenderTexture> g_cpuFrame;
         std::unique_ptr<plume::RenderTexture> g_presentedSnapshot;
@@ -402,7 +408,13 @@ namespace gpu::video
         bool WaitForPresentGpuImpl()
         {
             if (g_presentPending) {
-                if (!g_queue || !g_fence || !WaitForGpuFence(g_fence.get())) return false;
+                if (!g_queue || !g_fence || !WaitForGpuFence(g_fence.get())) {
+                    g_fgPresent.WaitFailed();
+                    return false;
+                }
+                const auto completed = g_fgPresent.Completed(g_deviceEpoch.load(), g_fgPresentSerial);
+                if (completed) LOG_INFO("video: FG diagnostic completed={} present_serial={} provider_ready=0 ui=unavailable",
+                    completed, g_fgPresentSerial);
                 g_presentPending = false;
             }
             return !GpuWorkStopped();
@@ -548,6 +560,7 @@ namespace gpu::video
                 {
                     result->hasSubmissionSerial = true;
                     result->submissionSerial = serial;
+                    g_fgPresent.Completed(g_deviceEpoch.load(), serial);
                     g_presentPending = false;
                 }
             }
@@ -673,6 +686,10 @@ namespace gpu::video
         if (!g_submissionState.Stopped())
             LOG_ERROR("video: native GPU work stopped raw_vk={}; device restart required", nativeResult);
         g_submissionState.Stop(nativeResult);
+#if !defined(LO_VIDEO_SUBMISSION_UNIT)
+        g_fgPresent.CancelAll(frame_generation::HandoffCancel::DeviceLost);
+        renderer::CancelFgHandoffs();
+#endif
         // Publish even when the first-stop log is skipped. Resource teardown
         // is unchanged; only the capability snapshot gains the stopped bit.
         PublishOwnedDeviceCapability();
@@ -808,6 +825,9 @@ namespace gpu::video
     // between candidates; device children are destroyed before their parents.
     static void ResetGpu() {
         g_displayChanges.Reset();
+#ifdef LO_GPU_PLUME
+        g_fgPresent.CancelAll(frame_generation::HandoffCancel::Shutdown);
+#endif
         g_available = false;
         g_initializing = false;
         g_selectedBackend = -1;
@@ -822,6 +842,9 @@ namespace gpu::video
             g_temporalUpscaler->ShutdownAfterGpuDrain();
         g_cpuFrame.reset(); g_cpuWidth = g_cpuHeight = 0;
         g_presentedSnapshot.reset(); g_snapshotWidth = g_snapshotHeight = 0; g_snapshotFormat=plume::RenderFormat::UNKNOWN;
+        // Renderer shutdown above established a completed/lost-device teardown
+        // boundary; a failed ordinary wait alone never releases these leases.
+        g_fgPresent = FgPresentBridge{}; g_fgPresentSerial = 0;
         g_presentation.reset();
         g_uploadBuffer.reset();
 #ifdef _WIN32
@@ -1469,6 +1492,8 @@ namespace gpu::video
         // Empty is recoverable: minimized Vulkan surfaces may have zero extent.
         // Never return for isEmpty() before giving resize() a chance to recover.
         if (g_forceSwapResize || g_swapChain->isEmpty() || g_swapChain->needsResize()) {
+            g_fgPresent.CancelAll(frame_generation::HandoffCancel::DisplayChange);
+            renderer::CancelFgHandoffs();
             if (!WaitForPresentGpu()) return false;
             if (!g_swapChain->resize()) {
                 // Zero extent is transient. Retain the pending transaction and
@@ -1505,6 +1530,8 @@ namespace gpu::video
     {
         if (GpuWorkStopped() || (!g_available && !g_initializing) || !g_swapChain || g_swapChain->isEmpty())
             return false;
+        g_fgPresent.CancelAll(frame_generation::HandoffCancel::AlternatePresent);
+        renderer::CancelFgHandoffs();
         DisplayCompletion completion(g_displayChanges, displayTicket);
         if (!width || !height || size_t(width) > std::numeric_limits<size_t>::max() / height ||
             pixels.size() != size_t(width) * height || width > (UINT32_MAX - 255u) / 4u) {
@@ -1585,6 +1612,7 @@ namespace gpu::video
         if (!submitted) { LOG_ERROR("video: present submit failed raw_vk={}", submitResult); ReadPresentCapture(captureResult, false, false, 0); return false; }
         const bool presented = g_swapChain->present(imageIndex, &signalSemaphore, 1);
         if (presented) ++g_completedPresentCount;
+        g_fgPresentSerial = submissionSerial;
         g_presentPending = true;
         g_lastPresentedImage=imageIndex; g_hasPresentedImage=true;
         completion.Complete(presented && !g_displayFailed.load());
@@ -1692,7 +1720,9 @@ namespace gpu::video
         {
             uint32_t rw = 0, rh = 0, rf = 0;
             frame_plan::FramePlan sourcePlan;
-            plume::RenderTexture* source = renderer::AcquireResolvedSurface(physicalAddress & 0x1FFFFFFF, rw, rh, rf, &sourcePlan);
+            frame_generation::ResolvedHandoff fgHandoff;
+            plume::RenderTexture* source = renderer::AcquireResolvedSurface(physicalAddress & 0x1FFFFFFF, rw, rh, rf,
+                &sourcePlan, &fgHandoff);
             if (source && plume::RenderFormat(rf) == kSwapChainFormat)
             {
                 uint32_t sourceWidth=width, sourceHeight=height;
@@ -1715,6 +1745,16 @@ namespace gpu::video
                 const uint32_t copyWidth = std::min(sourceWidth, g_swapChain->getWidth());
                 const uint32_t copyHeight = std::min(sourceHeight, g_swapChain->getHeight());
 
+                // Staging the exact resolve is independent of ordinary present.
+                // This does not make inputs CPU/GPU consumable before completion.
+                struct FgRecordingExit { ~FgRecordingExit() { g_fgPresent.CancelRecording(); } } fgExit;
+                if (fgHandoff.packet && g_fgPresent.Select(fgHandoff, g_deviceEpoch.load(), sourceWidth, sourceHeight,
+                    g_swapChain->getWidth(), g_swapChain->getHeight())) {
+                    const auto& id = fgHandoff.selected;
+                    LOG_INFO("video: FG selected owner={} frame={} epoch={} source={}:{} resolve={} target={}:{} producer_serial={} resolve_serial={} pending=1 ui=unavailable",
+                        id.owner, id.frame, id.historyEpoch, id.sourceAllocation, id.sourceGeneration, id.resolve,
+                        id.allocation, id.generation, fgHandoff.packet->producer->producerSerial, fgHandoff.packet->resolveSerial);
+                }
                 if (!BeginGpuCommands(g_commandList.get())) return;
                 if(g_presentation) {
                     const auto decision = frame_plan::ResolvePresentationDecision(&sourcePlan,
@@ -1753,8 +1793,14 @@ namespace gpu::video
                     g_fence.get(), &submissionSerial, &submitResult)
                     : (g_queue->executeCommandLists(lists, 1, &waitSemaphore, 1, &signalSemaphore, 1, g_fence.get()), true);
                 if (!submitted) { LOG_ERROR("video: GPU presentation submit failed raw_vk={}", submitResult); ReadPresentCapture(captureResult, false, false, 0); return; }
+                g_fgPresent.Submitted(g_deviceEpoch.load(), submissionSerial);
                 const bool presented = g_swapChain->present(imageIndex, &signalSemaphore, 1);
+                if (!presented) {
+                    g_fgPresent.CancelAll(frame_generation::HandoffCancel::DisplayChange);
+                    renderer::CancelFgHandoffs();
+                }
                 if (presented) ++g_completedPresentCount;
+                g_fgPresentSerial = submissionSerial;
                 g_presentPending = true;
                 g_lastPresentedImage=imageIndex; g_hasPresentedImage=true;
                 completion.Complete(presented && !g_displayFailed.load());
@@ -1898,6 +1944,7 @@ namespace gpu::video
                 g_fence.get(), &submissionSerial, &submitResult)
                 : (g_queue->executeCommandLists(lists,1,nullptr,0,nullptr,0,g_fence.get()), true);
             if (!submitted) { LOG_ERROR("video: screenshot submit failed raw_vk={}", submitResult); return false; }
+            g_fgPresentSerial = submissionSerial;
             g_presentPending = true;
             if (!WaitForGpuFence(g_fence.get())) { DrainGpuForShutdown(); return false; }
             g_presentPending = false;

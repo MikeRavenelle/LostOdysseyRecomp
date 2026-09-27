@@ -89,13 +89,26 @@ set_tests_properties(LoSceneCopyCompositeTest PROPERTIES LABELS "native-dlss;gpu
 
 option(LO_P2_VIDEO_COMPILE_CHECK "Compile actual video.cpp in the asset-free boundary" OFF)
 if(LO_P2_VIDEO_COMPILE_CHECK)
- find_package(SDL2 REQUIRED)
+ # This target only compiles video.cpp. Windows CI can use the pinned SDL
+ # headers without building an unrelated SDL runtime library.
+ set(LO_P2_VIDEO_SDL_HEADERS "" CACHE PATH "Pinned SDL include directory for compile-only video checking")
+ if(LO_P2_VIDEO_SDL_HEADERS)
+  if(NOT EXISTS "${LO_P2_VIDEO_SDL_HEADERS}/SDL.h")
+   message(FATAL_ERROR "LO_P2_VIDEO_SDL_HEADERS must contain the actual SDL headers")
+  endif()
+  add_library(p2_video_sdl_headers INTERFACE)
+  target_include_directories(p2_video_sdl_headers INTERFACE "${LO_P2_VIDEO_SDL_HEADERS}")
+  set(_p2_sdl_target p2_video_sdl_headers)
+ else()
+  find_package(SDL2 REQUIRED)
+  set(_p2_sdl_target SDL2::SDL2)
+ endif()
  add_library(p2_video_compile OBJECT "${ROOT}/LostOdysseyRecomp/gpu/video.cpp")
  target_include_directories(p2_video_compile BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/compile_boundary")
  target_include_directories(p2_video_compile PRIVATE "${ROOT}/thirdparty/unordered_dense/include")
  target_compile_definitions(p2_video_compile PRIVATE LO_SOURCE_VERSION="p2-fixture"
   $<$<PLATFORM_ID:Linux>:PLUME_SDL_VULKAN_ENABLED=1>)
- target_link_libraries(p2_video_compile PRIVATE mv_runtime SDL2::SDL2)
+ target_link_libraries(p2_video_compile PRIVATE mv_runtime ${_p2_sdl_target})
 endif()
 
 # Full production target-map/command route with only NGX and the platform
@@ -103,6 +116,9 @@ endif()
 if((UNIX AND NOT APPLE) OR WIN32)
  include("${ROOT}/cmake/LoDlss.cmake")
  include("${ROOT}/cmake/LoFsr.cmake")
+ if(TARGET p2_video_compile)
+  lo_enable_fsr(p2_video_compile)
+ endif()
  add_executable(LoNativeDlssRendererTest "${ROOT}/tools/tests/native_dlss_renderer_gpu_test.cpp"
   "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp"
   "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
@@ -142,6 +158,8 @@ if((UNIX AND NOT APPLE) OR WIN32)
    target_link_libraries(LoDlssEvaluateCaptureContractTest PRIVATE mv_runtime)
   add_executable(LoVideoSubmissionStopTest "${ROOT}/tools/tests/video_submission_stop_test.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/video.cpp"
+   "${ROOT}/LostOdysseyRecomp/gpu/temporal_upscaler.cpp"
+   "${ROOT}/LostOdysseyRecomp/gpu/fsr_upscaler.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/upscaling_plan.cpp"
    "${ROOT}/LostOdysseyRecomp/gpu/dlss_ngx.cpp" platform_stub.cpp)
   target_include_directories(LoVideoSubmissionStopTest BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/compile_boundary")
@@ -149,11 +167,14 @@ if((UNIX AND NOT APPLE) OR WIN32)
   target_compile_definitions(LoVideoSubmissionStopTest PRIVATE LO_VIDEO_SUBMISSION_UNIT LO_GPU_PLUME NOMINMAX
    LO_SOURCE_VERSION="video-submission-stop")
   if(MSVC)
-   target_compile_options(LoVideoSubmissionStopTest PRIVATE /Od)
+   target_compile_options(LoVideoSubmissionStopTest PRIVATE /Od /Gy /Gw)
+   target_link_options(LoVideoSubmissionStopTest PRIVATE /OPT:REF /INCREMENTAL:NO)
   else()
-   target_compile_options(LoVideoSubmissionStopTest PRIVATE -O0 -g0)
+   target_compile_options(LoVideoSubmissionStopTest PRIVATE -O0 -g0 -ffunction-sections -fdata-sections)
+   target_link_options(LoVideoSubmissionStopTest PRIVATE -Wl,--gc-sections)
   endif()
   lo_enable_dlss(LoVideoSubmissionStopTest)
+  lo_enable_fsr(LoVideoSubmissionStopTest)
   target_link_libraries(LoVideoSubmissionStopTest PRIVATE mv_runtime)
   add_test(NAME LoNativeDlssRendererTest COMMAND LoNativeDlssRendererTest)
  add_test(NAME frame_generation_snapshot_renderer COMMAND LoNativeDlssRendererTest --fg-snapshot-only)
@@ -183,3 +204,7 @@ else()
 endif()
 add_test(NAME hybrid_capture_metadata COMMAND LoDlssEvaluateCaptureContractTest --evaluate-capture-contract-only)
 set_tests_properties(sr_hybrid_motion_gpu hybrid_capture_metadata PROPERTIES TIMEOUT 180)
+
+# Executes actual SR continuation -> full resolve -> production video diagnostic boundary.
+add_test(NAME frame_generation_handoff_renderer COMMAND LoNativeDlssRendererTest --fg-handoff-only)
+set_tests_properties(frame_generation_handoff_renderer PROPERTIES LABELS "fg;gpu;renderer;handoff" TIMEOUT 180)
