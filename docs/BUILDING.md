@@ -138,50 +138,52 @@ CMake automatically copies the Linux DXC shared library from `tools/XenosRecomp/
 Linux releases can package an AppImage using `tools/package_appimage.py` with `linuxdeploy`:
 
 ```bash
-python3 tools/package_appimage.py --build out/build/linux-clang --output out/releases --linuxdeploy /path/to/linuxdeploy
+python3 tools/package_appimage.py --build out/build/linux-clang --output out/releases --appdir out/releases/linux.AppDir --linuxdeploy /path/to/linuxdeploy
 ```
 
 The tool stages the executable, icons, desktop entry, metainfo, vendored DXC library and licenses into an AppDir layout and produces `LostOdysseyRecomp-linux-x64-<tag>.AppImage`.
 
+The release workflow keeps this AppDir for the Linux packaging job. Its
+Flatpak export reuses the already packaged `usr` tree from the persistent
+AppDir instead of compiling the source a second time. The stable bundle export
+and isolated user installation/sandbox shell checks passed; full GitHub Release
+CI has not run this workflow, and this does not change the already published
+v0.7.3 provenance.
+
 ### Packaging Flatpak
 
-The repository provides an automated offline Flatpak packaging tool `tools/package_flatpak.py` using manifest template `packaging/linux/io.github.freefrank.LostOdysseyRecomp.json`. The package targets the `org.freedesktop.Platform 26.08` runtime and SDK with Clang/LLVM 22 (`org.freedesktop.Sdk.Extension.llvm22`).
+The repository provides `tools/package_flatpak.py` to export a Flatpak from an existing AppImage AppDir using the manifest metadata in `packaging/linux/io.github.freefrank.LostOdysseyRecomp.json`. The AppDir is the only binary input; this exporter does not compile source code or use `flatpak-builder`.
 
 #### Prerequisites
 
-Install the required Freedesktop 26.08 platform, SDK, and LLVM 22 extension from Flathub:
+Install the required Freedesktop 26.08 platform runtime and SDK from Flathub:
 
 ```bash
 flatpak --system install flathub \
   org.freedesktop.Platform//26.08 \
-  org.freedesktop.Sdk//26.08 \
-  org.freedesktop.Sdk.Extension.llvm22//26.08
+  org.freedesktop.Sdk//26.08
 ```
 
-Ensure `flatpak` and `flatpak-builder` are available on the host system.
+Ensure `flatpak` is available on the host system.
 
-#### Staged offline packaging
+#### AppDir export
 
-Packaging runs with network access unshared (`--unshare=network`). `tools/package_flatpak.py` prepares an isolated build directory, staging Git-tracked files, submodules, generated PPC translation sources, private disc assets, pinned dependencies, and prebuilt shaders:
+Export a stable release bundle when the AppDir runtime version matches the
+checkout source version:
 
 ```bash
 python3 -B tools/package_flatpak.py \
-  --source . \
-  --output out/flatpak-build \
-  --ppc LostOdysseyRecompLib/ppc \
-  --codegen-manifest LostOdysseyRecompLib/ppc/codegen-manifest.json \
-  --default-xex LostOdysseyRecompLib/private/disc1/default.xex \
-  --image-disc1 LostOdysseyRecompLib/private/image_disc1.bin \
-  --image-sym LostOdysseyRecompLib/private/image_disc1.bin.sym \
-  --ngx-sdk out/deps/nvidia-dlss \
-  --fsr-sdk out/deps/fidelityfx-sdk \
-  --fsr-shaders out/fsr-shaders-vk \
-  --shader-pack out/build/linux/shaders/portable_vk.lospv \
-  --ffmpeg-source out/deps/ffmpeg-flatpak \
-  --zstd-source out/deps/zstd-flatpak
+  --appdir out/releases/linux.AppDir \
+  --output out/releases/flatpak-v0.7.3 \
+  --version v0.7.3
 ```
 
-The script builds inside the sandbox, finishes the app permissions, validates the install tree (ensuring required libraries and licenses are present while private assets and sources are excluded), exports an OSTree repository, and creates a standalone `.flatpak` bundle alongside SHA-256 and `source.json` manifests.
+For a development bundle, omit `--version`; the exporter uses a `dev` branch
+name and emits a commit-suffixed development filename. It validates the
+payload tree, copies the AppDir `usr` tree into a Flatpak runtime, runs the
+runtime dependency probe, and verifies the runtime ELF digest is unchanged.
+The output also contains internal checksum and source records; these are not
+required public Release attachments.
 
 #### Standalone bundle installation and update limits
 

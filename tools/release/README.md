@@ -25,3 +25,21 @@ and stable Linux Flatpak bundle. Do not publish the Flatpak runtime archive,
 `release-source.json`, or standalone checksum/source-list assets; checksum and
 source records remain CI or local internal validation artifacts. GitHub Release
 should contain only the three installable packages.
+
+Release workflow design: the Linux job compiles once, creates a persistent
+AppImage AppDir, and exports the stable Flatpak by reusing that AppDir's
+`usr` tree. It does not perform a second source compilation for Flatpak.
+The workflow exports a stable Flatpak directly and uploads it alongside the
+Windows ZIP and AppImage. After both platform jobs succeed, the publication
+job checks that exactly those three packages are uploaded and nonempty before
+publishing the draft. Re-runs validate an existing public release without
+changing its publication state.
+AppImage fixture passes 8/8 checks, Flatpak Python fixtures pass 6/6, the
+workflow shell fragments pass `bash -n`, actionlint 1.7.12 passes, the Flatpak
+reuse probe resolves 29 ELF files and four libraries, and the SDL
+PipeWire/static focused compile passes. Stable bundle export exits 0, isolated
+user installation and sandbox shell checks pass, and the installed main ELF
+SHA-256 matches the AppImage input. Full Release CI has not run this workflow;
+these checks do not rewrite the already published v0.7.3 provenance. Evidence:
+`out/release-workflow-reuse/flatpak-package.log`, `flatpak-source.json`, and
+`install-check.log`.

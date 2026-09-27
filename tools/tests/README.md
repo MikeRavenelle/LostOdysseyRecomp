@@ -694,6 +694,18 @@ Release packaging accepts a manual `release_tag` and checks out that existing ta
 
 Release packaging is separate from test CI. A build or fixture pass is not gameplay or visual acceptance. Passing checks should not be repeated or expanded without a new change, failure or unresolved concern. Avoid tests for reversible low-impact edits and tests that only mirror implementation details.
 
+The release workflow now compiles the Linux source once, retains the AppImage
+AppDir, and exports the stable Flatpak by reusing its
+`usr` tree without a second source build. The current AppImage packaging
+fixture passed 8/8 checks, Flatpak Python fixtures passed 6/6, the workflow
+shell fragments passed `bash -n`, actionlint 1.7.12 passed, the Flatpak reuse
+probe resolved 29 ELF files and four libraries, and the SDL PipeWire/static
+focused compile passed. The stable bundle exited 0, isolated user installation
+and sandbox shell checks passed, and the installed main ELF matched the
+AppImage input by SHA-256. Full Release CI has not run this workflow; these
+checks do not establish gameplay behavior or change the published v0.7.3
+provenance. Evidence is retained under `out/release-workflow-reuse/`.
+
 ## Shader identity reuse
 
 `shader_identity_test.cpp` is a standalone CPU fixture for the byte-hash cache used by renderer shader/pipeline lookup. Its 74 checks cover byte identity, content mutation, relocated sources, forced command-hash collisions, variable lengths and bounded eviction. Compile with `clang-cl /std:c++20 /EHsc /O2 /MT tools/tests/shader_identity_test.cpp` in the Windows SDK environment, directing `/Fo` and `/Fe` to an isolated output directory. The passing run is retained in `out/v0.5.0/performance-fix/candidate/test.log`; it does not establish GPU or whole-game behavior.

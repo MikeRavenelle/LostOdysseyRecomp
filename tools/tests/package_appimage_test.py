@@ -26,6 +26,65 @@ def load_packager():
 
 
 class PackageAppImageTests(unittest.TestCase):
+    def test_explicit_appdir_persists_final_linuxdeploy_tree(self):
+        module = load_packager()
+        with tempfile.TemporaryDirectory(prefix='lo-persist-appdir-') as tmp:
+            base = Path(tmp)
+            binaries = base / 'build' / 'LostOdysseyRecomp'
+            binaries.mkdir(parents=True)
+            (binaries / 'LostOdysseyRecomp').write_bytes(b'mock-runtime')
+            (binaries / 'libdxcompiler.so').write_bytes(b'mock-dxc')
+            output = base / 'output'
+            destination = output / 'LostOdysseyRecomp.AppDir'
+            calls = []
+
+            def fake_linuxdeploy(cmd, **kwargs):
+                calls.append(list(cmd))
+                appdir = Path(cmd[cmd.index('--appdir') + 1])
+                if '--output' not in cmd:
+                    create_mock_apprun(cmd)
+                    library = appdir / 'usr/lib/libcurl.so.4'
+                    library.write_bytes(b'linuxdeploy dependency')
+                    if os.name != 'nt':
+                        (appdir / 'usr/lib/libcurl.so').symlink_to('libcurl.so.4')
+                else:
+                    (Path(kwargs['cwd']) / 'LostOdysseyRecomp-x86_64.AppImage').write_bytes(b'package')
+
+            argv = ['package_appimage.py', '--build', str(base / 'build'),
+                    '--output', str(output), '--appdir', str(destination),
+                    '--version', 'v0.7.3']
+            with patch.object(sys, 'argv', argv), \
+                    patch.object(module.shutil, 'which', return_value='linuxdeploy'), \
+                    patch.object(module.subprocess, 'run', side_effect=fake_linuxdeploy):
+                module.main()
+
+            self.assertEqual(len(calls), 2)
+            self.assertEqual((destination / 'usr/bin/LostOdysseyRecomp').read_bytes(), b'mock-runtime')
+            self.assertEqual((destination / 'usr/lib/libcurl.so.4').read_bytes(), b'linuxdeploy dependency')
+            self.assertTrue((destination / 'usr/share/metainfo/io.github.freefrank.LostOdysseyRecomp.metainfo.xml').is_file())
+            self.assertTrue((destination / 'AppRun').is_file())
+            if os.name != 'nt':
+                link = destination / 'usr/lib/libcurl.so'
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(os.readlink(link), 'libcurl.so.4')
+            self.assertTrue((output / 'LostOdysseyRecomp-linux-x64-v0.7.3.AppImage').is_file())
+
+    def test_explicit_appdir_rejects_existing_destination_without_overwrite(self):
+        module = load_packager()
+        with tempfile.TemporaryDirectory(prefix='lo-existing-appdir-') as tmp:
+            base = Path(tmp)
+            destination = base / 'existing.AppDir'
+            destination.mkdir()
+            marker = destination / 'keep.txt'
+            marker.write_text('preserve', encoding='utf-8')
+            argv = ['package_appimage.py', '--appdir', str(destination)]
+            with patch.object(sys, 'argv', argv), \
+                    patch.object(module.subprocess, 'run') as run:
+                with self.assertRaisesRegex(SystemExit, 'already exists'):
+                    module.main()
+            run.assert_not_called()
+            self.assertEqual(marker.read_text(encoding='utf-8'), 'preserve')
+
     def test_collects_appimage_from_linuxdeploy_cwd_before_temp_cleanup(self):
         module = load_packager()
         with tempfile.TemporaryDirectory(prefix='lo-package-appimage-') as tmp:

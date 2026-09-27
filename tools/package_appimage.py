@@ -39,14 +39,28 @@ def validate_apprun(appdir):
         raise SystemExit("AppRun target is not executable")
 
 
+def validate_appdir_links(appdir):
+    root = appdir.resolve()
+    for entry in (appdir / "usr").rglob("*"):
+        if entry.is_symlink():
+            if entry.readlink().is_absolute() or not entry.resolve(strict=True).is_relative_to(root):
+                raise SystemExit(f"AppDir symlink leaves the AppDir: {entry}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, default=ROOT / "out/build/linux")
     parser.add_argument("--output", type=Path, default=ROOT / "out/releases")
     parser.add_argument("--version", default="")
     parser.add_argument("--linuxdeploy", default="linuxdeploy")
+    parser.add_argument("--appdir", type=Path, help="Persist the final deployed AppDir at this new path")
     parser.add_argument("--dry-layout", action="store_true", help="Create and list an AppDir without linuxdeploy")
     args = parser.parse_args()
+    appdir_destination = args.appdir.absolute() if args.appdir else None
+    if appdir_destination and (appdir_destination.exists() or appdir_destination.is_symlink()):
+        raise SystemExit(f"AppDir destination already exists: {appdir_destination}")
+    if appdir_destination and args.dry_layout:
+        raise SystemExit("--appdir requires linuxdeploy; it cannot be used with --dry-layout")
     build = args.build.resolve()
     runtime = build / "LostOdysseyRecomp/LostOdysseyRecomp"
     dxc = build / "LostOdysseyRecomp/libdxcompiler.so"
@@ -116,12 +130,16 @@ def main():
                                    appdir / "usr/share/licenses/lost-odyssey-recomp")
         desktop = LINUX_PACKAGING / "io.github.freefrank.LostOdysseyRecomp.desktop"
         icon = LINUX_PACKAGING / "io.github.freefrank.LostOdysseyRecomp.png"
+        metainfo = LINUX_PACKAGING / "io.github.freefrank.LostOdysseyRecomp.metainfo.xml"
         applications = appdir / "usr/share/applications"
         icons = appdir / "usr/share/icons/hicolor/256x256/apps"
+        metainfo_dir = appdir / "usr/share/metainfo"
         applications.mkdir(parents=True)
         icons.mkdir(parents=True)
+        metainfo_dir.mkdir(parents=True)
         shutil.copy2(desktop, applications / desktop.name)
         shutil.copy2(icon, icons / icon.name)
+        shutil.copy2(metainfo, metainfo_dir / metainfo.name)
         if args.dry_layout:
             print(f"AppDir: {appdir}")
             for path in sorted(appdir.rglob("*")):
@@ -145,6 +163,7 @@ def main():
         validate_apprun(appdir)
         subprocess.run([*command, "--output", "appimage"], cwd=temporary, check=True)
         validate_apprun(appdir)
+        validate_appdir_links(appdir)
         produced = next(Path(temporary).glob("*.AppImage"), None)
         if produced is None:
             raise SystemExit("linuxdeploy did not produce an AppImage")
@@ -153,6 +172,12 @@ def main():
         checksum_path = destination.with_suffix(".AppImage.sha256")
         checksum = hashlib.sha256(destination.read_bytes()).hexdigest()
         checksum_path.write_text(f"{checksum}  {destination.name}\n", encoding="utf-8")
+        if appdir_destination:
+            appdir_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(appdir, appdir_destination, symlinks=True)
+            validate_apprun(appdir_destination)
+            validate_appdir_links(appdir_destination)
+            print(f"AppDir: {appdir_destination}")
         print(f"SelectAsset: {destination.name}")
         print(f"SelectAsset: {checksum_path.name}")
 
