@@ -1,0 +1,57 @@
+name: PR73 affected recovery policy check
+on:
+  push:
+    branches: [fix/p0-shutdown-p4-continuity-20260927]
+    paths: [.github/workflows/pr73-recovery-apply.yml]
+permissions:
+  contents: read
+jobs:
+  affected-policy:
+    if: github.repository == 'freefrank/LostOdysseyRecomp'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Apply checksum-verified source on exact baseline
+        run: python tools/pr73-recovery-transport/apply.py
+      - name: Configure only GPU-free contracts
+        run: cmake -S tools/tests/streamline_fg -B build/fg-recovery -DLO_STREAMLINE_FG_CPU_ONLY=ON
+      - name: Build only affected recovery test
+        run: cmake --build build/fg-recovery --config Release --target LoFgRuntimePolicyTest --parallel 2
+      - name: Test only affected recovery policy
+        run: ctest --test-dir build/fg-recovery -C Release -R '^streamline_runtime_recovery$' --output-on-failure
+      - name: Preserve affected test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr73-recovery-${{ matrix.os }}
+          path: build/fg-recovery/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 7
+  apply:
+    needs: affected-policy
+    if: github.repository == 'freefrank/LostOdysseyRecomp' && github.ref == 'refs/heads/fix/p0-shutdown-p4-continuity-20260927'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Commit checked source to development branch only
+        shell: bash
+        run: |
+          python tools/pr73-recovery-transport/apply.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(fg): retain shared NGX runtime and gate failed creation retries'
+          git push origin HEAD:refs/heads/fix/p0-shutdown-p4-continuity-20260927
+          echo "Applied commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
