@@ -1,5 +1,6 @@
 #include "fsr_upscaler.h"
 #include "fsr_dispatch_policy.h"
+#include "vulkan_object_trace.h"
 #include "dlss_evaluate_capture.h"
 #include "fsr_mask_policy.h"
 #include "sr_hybrid_mask.h"
@@ -32,8 +33,36 @@ namespace gpu::fsr {
 
 #if defined(LO_HAS_FSR) && LO_HAS_FSR
 namespace {
+VKAPI_ATTR VkResult VKAPI_CALL TraceFsrCreateImageView(VkDevice device, const VkImageViewCreateInfo* info,
+    const VkAllocationCallbacks* allocator, VkImageView* out) {
+    const auto original = reinterpret_cast<PFN_vkCreateImageView>(vkGetDeviceProcAddr(device, "vkCreateImageView"));
+    if (!original) return VK_ERROR_INITIALIZATION_FAILED;
+    const auto result = original(device, info, allocator, out);
+    if (result == VK_SUCCESS && vk_object_trace::Permit())
+        std::fprintf(stderr, "VK_OBJECT_TRACE route=fsr_sdk event=create_view device=0x%llx image=0x%llx view=0x%llx format=%u aspect=%u mip=%u\n",
+            vk_object_trace::Id(device), vk_object_trace::Id(info->image), vk_object_trace::Id(*out),
+            unsigned(info->format), unsigned(info->subresourceRange.aspectMask), info->subresourceRange.baseMipLevel);
+    return result;
+}
+VKAPI_ATTR void VKAPI_CALL TraceFsrDestroyImageView(VkDevice device, VkImageView view, const VkAllocationCallbacks* allocator) {
+    const auto original = reinterpret_cast<PFN_vkDestroyImageView>(vkGetDeviceProcAddr(device, "vkDestroyImageView"));
+    if (vk_object_trace::Permit())
+        std::fprintf(stderr, "VK_OBJECT_TRACE route=fsr_sdk event=destroy_view device=0x%llx view=0x%llx\n",
+            vk_object_trace::Id(device), vk_object_trace::Id(view));
+    if (original) original(device, view, allocator);
+}
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL FsrGetDeviceProcAddr(VkDevice device, const char* name) {
-    if (auto function = vkGetDeviceProcAddr(device, name)) return function;
+    if (auto function = vkGetDeviceProcAddr(device, name)) {
+        // FFX has its own device table, independent of Plume's Volk pointers.
+        // Logging must forward to this same original native dispatch chain.
+        if (vk_object_trace::Enabled()) {
+            if (std::strcmp(name, "vkCreateImageView") == 0)
+                return reinterpret_cast<PFN_vkVoidFunction>(TraceFsrCreateImageView);
+            if (std::strcmp(name, "vkDestroyImageView") == 0)
+                return reinterpret_cast<PFN_vkVoidFunction>(TraceFsrDestroyImageView);
+        }
+        return function;
+    }
     // The pinned SDK asks for the KHR spelling even when the host enables the
     // Vulkan 1.1 core command instead of VK_KHR_get_memory_requirements2.
     if (std::strcmp(name, "vkGetBufferMemoryRequirements2KHR") == 0)
@@ -814,6 +843,10 @@ Attempt Controller::RecordIsolated(plume::VulkanCommandList& commands, const Con
         recorded.reset = dispatch.reset; recorded.compositionBound = hybridConfidence != nullptr;
         capture->stage = "dispatch"; capture->evaluated = true;
     }
+    if (vk_object_trace::Permit())
+        std::fprintf(stderr, "VK_OBJECT_TRACE route=fsr_sdk event=dispatch frame=%llu use=%llu completed_serial=%llu pending_uses=%zu\n",
+            vk_object_trace::Id(inputs.renderFrameId), vk_object_trace::Id(useId),
+            vk_object_trace::Id(impl_->completed), impl_->uses.size());
     const auto result = ffxFsr3UpscalerContextDispatch(impl_->context.get(), &dispatch);
     attempt.sdkResult = int32_t(result);
     if (capture) {

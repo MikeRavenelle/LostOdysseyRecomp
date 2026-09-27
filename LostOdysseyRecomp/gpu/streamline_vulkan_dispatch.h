@@ -34,6 +34,9 @@ private:
     static VkResult VKAPI_PTR GetSwapchainImages(VkDevice, VkSwapchainKHR, uint32_t*, VkImage*);
     static VkResult VKAPI_PTR Acquire(VkDevice, VkSwapchainKHR, uint64_t, VkSemaphore, VkFence, uint32_t*);
     static VkResult VKAPI_PTR DeviceIdle(VkDevice);
+    static VkResult VKAPI_PTR CreateImageView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView*);
+    static void VKAPI_PTR DestroyImageView(VkDevice, VkImageView, const VkAllocationCallbacks*);
+    static VkResult VKAPI_PTR CreateFramebuffer(VkDevice, const VkFramebufferCreateInfo*, const VkAllocationCallbacks*, VkFramebuffer*);
     static VkResult VKAPI_PTR CreateSurface(VkInstance, const VkWin32SurfaceCreateInfoKHR*, const VkAllocationCallbacks*, VkSurfaceKHR*);
     static void VKAPI_PTR DestroySurface(VkInstance, VkSurfaceKHR, const VkAllocationCallbacks*);
     Runtime& sl_;
@@ -54,6 +57,11 @@ private:
     PFN_vkCreateWin32SurfaceKHR createSurface_{};
     PFN_vkDestroySurfaceKHR destroySurface_{};
     std::array<uint64_t, 8> counts_{};
+    PFN_vkCreateImageView createImageView_{};
+    PFN_vkDestroyImageView destroyImageView_{};
+    PFN_vkCreateFramebuffer createFramebuffer_{};
+    uint32_t tracePresentBudget_ = 0;
+    bool objectTraceInstalled_ = false;
     bool featureSupported_{};
     bool creationInstalled_{};
     bool deviceInstalled_{};

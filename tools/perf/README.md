@@ -122,3 +122,21 @@ window recorded 2,400 D3D12 accepted-present intervals with mean/p95/p99
 sampler-version splits, with two arena splits. This is a single substitute
 scene window without before/after A/B or a final Lightweight rerun; it does not
 establish an FPS gain or stable 60 FPS.
+
+### PR73 Vulkan object attribution
+
+When `run-fg-game.ps1` is given `-ValidationLayerDirectory`, it also sets
+`LO_VK_OBJECT_TRACE=1` for that isolated process. Keep **both** `validation.log`
+and `stderr.log`, plus `runtime.log` and `sl.log`, from the same run. The
+validation layer writes VUIDs to `validation.log`; `VK_OBJECT_TRACE` records
+host-facing swapchain images, initial Present waits per swapchain, host/FSR
+image-view create/destroy routes, framebuffer mappings, point-pipeline shader
+identities, and existing renderer fence-retirement events in `stderr.log`.
+
+The trace is off unless explicitly enabled. It is event-bounded (8,192 events,
+with a truncation warning), not a live-resource scan or GPU synchronization
+mechanism. A `route` label identifies the intercepted call path, not every
+consumer of a resource; Streamline's private dispatch table is not intercepted.
+Missing trace entries must not be used to assign ownership to the SDK. Trace
+runs are diagnostic runs, not performance baselines. This instrumentation does
+not fix Present hazards, authorize ImageView destruction, or prove display FPS.

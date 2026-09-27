@@ -89,6 +89,8 @@ if ($validationLayer) {
     $start.Environment['VK_LAYER_PATH'] = $validationLayer
     $start.Environment['VK_INSTANCE_LAYERS'] = 'VK_LAYER_KHRONOS_validation'
     $start.Environment['VK_LAYER_SETTINGS_PATH'] = $run
+    # Event-only object attribution; no extra GPU waits or image-content scans.
+    $start.Environment['LO_VK_OBJECT_TRACE'] = '1'
     @(
         'khronos_validation.validate_sync = true'
         'khronos_validation.report_flags = error,warn,info'

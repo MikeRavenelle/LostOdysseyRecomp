@@ -21,6 +21,8 @@
 #include "texture_key.h"
 #include "depth_format.h"
 #include "depth_clear_layout.h"
+#include "draw_attachment_policy.h"
+#include "vulkan_object_trace.h"
 #include "polygon_offset.h"
 #include "pipeline_cache.h"
 #include "texture_layout.h"
@@ -3447,12 +3449,19 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         motionReplay->ReleaseDepthAfterGpuCompletion(texture->texture.get());
                     motionReplay->ReleaseCompletedThrough(s.motionSerial);
                 }
-                for (const auto& texture : s.retiredTextures)
+                for (const auto& texture : s.retiredTextures) {
+                    if (vulkan && texture && texture->texture && vk_object_trace::Permit()) {
+                        const auto& image = *static_cast<const VulkanTexture*>(texture->texture.get());
+                        std::fprintf(stderr, "VK_OBJECT_TRACE route=renderer_retired event=fence_completed_release slot=%u allocation=%llu image=0x%llx view=0x%llx temporal_serial=%llu sr_serial=%llu\n",
+                            i, vk_object_trace::Id(texture->allocationSerial), vk_object_trace::Id(image.vk),
+                            vk_object_trace::Id(image.imageView), vk_object_trace::Id(s.temporalSerial), vk_object_trace::Id(s.srSubmissionSerial));
+                    }
                     for (auto fb = framebuffers.begin(); fb != framebuffers.end();)
                         if (fb->first.first == texture->texture.get() || fb->first.second == texture->texture.get())
                             fb = framebuffers.erase(fb);
                         else
                             ++fb;
+                }
                 for (auto& cache : s.textureSetCache) cache.Clear();
                 s.retiredTextures.clear();
                 s.samplerVersions.clear();
@@ -4893,6 +4902,15 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 auto it = framebuffers.find(key);
                 if (it != framebuffers.end())
                     return it->second.get();
+                if (vulkan && vk_object_trace::Permit()) {
+                    const auto* c = static_cast<const VulkanTexture*>(key.first);
+                    const auto* d = static_cast<const VulkanTexture*>(key.second);
+                    std::fprintf(stderr, "VK_OBJECT_TRACE route=renderer event=framebuffer_mapping color_image=0x%llx color_view=0x%llx color_extent=%ux%u depth_image=0x%llx depth_view=0x%llx depth_extent=%ux%u\n",
+                        c ? vk_object_trace::Id(c->vk) : 0ull, c ? vk_object_trace::Id(c->imageView) : 0ull,
+                        color ? color->width : 0u, color ? color->height : 0u,
+                        d ? vk_object_trace::Id(d->vk) : 0ull, d ? vk_object_trace::Id(d->imageView) : 0ull,
+                        depth ? depth->width : 0u, depth ? depth->height : 0u);
+                }
                 const RenderTexture* colors[1] = { key.first };
                 RenderFramebufferDesc desc(colors, color ? 1u : 0u, key.second);
                 auto fb = device->createFramebuffer(desc);
@@ -5372,6 +5390,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 
             std::unique_ptr<RenderPipeline> CreatePipeline(const PipelineKey& key, Shader* vs, Shader* ps, bool trace)
             {
+                if (vulkan && key.prim == 1 && vs && vs->shader && vk_object_trace::Permit())
+                    std::fprintf(stderr, "VK_OBJECT_TRACE route=renderer event=point_pipeline vs_hash=0x%llx module=0x%llx uses_point_size_metadata=%u color_mask=%u depth_format=%u\n",
+                        vk_object_trace::Id(key.vs), vk_object_trace::Id(static_cast<const VulkanShader*>(vs->shader.get())->vk),
+                        unsigned(vs->info.usesPointSize), key.colorMask, key.depthFormat);
                 return device->createGraphicsPipeline(DescribePipeline(key, vs, ps, trace));
             }
             RenderGraphicsPipelineDesc DescribePipeline(const PipelineKey& key, Shader* vs, Shader* ps, bool trace)
@@ -5824,7 +5846,8 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 }
                 key.colorMask = colorWrites ? (Reg(REG_RB_COLOR_MASK) & 0xF) : 0;
                 key.prim = info.primitiveType;
-                key.rtFormat = uint32_t(color->format);
+                key.rtFormat = uint32_t(draw_attachment::DepthOnly(key.colorMask, depth != nullptr)
+                    ? RenderFormat::UNKNOWN : color->format);
                 key.depthFormat = depth ? uint32_t(depth->format) : 0;
                     pipelineLookupTimer.AddTo(tPipelineLookup);
                 }
@@ -5838,7 +5861,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 // A draw with no color write mask rasterizes to its depth target.
                 // Its bound color attachment can legitimately use a different
                 // catalog mapping while the pixel shader still writes depth.
-                const bool depthOnlyRaster = key.colorMask == 0 && depth != nullptr;
+                const bool depthOnlyRaster = draw_attachment::DepthOnly(key.colorMask, depth != nullptr);
                 HostTexture* rasterTarget = depthOnlyRaster ? depth : color;
 
                 // Constants.
@@ -7205,7 +7228,11 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     drops.scissor++;
                     return;
                 }
-                RenderFramebuffer* framebuffer = GetFramebuffer(color, depth);
+                // Match the PSO's attachments. A masked color target may be
+                // 2x-scaled while the actual depth raster target is fixed-size.
+                // Keeping that unused attachment makes VkFramebuffer invalid
+                // (04533/04534); reducing the depth draw's viewport would hide it.
+                RenderFramebuffer* framebuffer = GetFramebuffer(depthOnlyRaster ? nullptr : color, depth);
                 commandList->setFramebuffer(framebuffer);
                 commandList->setViewports(&rasterViewport, 1);
                 commandList->setScissors(&scissor, 1);
@@ -8692,7 +8719,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                     depthInfo & 0xFFF, pitch, (surfaceInfo >> 16) & 3, maxX, maxY, rectZ, word, k.format, k.pitch, value.r, value.g, value.b, value.a);
                         }
                         // Re-bind the fill's own framebuffer for the draw that follows.
-                        commandList->setFramebuffer(GetFramebuffer(color, depth));
+                        commandList->setFramebuffer(framebuffer);
                     }
 
                     std::vector<RenderTargetKey> others;

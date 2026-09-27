@@ -1,6 +1,7 @@
 #if defined(_WIN32) && defined(LO_ENABLE_STREAMLINE_FG)
 #include "streamline_vulkan_dispatch.h"
 #include "dlss_ngx.h"
+#include "vulkan_object_trace.h"
 #include <sl_helpers_vk.h>
 #include <algorithm>
 #include <cassert>
@@ -216,11 +217,26 @@ bool VulkanDispatch::InstallDeviceHooks(VkInstance instance, VkDevice device, st
     vkQueuePresentKHR = Present; vkCreateSwapchainKHR = CreateSwapchain; vkDestroySwapchainKHR = DestroySwapchain;
     vkGetSwapchainImagesKHR = GetSwapchainImages; vkAcquireNextImageKHR = Acquire; vkDeviceWaitIdle = DeviceIdle;
     vkCreateWin32SurfaceKHR = CreateSurface; vkDestroySurfaceKHR = DestroySurface;
+    // Only Plume/host calls through these Volk pointers are attributed here.
+    // Streamline owns a separate dispatch table; FSR's SDK resolver is traced
+    // separately. None of these wrappers alters a returned handle or wait.
+    if (vk_object_trace::Enabled() && vkCreateImageView && vkDestroyImageView && vkCreateFramebuffer) {
+        createImageView_ = vkCreateImageView; destroyImageView_ = vkDestroyImageView;
+        createFramebuffer_ = vkCreateFramebuffer;
+        vkCreateImageView = CreateImageView; vkDestroyImageView = DestroyImageView;
+        vkCreateFramebuffer = CreateFramebuffer;
+        objectTraceInstalled_ = true;
+    }
     deviceInstalled_ = true;
     return true;
 }
 void VulkanDispatch::RestoreDeviceHooks() {
     if (!deviceInstalled_) return;
+    if (objectTraceInstalled_) {
+        vkCreateImageView = createImageView_; vkDestroyImageView = destroyImageView_;
+        vkCreateFramebuffer = createFramebuffer_;
+        objectTraceInstalled_ = false;
+    }
     vkQueuePresentKHR = present_; vkCreateSwapchainKHR = createSwapchain_; vkDestroySwapchainKHR = destroySwapchain_;
     vkGetSwapchainImagesKHR = getSwapchainImages_; vkAcquireNextImageKHR = acquire_; vkDeviceWaitIdle = deviceIdle_;
     vkCreateWin32SurfaceKHR = createSurface_; vkDestroySurfaceKHR = destroySurface_;
@@ -239,20 +255,74 @@ void VulkanDispatch::Report() const {
 // Present uses a queue, and surfaces use an instance, so those are written explicitly.
 VkResult VKAPI_PTR VulkanDispatch::Present(VkQueue queue, const VkPresentInfoKHR* info) {
     ++current_->counts_[0];
+    if (vk_object_trace::Enabled() && current_->tracePresentBudget_ && info) {
+        --current_->tracePresentBudget_;
+        if (vk_object_trace::Permit()) {
+            std::fprintf(stderr, "VK_OBJECT_TRACE route=host_wsi event=present queue=0x%llx swapchains=%u waits=%u\n",
+                vk_object_trace::Id(queue), info->swapchainCount, info->waitSemaphoreCount);
+            for (uint32_t i = 0; i < info->swapchainCount; ++i)
+                std::fprintf(stderr, "VK_OBJECT_TRACE present_chain=0x%llx image_index=%u\n",
+                    vk_object_trace::Id(info->pSwapchains[i]), info->pImageIndices[i]);
+            for (uint32_t i = 0; i < info->waitSemaphoreCount; ++i)
+                std::fprintf(stderr, "VK_OBJECT_TRACE present_wait=0x%llx\n", vk_object_trace::Id(info->pWaitSemaphores[i]));
+        }
+    }
     auto p = reinterpret_cast<PFN_vkQueuePresentKHR>(current_->sl_.DeviceProc()(current_->hookedDevice_, "vkQueuePresentKHR"));
     return p ? p(queue, info) : VK_ERROR_INITIALIZATION_FAILED;
 }
 VkResult VKAPI_PTR VulkanDispatch::CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR* info, const VkAllocationCallbacks* a, VkSwapchainKHR* out) {
-    ++current_->counts_[1]; auto p = reinterpret_cast<PFN_vkCreateSwapchainKHR>(current_->sl_.DeviceProc()(device, "vkCreateSwapchainKHR")); return p(device, info, a, out);
+    ++current_->counts_[1]; auto p = reinterpret_cast<PFN_vkCreateSwapchainKHR>(current_->sl_.DeviceProc()(device, "vkCreateSwapchainKHR"));
+    const auto result = p(device, info, a, out);
+    if (result == VK_SUCCESS && vk_object_trace::Enabled()) current_->tracePresentBudget_ = 4;
+    return result;
 }
 void VKAPI_PTR VulkanDispatch::DestroySwapchain(VkDevice device, VkSwapchainKHR chain, const VkAllocationCallbacks* a) {
     ++current_->counts_[2]; auto p = reinterpret_cast<PFN_vkDestroySwapchainKHR>(current_->sl_.DeviceProc()(device, "vkDestroySwapchainKHR")); p(device, chain, a);
 }
 VkResult VKAPI_PTR VulkanDispatch::GetSwapchainImages(VkDevice device, VkSwapchainKHR chain, uint32_t* n, VkImage* images) {
-    ++current_->counts_[3]; auto p = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(current_->sl_.DeviceProc()(device, "vkGetSwapchainImagesKHR")); return p(device, chain, n, images);
+    ++current_->counts_[3]; auto p = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(current_->sl_.DeviceProc()(device, "vkGetSwapchainImagesKHR"));
+    const uint32_t capacity = n ? *n : 0;
+    const auto result = p(device, chain, n, images);
+    if (images && n && (result == VK_SUCCESS || result == VK_INCOMPLETE) && vk_object_trace::Permit()) {
+        // Log only the actual host-facing return. Do not bypass the interposer
+        // with a second native query, assume fake==real, or infer GPU completion.
+        const auto count = std::min(capacity, *n);
+        std::fprintf(stderr, "VK_OBJECT_TRACE route=host_wsi event=images chain=0x%llx count=%u result=%d\n",
+            vk_object_trace::Id(chain), count, int(result));
+        for (uint32_t i = 0; i < count; ++i)
+            std::fprintf(stderr, "VK_OBJECT_TRACE host_image chain=0x%llx index=%u image=0x%llx\n",
+                vk_object_trace::Id(chain), i, vk_object_trace::Id(images[i]));
+    }
+    return result;
 }
 VkResult VKAPI_PTR VulkanDispatch::Acquire(VkDevice device, VkSwapchainKHR chain, uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t* index) {
     ++current_->counts_[4]; auto p = reinterpret_cast<PFN_vkAcquireNextImageKHR>(current_->sl_.DeviceProc()(device, "vkAcquireNextImageKHR")); return p(device, chain, timeout, semaphore, fence, index);
+}
+VkResult VKAPI_PTR VulkanDispatch::CreateImageView(VkDevice device, const VkImageViewCreateInfo* info,
+    const VkAllocationCallbacks* allocator, VkImageView* out) {
+    const auto result = current_->createImageView_(device, info, allocator, out);
+    if (result == VK_SUCCESS && vk_object_trace::Permit())
+        std::fprintf(stderr, "VK_OBJECT_TRACE route=host_plume event=create_view device=0x%llx image=0x%llx view=0x%llx format=%u aspect=%u mip=%u\n",
+            vk_object_trace::Id(device), vk_object_trace::Id(info->image), vk_object_trace::Id(*out),
+            unsigned(info->format), unsigned(info->subresourceRange.aspectMask), info->subresourceRange.baseMipLevel);
+    return result;
+}
+void VKAPI_PTR VulkanDispatch::DestroyImageView(VkDevice device, VkImageView view, const VkAllocationCallbacks* allocator) {
+    if (vk_object_trace::Permit())
+        std::fprintf(stderr, "VK_OBJECT_TRACE route=host_plume event=destroy_view device=0x%llx view=0x%llx\n",
+            vk_object_trace::Id(device), vk_object_trace::Id(view));
+    current_->destroyImageView_(device, view, allocator);
+}
+VkResult VKAPI_PTR VulkanDispatch::CreateFramebuffer(VkDevice device, const VkFramebufferCreateInfo* info,
+    const VkAllocationCallbacks* allocator, VkFramebuffer* out) {
+    if (info && vk_object_trace::Permit()) {
+        std::fprintf(stderr, "VK_OBJECT_TRACE route=host_plume event=create_framebuffer device=0x%llx pass=0x%llx width=%u height=%u attachments=%u\n",
+            vk_object_trace::Id(device), vk_object_trace::Id(info->renderPass), info->width, info->height, info->attachmentCount);
+        if (!(info->flags & VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT))
+            for (uint32_t i = 0; i < info->attachmentCount; ++i)
+                std::fprintf(stderr, "VK_OBJECT_TRACE framebuffer_attachment=%u view=0x%llx\n", i, vk_object_trace::Id(info->pAttachments[i]));
+    }
+    return current_->createFramebuffer_(device, info, allocator, out);
 }
 VkResult VKAPI_PTR VulkanDispatch::DeviceIdle(VkDevice device) {
     ++current_->counts_[5]; auto p = reinterpret_cast<PFN_vkDeviceWaitIdle>(current_->sl_.DeviceProc()(device, "vkDeviceWaitIdle")); return p(device);
