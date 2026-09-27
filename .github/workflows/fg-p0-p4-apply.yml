@@ -1,0 +1,78 @@
+name: Validate and apply P0 P4 development patch
+on:
+  push:
+    branches: [fix/p0-shutdown-p4-continuity-20260927]
+    paths: [.github/workflows/fg-p0-p4-apply.yml]
+permissions:
+  contents: read
+env:
+  PATCH_SHA256: f3746a2ae859895c079e739d29abaaa5b04db5eca60e2f4d2d5294243c51c555
+  PATCH_GZIP_BASE64: >-
+    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
+jobs:
+  contracts:
+    if: github.repository == 'freefrank/LostOdysseyRecomp'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Apply checksum-verified patch to the exact baseline
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD^)" = "3b5162638bde283d886e6e492cfcf0c19dd6870b"
+          python - <<'PY'
+          import base64, gzip, hashlib, os, pathlib, subprocess
+          raw = gzip.decompress(base64.b64decode(os.environ['PATCH_GZIP_BASE64']))
+          assert hashlib.sha256(raw).hexdigest() == os.environ['PATCH_SHA256']
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'fg-p0-p4.patch'
+          path.write_bytes(raw)
+          subprocess.run(['git', 'apply', '--check', '--index', str(path)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(path)], check=True)
+          PY
+      - name: Configure GPU-free contracts
+        run: cmake -S tools/tests/streamline_fg -B build/fg-contracts -DLO_STREAMLINE_FG_CPU_ONLY=ON
+      - name: Build
+        run: cmake --build build/fg-contracts --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build/fg-contracts -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p0-p4-contracts-${{ matrix.os }}
+          path: build/fg-contracts/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 7
+  publish:
+    needs: contracts
+    if: github.repository == 'freefrank/LostOdysseyRecomp' && github.ref == 'refs/heads/fix/p0-shutdown-p4-continuity-20260927'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply validated patch and fast-forward development branch
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64, gzip, hashlib, os, pathlib, subprocess
+          raw = gzip.decompress(base64.b64decode(os.environ['PATCH_GZIP_BASE64']))
+          assert hashlib.sha256(raw).hexdigest() == os.environ['PATCH_SHA256']
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'fg-p0-p4.patch'
+          path.write_bytes(raw)
+          subprocess.run(['git', 'apply', '--check', '--index', str(path)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(path)], check=True)
+          PY
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(fg): enforce cancellation and owner shutdown, wire FSR continuity'
+          git push origin HEAD:refs/heads/fix/p0-shutdown-p4-continuity-20260927
+          echo "Applied commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
