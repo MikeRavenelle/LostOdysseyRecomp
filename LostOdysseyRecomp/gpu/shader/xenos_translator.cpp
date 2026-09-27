@@ -828,6 +828,8 @@ namespace xenos
                 }
                 out += "void XeNoKill(float x) {}\n\n";
 
+                if (!isPixelShader)
+                    out += "struct XePointSizeOutput { [[vk::builtin(\"PointSize\")]] float size : PSIZE; };\n";
                 out += "void main(\n";
                 if (isPixelShader)
                 {
@@ -848,6 +850,7 @@ namespace xenos
                     out += "\tout precise float4 oPos : SV_Position";
                     for (uint32_t i = 0; i < 16; i++)
                         print(",\n\tout float4 o{0} : TEXCOORD{0}", i);
+                    out += ",\n\tout XePointSizeOutput xePointSizeOut";
                 }
                 out += ")\n{\n";
 
@@ -876,7 +879,7 @@ namespace xenos
                     out += "\toPos = float4(0.0, 0.0, 0.0, 1.0);\n";
                     for (uint32_t i = 0; i < 16; i++)
                         println("\to{} = 0.0;", i);
-                    out += "\tfloat4 oPointSize = 0.0;\n";
+                    out += "\tfloat4 oPointSize = float4(XeDefaultPointSize(), 0.0, 0.0, 0.0);\n";
                 }
             }
 
@@ -923,6 +926,7 @@ namespace xenos
                     out += "\t}\n";
                     // Debug aid (LO_VS_DEBUG): replace every triangle by one fixed on-screen triangle.
                     out += "\tif (xeFlags & 4u) { o15 = oPos; uint k = xeVertexId % 3u; oPos = float4(k == 0u ? -0.6 : (k == 1u ? 0.6 : 0.0), k == 2u ? 0.6 : -0.6, 0.5, 1.0); }\n";
+                    out += "\txePointSizeOut.size = XeClampPointSize(oPointSize.x);\n";
                 }
             }
 

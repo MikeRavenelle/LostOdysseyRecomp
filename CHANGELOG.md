@@ -4,6 +4,18 @@ One record of completed changes, with unpublished work separated from verified r
 
 本文统一记录已完成改动，并区分未发布内容与已确认发布版本；日期采用 UTC 发布日期。后续计划见[路线图](docs/ROADMAP.zh-CN.md)，不作为已发布功能记录。
 
+## v0.7.5 — Unreleased / 未发布
+
+### English
+
+- Gate 1 host repair follow-up: reset stale renderer image bindings when a descriptor set is reused, cover point-size translation and cache-version updates, and preserve the 1024-byte shared constants block with its 16-byte transfer field at offset 240. The native Windows build, focused shader/CPU checks, bounded FSR+FG resize run, and authorized 70-second muted foreground FSR Quality run completed within the recorded scope; the foreground run exited 0 with serial 2975/2975, 1,980 generated intervals, 4,955 actual presents, and zero sampled SDK/feature-creation errors. The maintainer accepted Gate 1 as passed on 2026-09-27; the known SDK-related `PRESENT-AFTER-WRITE` report is retained in the roadmap backlog. Display classification does not prove generated frames reached a physical display; native failure injection, settings restart, D3D12 GPU acceptance and full cross-platform point-size semantics remain outside this evidence. See [the Gate 1 host repair note](docs/notes/gate1-host-repair-20260927.md).
+- Experimental Windows Vulkan FG validation follow-up: corrected the game path to pass the created swapchain format instead of the wrapper's `VK_FORMAT_UNDEFINED` value, and allowed frame-generation qualification to keep same-frame, contract-complete Hybrid motion enabled for continuity. The Windows Vulkan build passed and the affected CPU contract completed 52 checks; the bounded foreground Uhra run stayed enabled for 48 sampled cycles over 70 seconds, reported SDK errors 0, and exited 0 with the isolated baseline preserved. At that earlier checkpoint Gate 1 remained unpassed; the later 2026-09-27 maintainer acceptance is recorded in [the Gate 1 host repair note](docs/notes/gate1-host-repair-20260927.md).
+
+### 简体中文
+
+- Gate 1 宿主侧修复补充：复用 descriptor set 时重置 renderer 残留的 image binding，补齐 point-size 翻译与缓存版本更新，并保持 1024 字节共享 constants block 及其 offset 240 处的 16 字节 transfer 字段不变。Windows 原生构建、限定的 shader／CPU 检查、FSR+FG 尺寸切换和获授权的 70 秒静音前台 FSR Quality 运行均在记录范围内完成；前台运行 exit 0，serial 为 2975/2975，生成区间 1,980 次、actual presents 4,955 次，采样 SDK／feature 创建错误均为 0。维护者于 2026-09-27 接受 Gate 1 已通过，已知 SDK 相关 `PRESENT-AFTER-WRITE` 保留在 roadmap backlog；显示分类不足以证明生成帧到达物理显示，native failure injection、settings restart、D3D12 GPU 验收和全平台 point-size 语义仍待后续。详见[Gate 1 宿主修复记录](docs/notes/gate1-host-repair-20260927.md)。
+- Windows Vulkan 实验性 FG 验证补充：修正游戏路径，改用已创建 swapchain 的实际格式，避免 wrapper 的 `VK_FORMAT_UNDEFINED` 值阻断所有 FG 输入；同帧合同完整的 Hybrid 运动输入现在可保持 FG 连续启用。Windows Vulkan 构建通过，受影响 CPU contract 通过 52 项检查；前台 Uhra 静音运行 70 秒，48 个采样周期保持启用，SDK errors 为 0，进程以 0 退出且隔离 baseline 保留。在该早期检查点 validation 和完整生命周期／显示证据仍不完整，Gate 1 尚未通过；后续维护者验收见[Gate 1 宿主修复记录](docs/notes/gate1-host-repair-20260927.md)。详见[FG checked completion 验证记录](docs/notes/v0.8.0-fg-checked-completion-20260927.md)。
+
 ## v0.7.4 — Unreleased / 未发布
 
 ### English
@@ -18,7 +30,6 @@ One record of completed changes, with unpublished work separated from verified r
 
 ### English
 
-- Experimental Windows Vulkan FG validation follow-up: corrected the game path to pass the created swapchain format instead of the wrapper's `VK_FORMAT_UNDEFINED` value, and allowed frame-generation qualification to keep same-frame, contract-complete Hybrid motion enabled for continuity. The Windows Vulkan build passed and the affected CPU contract completed 52 checks; the bounded foreground Uhra run stayed enabled for 48 sampled cycles over 70 seconds, reported SDK errors 0, and exited 0 with the isolated baseline preserved. Gate 1 remains unpassed because validation and full lifecycle/display evidence are incomplete. See [the checked-completion validation note](docs/notes/v0.8.0-fg-checked-completion-20260927.md).
 - Release workflow refactor: the Linux job targets one source compilation, persistent AppImage AppDir output, and Flatpak export by reusing the AppDir `usr` tree without a second source build. AppImage 8/8 and Flatpak 6/6 fixtures, workflow shell `bash -n`, actionlint 1.7.12, 29-ELF/four-library reuse probing, SDL PipeWire/static compilation, stable bundle export, and isolated installation checks passed; full Release CI has not run this workflow and the published v0.7.3 provenance is unchanged.
 - Planning targets for v0.8.0:
   - Added D3D12 DLSS Frame Generation and dynamic Multi-Frame Generation (dynamic MFG; target APIs, platforms, or generation multipliers not predetermined) to the v0.8.0 roadmap, alongside existing fixed 2× DLSS FG on Windows Vulkan and independent FSR Frame Generation. Added Linux AArch64, macOS AArch64 (Apple Silicon), experimental Android support, and removal of the legacy PM4 packet translation layer as future roadmap targets for v0.8.0 (Flatpak packaging was delivered early in v0.7.1). All newly incorporated items represent uncompleted roadmap planning rather than current implementation, test verification, user acceptance, or release delivery, nor does targeting Apple Silicon preclude other macOS architectures or promise complete Android support.
@@ -27,7 +38,6 @@ One record of completed changes, with unpublished work separated from verified r
 
 ### 简体中文
 
-- Windows Vulkan 实验性 FG 验证补充：修正游戏路径，改用已创建 swapchain 的实际格式，避免 wrapper 的 `VK_FORMAT_UNDEFINED` 值阻断所有 FG 输入；同帧合同完整的 Hybrid 运动输入现在可保持 FG 连续启用。Windows Vulkan 构建通过，受影响 CPU contract 通过 52 项检查；前台 Uhra 静音运行 70 秒，48 个采样周期保持启用，SDK errors 为 0，进程以 0 退出且隔离 baseline 保留。由于 validation 和完整生命周期／显示证据仍不完整，Gate 1 尚未通过。详见[FG checked completion 验证记录](docs/notes/v0.8.0-fg-checked-completion-20260927.md)。
 - 发布工作流重构：Linux job 目标为只进行一次源码编译、保留 AppImage AppDir，并从其 `usr` 树复用导出 Flatpak，避免第二次源码构建。AppImage 8/8、Flatpak 6/6 fixture、workflow shell `bash -n`、actionlint 1.7.12、29 个 ELF/4 个库复用 probe、SDL PipeWire/static 编译、stable bundle 导出及隔离安装检查均已通过；完整 Release CI 尚未运行，本项不改变已发布 v0.7.3 的来源记录。
 - v0.8.0 规划目标更新：
   - 将 D3D12 DLSS 插帧（D3D12 DLSS FG）与动态多帧生成（动态 MFG，目标 API、平台或生成倍率不作预先设定）纳入本期 v0.8.0 路线图规划，并保留现有 Windows Vulkan 下固定 2× DLSS FG 与独立 FSR 插帧规划目标；新增 Linux AArch64、macOS AArch64（Apple Silicon）、实验性 Android 支持以及移除既有 PM4 数据包转换层作为未来规划目标（Flatpak 打包已提前于 v0.7.1 交付）。所有新纳入项目均为未完成规划，不宣称已有实现、测试验证、用户验收或发布交付，明确 Apple Silicon 目标亦不排除后续支持其他 macOS 架构的可能性，且不对 Android 承诺完整支持。

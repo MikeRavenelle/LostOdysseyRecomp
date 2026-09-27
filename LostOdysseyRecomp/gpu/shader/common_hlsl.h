@@ -54,6 +54,28 @@ cbuffer XeShared : register(b1, space0)
 };
 #endif
 
+// Guest draws do not use the transfer-blit words. Keep the shared layout
+// unchanged for the other producers of this constant block.
+#define xePointState xeTransfer
+
+float XeClampPointSize(float size)
+{
+    float minimum = float(xePointState.y & 0xffffu) * 0.125;
+    float maximum = float(xePointState.y >> 16) * 0.125;
+    maximum = min(max(maximum, 1.0), max(asfloat(xePointState.z), 1.0));
+    minimum = min(max(minimum, 1.0), maximum);
+    return clamp(size, minimum, maximum);
+}
+
+float XeDefaultPointSize()
+{
+    // Xenos stores half width and height. Vulkan points are square; use the
+    // larger dimension so neither axis is smaller than the guest requests.
+    uint halfWidth = xePointState.x >> 16;
+    uint halfHeight = xePointState.x & 0xffffu;
+    return XeClampPointSize(float(max(halfWidth, halfHeight)) * 0.125);
+}
+
 uint XeVfetchOffset(uint slot)
 {
 #ifdef __spirv__

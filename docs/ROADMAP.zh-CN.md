@@ -38,9 +38,9 @@
 
 规划执行顺序（开发执行安排，不虚构后项对前项的必然技术依赖；P0/P3/P4 为阶段标识，不混同为优先级）：
 
-1. [~] **P0：**共同时序契约已实现；PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) 已合并至 `main`，merge commit 为 `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`；此前 `6cbfea1` revision 的 5 个检查已在 CI 通过。前台探针在 48 帧中产生 33 个 FG-on `actual_presents=2` 区间，但记录了有界 SDK validation hazards，并以 exit 1 结束且清理失败。本次未观察到旧的宿主代理 layout mismatch，且相同 SDK clone/layout 类别在旧证据中也出现，不能宣称新回归或单一已确认原因。尚无外部显示证据。Gate 1 仍未通过，剩余工作是 SDK hazard 与 clone layout 归因。
-2. [~] **P3：**已实现 provider-neutral present lease 与最终阶段 straight-alpha HUDless／UI 合成底座。此前 `--separated-ui-only` D3D12／Vulkan 检查已通过，alpha 0/128/255 像素精确，Vulkan 同步验证请求下没有记录 validation message。本地后续改动增加可选的不可变诊断 producer snapshot，复制 5 个 GPU 纹理并在 producer fence 前保留，处理 submit／wait 失败；`LO_FG_SNAPSHOT_FRAME=N` 捕获一次指定真实帧，默认关闭。RTX 5080 Vulkan 的 snapshot GPU／renderer 定向检查通过 2/2，但 snapshot 为 `UI=Unavailable`，没有 final resolve/provider 关联，也没有生产级 separated-UI handoff。生产者资源所有权接线、final-present 关联、真实 UI handoff、真实 provider／Reflex、resize／模式切换实机验证与正式启用 FG 仍待完成。
-3. [ ] **P4：**Windows Vulkan 固定 2× DLSS 插帧，包括 DLSS／DLAA／FSR 组合与安全暂停／恢复。
+1. [~] **P0：**共同时序契约已实现，Gate 1 宿主验证已由维护者于 2026-09-27 接受通过，依据为本地 `fe6f255` 加 Gate 1 宿主修复。原生构建和限定检查通过；FSR+FG 限定运行 exit 0、serial 为 820/820 且清理完整；获授权的 70 秒静音前台运行 exit 0、serial 为 2975/2975，生成区间 1,980 次、actual presents 4,955 次，采样 SDK／feature 创建错误为 0。已知 SDK 相关的 `PRESENT-AFTER-WRITE` 记录保留到 backlog，不再阻塞 Gate 1。`Application`／`ComposedFlip` 分类不足以证明生成帧到达物理显示；native failure injection 和 settings restart 仍属后续工作，native CPU 检查不等于 D3D12 GPU 验收。详见[Gate 1 宿主修复记录](notes/gate1-host-repair-20260927.md)。
+2. [~] **P3：**Streamline 呈现接入、provider-neutral present／输入生命周期跟踪，以及最终合成 backbuffer 的 FG 路径已合入 [`81fe304`](https://github.com/freefrank/LostOdysseyRecomp/commit/81fe3048569f06bdeca4f1bd24c8fdc106428abc)／PR [#72](https://github.com/freefrank/LostOdysseyRecomp/pull/72)。v0.8.0 剩余工作是解决同步问题，并验证 resize、模式切换和退出生命周期。生产级 HUDless／UI 分离属于独立的 v1.0.0 目标，不再是 v0.8.0 完成条件。
+3. [~] **P4：**Windows Vulkan 固定 2× DLSS 插帧已接入。经授权的 70 秒 Uhra 运行记录 48 个 enabled 周期、`actual_presents=2`、2,830 个生成区间和 0 个 SDK error；较早的同步 validation 运行失败，该历史结果仍保留在证据中。维护者之后已接受 Gate 1 通过，已知 SDK 例外转入 backlog。DLSS／DLAA／FSR 组合、生命周期恢复、节奏、画质和外部显示验证仍待完成。
 4. [ ] **独立 FSR 插帧：**独立目标，不预设 API、平台和倍率。
 5. [ ] **D3D12 DLSS 插帧：**D3D12 后端 DLSS 插帧规划目标，独立于 Windows Vulkan P4 里程碑。
 6. [ ] **动态 MFG：**动态多帧生成独立目标，不预设平台与倍率。
@@ -50,9 +50,15 @@
 10. [ ] **macOS AArch64／Apple Silicon：**图形后端与依赖可行性提前调查，平台交付目标。
 11. [ ] **实验性 Android：**探索目标，尚无 APK 或设备验证。
 
+Gate 1 backlog：调查已知 SDK `PRESENT-AFTER-WRITE` 同步例外并补充显示分类，记录在[维护者 Project backlog](https://github.com/users/freefrank/projects/3?pane=issue&itemId=PVTI_lAHOAAsUY84Biy1azg9F10Q)。验证层记录的 10 条消息受 duplicate cap 限制，不是故障或帧数统计。
+
 并行推进：
 
 - [x] **Flatpak 发布：**已提前于 v0.7.1 交付完成（独立包已发布并经验证；Flathub 提交流程受 AI 政策限制，需人工另制 manifest、录制应用演示视频并提交，独立跟踪）。
+
+## v1.0.0 延后计划
+
+- [ ] **生产级 HUDless／UI 分离交接：**独立于 v0.8.0 的合成 backbuffer FG，建立并验证专用 scene／UI 合成契约。
 
 ## 后续积压
 

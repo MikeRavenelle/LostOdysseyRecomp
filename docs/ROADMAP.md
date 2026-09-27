@@ -38,9 +38,9 @@ Reviewed on 2026-09-26 against live Issues, Project fields, merged commits and r
 
 Planned development sequence (ordered execution arrangement; does not construct artificial hard technical dependencies between subsequent and preceding items; P0/P3/P4 represent stage identifiers, not priority levels):
 
-1. [~] **P0:** common temporal contracts are implemented; PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) merged into `main` at `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`, and the earlier `6cbfea1` revision passed all five checks in CI. The foreground probe produced 33 FG-on `actual_presents=2` intervals across 48 frames, but logged SDK validation errors and exited 1 with a failed aggregate cleanup check. The old host proxy layout mismatch was not observed, and the same SDK clone/layout classes appeared in earlier evidence, so no new regression or single confirmed cause is claimed. No external-display evidence exists. Gate 1 remains unpassed; remaining work is SDK hazard and clone-layout attribution.
-2. [~] **P3:** provider-neutral present leases and final straight-alpha HUDless/UI composition are implemented as production foundations. The earlier `--separated-ui-only` D3D12/Vulkan checks passed with exact alpha 0/128/255 pixels and no logged Vulkan validation messages. The local follow-up also adds an opt-in immutable diagnostic producer snapshot for five GPU textures, retaining copies through the producer fence with submit/wait failure handling; `LO_FG_SNAPSHOT_FRAME=N` captures one requested frame and is disabled by default. Focused snapshot GPU/renderer checks passed 2/2 on RTX 5080 Vulkan, but the snapshot has `UI=Unavailable`, no final resolve/provider association, and no production separated-UI handoff. Producer ownership hookup, final-present association, true UI handoff, real provider/Reflex integration, resize/mode-switch hardware validation and active FG remain open.
-3. [ ] **P4:** fixed 2× DLSS Frame Generation on Windows Vulkan, including DLSS/DLAA/FSR combinations and safe suspension/recovery.
+1. [~] **P0:** common temporal contracts are implemented, and Gate 1 host validation was accepted by the maintainer on 2026-09-27 on local `fe6f255` plus the Gate 1 host repairs. The native build and focused checks passed; the bounded FSR+FG run exited 0 with serial 820/820 and complete cleanup, and the authorized 70-second muted foreground run exited 0 with serial 2975/2975, 1,980 generated intervals, 4,955 actual presents, and zero sampled SDK/feature-creation errors. The known SDK-related `PRESENT-AFTER-WRITE` report is retained as backlog and no longer blocks Gate 1. `Application`/`ComposedFlip` capture classification does not prove generated frames reached a physical display; native failure injection and settings-restart validation remain follow-up work, and native CPU checks do not establish D3D12 GPU acceptance. See [the Gate 1 host repair note](notes/gate1-host-repair-20260927.md).
+2. [~] **P3:** Streamline present integration, provider-neutral present/input lifetime tracking, and the final composited-backbuffer FG path are merged in [`81fe304`](https://github.com/freefrank/LostOdysseyRecomp/commit/81fe3048569f06bdeca4f1bd24c8fdc106428abc) / PR [#72](https://github.com/freefrank/LostOdysseyRecomp/pull/72). The remaining v0.8.0 work is synchronization resolution plus resize, mode-switch and exit-lifecycle validation. Production HUDless/UI separation is a separate v1.0.0 goal and is not a v0.8.0 completion dependency.
+3. [~] **P4:** Windows Vulkan fixed 2× DLSS Frame Generation is integrated. The authorized 70-second Uhra run recorded 48 enabled periods with `actual_presents=2`, 2,830 generated intervals and zero SDK errors; the earlier synchronization-validation run failed, and that historical result remains in the evidence record. Gate 1 was later accepted by the maintainer with the known SDK exception tracked in backlog. DLSS/DLAA/FSR combinations, lifecycle recovery, pacing, visual quality and external-display validation remain open.
 4. [ ] **FSR Frame Generation:** independent target; API, platform and multiplier are not predetermined.
 5. [ ] **D3D12 DLSS Frame Generation:** planning target for DLSS Frame Generation on the D3D12 backend, independent of the Windows Vulkan P4 milestone.
 6. [ ] **Dynamic MFG:** independent target for dynamic multi-frame generation; platform and multiplier are not predetermined.
@@ -50,9 +50,15 @@ Planned development sequence (ordered execution arrangement; does not construct 
 10. [ ] **macOS AArch64 / Apple Silicon:** graphics backend and dependency feasibility investigation starts early; platform delivery target.
 11. [ ] **Experimental Android:** exploratory platform target, no APK or device validation yet.
 
+Gate 1 backlog: investigate the known SDK `PRESENT-AFTER-WRITE` synchronization exception and improve display classification. Track it in the [Maintainer Project backlog](https://github.com/users/freefrank/projects/3?pane=issue&itemId=PVTI_lAHOAAsUY84Biy1azg9F10Q). The 10 logged validation messages are subject to the layer's duplicate cap and are not a count of faults or frames.
+
 Parallel tracks:
 
 - [x] **Flatpak release:** delivered ahead of schedule in v0.7.1 (standalone package published and user-verified; Flathub store submission requires manual authoring of manifest/PR and application demonstration video per Flathub AI policy, tracked separately).
+
+## v1.0.0 deferred plan
+
+- [ ] **Production HUDless/UI separation handoff:** establish and validate a dedicated scene/UI composition contract independently of v0.8.0 composited-backbuffer FG.
 
 ## Later backlog
 

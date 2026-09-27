@@ -84,14 +84,14 @@ inline std::string Vertex(const TranslatedShader& vs) {
     for (const char* s : {"xeNdcScale", "xeNdcOffset", "xeHalfPixelOffset", "xeVtxFmt", "xeFlags"}) previous = ReplaceToken(previous, s, std::string("xeMv") + (s + 2));
     std::string wrapper = "\nvoid main(in uint id : SV_VertexID, out precise float4 position : SV_Position";
     for (unsigned i = 0; i < 16; ++i) wrapper += ", out float4 o" + std::to_string(i) + " : TEXCOORD" + std::to_string(i);
-    wrapper += ", out float4 previousClip : TEXCOORD16, out float4 currentClip : TEXCOORD17) {\n";
+    wrapper += ", out float4 previousClip : TEXCOORD16, out float4 currentClip : TEXCOORD17, out XePointSizeOutput xePointSizeOut) {\n";
     wrapper += "    XeMvCurrent(id, position";
     for (unsigned i = 0; i < 16; ++i) wrapper += ", o" + std::to_string(i);
-    wrapper += ");\n    currentClip = position; previousClip = 0;\n    if (XeMvMeta().x != 0) {\n";
+    wrapper += ", xePointSizeOut);\n    currentClip = position; previousClip = 0;\n    if (XeMvMeta().x != 0) {\n";
     for (unsigned i = 0; i < 16; ++i) wrapper += "        float4 ignored" + std::to_string(i) + ";\n";
-    wrapper += "        XeMvPrevious(id, previousClip";
+    wrapper += "        XePointSizeOutput ignoredPointSize;\n        XeMvPrevious(id, previousClip";
     for (unsigned i = 0; i < 16; ++i) wrapper += ", ignored" + std::to_string(i);
-    wrapper += ");\n    }\n}\n";
+    wrapper += ", ignoredPointSize);\n    }\n}\n";
     return prefix + kPreviousBindings + current + previous + wrapper;
 }
 

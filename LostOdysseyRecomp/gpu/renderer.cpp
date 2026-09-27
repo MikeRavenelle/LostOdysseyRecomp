@@ -204,6 +204,8 @@ namespace gpu::renderer
         constexpr uint32_t REG_RB_BLENDCONTROL0 = 0x2201;
         constexpr uint32_t REG_RB_COLORCONTROL = 0x2202;
         constexpr uint32_t REG_PA_SU_SC_MODE_CNTL = 0x2205;
+        constexpr uint32_t REG_PA_SU_POINT_SIZE = 0x2280;
+        constexpr uint32_t REG_PA_SU_POINT_MINMAX = 0x2281;
         constexpr uint32_t REG_PA_CL_VTE_CNTL = 0x2206;
         constexpr uint32_t REG_RB_MODECONTROL = 0x2208;
         constexpr uint32_t REG_PA_SU_VTX_CNTL = 0x2302;
@@ -387,6 +389,7 @@ namespace gpu::renderer
             bool vulkan = false;
             xenos::ShaderBinaryFormat binaryFormat = xenos::ShaderBinaryFormat::Dxil;
             RenderShaderFormat renderFormat = RenderShaderFormat::DXIL;
+            float pointSizeLimit = 1.0e9f;
             uint64_t constantAddresses[3]{};
             std::unique_ptr<RenderDescriptorSet> staticSamplerSet;
             RenderCommandQueue* queue = nullptr;
@@ -1820,6 +1823,8 @@ namespace gpu::renderer
                     // Pinned Plume enables the supported base features at device creation.
                     maximumAnisotropy = features.samplerAnisotropy
                         ? uint32_t(native->physicalDeviceProperties.limits.maxSamplerAnisotropy) : 0;
+                    pointSizeLimit = features.largePoints
+                        ? native->physicalDeviceProperties.limits.pointSizeRange[1] : 1.0f;
                 }
 
                 CreateDummyTexture(dummyTexture2D, RenderTextureDimension::TEXTURE_2D, 0);
@@ -3786,19 +3791,23 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 } else commandList->setGraphicsRootDescriptor(RenderBufferReference(uploadRing,offset),index);
             }
 
-            RenderDescriptorSet* AcquireSet(int which)
+            RenderDescriptorSet* AcquireSet(int which, bool overwriteAllBindings = false)
             {
                 auto& pool = Gpu().setPools[which];
                 uint32_t& used = Gpu().setPoolUsed[which];
                 if (used >= pool.size())
                 {
                     pool.push_back(setBuilders[which].create(device));
-                    RenderDescriptorSet* set = pool.back().get();
-                    {
-                        HostTexture& dummy = which == 1 ? dummyTexture2D : which == 2 ? dummyTexture3D : dummyTextureCube;
-                        for (uint32_t i = 0; i < kTextureSlots; i++)
-                            set->setTexture(i, dummy.texture.get(), RenderTextureLayout::SHADER_READ);
-                    }
+                }
+                // A reused set may still contain views from a previous batch.
+                // One-texture draws overwrite only binding 0, so a stale view
+                // in binding 1 would remain referenced by the new submission.
+                // The texture cache writes every binding when reuse is enabled.
+                if (!overwriteAllBindings) {
+                    RenderDescriptorSet* set = pool[used].get();
+                    HostTexture& dummy = which == 1 ? dummyTexture2D : which == 2 ? dummyTexture3D : dummyTextureCube;
+                    for (uint32_t i = 0; i < kTextureSlots; i++)
+                        set->setTexture(i, dummy.texture.get(), RenderTextureLayout::SHADER_READ);
                 }
                 return pool[used++].get();
             }
@@ -3811,7 +3820,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 // cache and pool belong to the same completed-fence interval.
                 const bool reuse = descriptorReuse;
                 auto create = [&]() {
-                    auto* set = AcquireSet(which);
+                    auto* set = AcquireSet(which, reuse);
                     for (uint32_t slot = 0; slot < kTextureSlots; ++slot)
                         if (reuse || ((activeSlots >> slot) & 1))
                             set->setTexture(slot, textures[slot], RenderTextureLayout::SHADER_READ);
@@ -6022,6 +6031,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 SharedConstants shared{};
                 for (uint32_t i = 0; i < 8; i++) shared.bools[i] = Reg(REG_BOOL_CONSTANTS + i);
                 for (uint32_t i = 0; i < 32; i++) shared.loops[i] = Reg(REG_LOOP_CONSTANTS + i);
+                shared.transfer[0] = Reg(REG_PA_SU_POINT_SIZE);
+                shared.transfer[1] = Reg(REG_PA_SU_POINT_MINMAX);
+                shared.transfer[2] = std::bit_cast<uint32_t>(pointSizeLimit);
 
                 uint32_t vte = Reg(REG_PA_CL_VTE_CNTL);
                 float xs = RegF(REG_PA_CL_VPORT_XSCALE), xo = RegF(REG_PA_CL_VPORT_XSCALE + 1);
@@ -7315,7 +7327,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         << ",\"guest_viewport\":[" << viewport.x << ',' << viewport.y << ',' << viewport.width << ',' << viewport.height << "]"
                         << ",\"guest_scissor\":[" << guestScissor.left << ',' << guestScissor.top << ',' << guestScissor.right << ',' << guestScissor.bottom << "]"
                         << ",\"physical_scissor\":[" << scissor.left << ',' << scissor.top << ',' << scissor.right << ',' << scissor.bottom << "]}"
-                        << ",\"framebuffer_attachments\":{\"color_allocation\":" << color->allocationSerial << ",\"depth_allocation\":";
+                        << ",\"framebuffer_attachments\":{\"color_allocation\":";
+                    if (depthOnlyRaster) p2Evidence << "null"; else p2Evidence << color->allocationSerial;
+                    p2Evidence << ",\"depth_allocation\":";
                     if (depth) p2Evidence << depth->allocationSerial; else p2Evidence << "null";
                     p2Evidence << ",\"depth_extent\":";
                     if (depth) p2Evidence << '[' << depth->width << ',' << depth->height << ']'; else p2Evidence << "null";
