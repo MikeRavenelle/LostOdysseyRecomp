@@ -1,4 +1,5 @@
 #include <settings/menu_render.h>
+#include <settings/menu.h>
 #include <settings/menu_assets.h>
 #include <hid/controller_glyphs.h>
 #include <lzokay.hpp>
@@ -263,6 +264,56 @@ int main(int argc, char **argv)
         for (auto p : pixels) { const char rgb[] = {char(p), char(p >> 8), char(p >> 16)}; f.write(rgb, 3); }
     }
     std::puts("Language reference (with Korean 한국어) rendered at 1280x720");
+
+    // FG occupies a separated section inside the four-tab Graphics page.
+    // The hidden logical rows model scrolling to the section without changing
+    // row IDs; FSR hides the multiplier and compacts the visible list.
+    snapshot.tab = 2;
+    snapshot.language = 0;
+    snapshot.row = int(settings::GraphicsRow::FrameGeneration);
+    snapshot.rows.assign(size_t(settings::GraphicsRow::Count), {});
+    for (int i = 0; i < int(settings::GraphicsRow::FrameGeneration); ++i)
+        snapshot.rows[size_t(i)].hidden = true;
+    snapshot.rows[size_t(settings::GraphicsRow::FrameGeneration)] =
+        {L"Frame generation", L"DLSS", true, {L"Off", L"DLSS", L"FSR"}, 1};
+    snapshot.rows[size_t(settings::GraphicsRow::FrameGenerationMultiplier)] =
+        {L"FG multiplier", L"3×", true, {L"2×", L"3×", L"4×"}, 1};
+    snapshot.rows[size_t(settings::GraphicsRow::Brightness)] =
+        {L"Brightness calibration", L"Open", true, {L"Open"}, 0};
+    snapshot.rows[size_t(settings::GraphicsRow::Save)] =
+        {L"Save graphics settings", L"Save", true, {L"Save"}, 0};
+    snapshot.help = L"FG works independently of upscaling.";
+    Require(settings::RasterizeMenu(snapshot, 1280, 720, pixels), "Graphics FG section rasterization failed");
+    const auto fgPixels = pixels;
+    snapshot.tab = 3;
+    Require(settings::RasterizeMenu(snapshot, 1280, 720, pixels), "comparison tab rasterization failed");
+    int changedGraphicsTabPixels = 0;
+    for (int y = 110; y < 142; ++y)
+        for (int x = 386 + 2 * settings::MenuTabWidth; x < 386 + 3 * settings::MenuTabWidth; ++x)
+            changedGraphicsTabPixels += fgPixels[size_t(y) * 1280 + x] != pixels[size_t(y) * 1280 + x];
+    Require(changedGraphicsTabPixels > 20, "four-tab Graphics header has no visible selected state");
+    int sectionPixels = 0;
+    for (int x = 65; x < 1026; ++x)
+        sectionPixels += fgPixels[size_t(147) * 1280 + x] != pixels[size_t(147) * 1280 + x];
+    Require(sectionPixels > 20, "FG section divider is not visible");
+    snapshot.tab = 2;
+    auto& providerRow = snapshot.rows[size_t(settings::GraphicsRow::FrameGeneration)];
+    providerRow.value = L"FSR";
+    providerRow.selectedChoice = 2;
+    snapshot.rows[size_t(settings::GraphicsRow::FrameGenerationMultiplier)].hidden = true;
+    Require(settings::RasterizeMenu(snapshot, 1280, 720, pixels), "FSR Graphics section rasterization failed");
+    Require(pixels != fgPixels, "FSR Graphics section must differ from DLSS multiplier layout");
+    if (argc > 1) {
+        auto writeFg = [&](const char* name, const std::vector<uint32_t>& image) {
+            std::ofstream f(std::filesystem::path(argv[1]) / name, std::ios::binary);
+            f << "P6\n1280 720\n255\n";
+            for (auto p : image) { const char rgb[] = {char(p), char(p >> 8), char(p >> 16)}; f.write(rgb, 3); }
+            Require(bool(f), "FG preview write failed");
+        };
+        writeFg("fg-dlss-reference.ppm", fgPixels);
+        writeFg("fg-fsr-reference.ppm", pixels);
+    }
+    std::puts("four-tab Graphics FG section divider and DLSS/FSR row layouts rendered at 1280x720");
 
     // Synthetic overflowing menu (>11 visible rows) to verify scroll clipping, hidden rows and overflow indicators.
     {

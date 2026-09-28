@@ -63,6 +63,8 @@ jobs:
           path: out/deps/fidelityfx-sdk
           sparse-checkout: |
             /LICENSE.txt
+            /ffx-api/include/
+            /PrebuiltSignedDLL/amd_fidelityfx_dx12.dll
             /sdk/include/
             /sdk/src/shared/
             /sdk/src/components/fsr3upscaler/
@@ -88,6 +90,8 @@ jobs:
           name: fsr-vulkan-build-inputs
           path: |
             out/deps/fidelityfx-sdk/sdk
+            out/deps/fidelityfx-sdk/ffx-api/include
+            out/deps/fidelityfx-sdk/PrebuiltSignedDLL/amd_fidelityfx_dx12.dll
             out/deps/fidelityfx-sdk/LICENSE.txt
             out/fsr-shaders-vk
             out/fsr-shaders-dx12
@@ -149,6 +153,14 @@ jobs:
           persist-credentials: false
       - name: Fetch NVIDIA DLSS SDK
         run: python tools/release/fetch_dlss_sdk.py --dest out/deps/nvidia-dlss
+      - name: Fetch pinned NVIDIA Streamline SDK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v2.14.1 --repo NVIDIA-RTX/Streamline --pattern streamline-sdk-v2.14.1.zip --dir out/deps
+          if ($LASTEXITCODE -ne 0) { throw 'Official Streamline SDK download failed.' }
+          python tools/release/prepare_streamline_sdk.py --archive out/deps/streamline-sdk-v2.14.1.zip --dest out/deps/streamline
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Streamline SDK verification failed.' }
       - name: Generate game code
         shell: cmd
         run: |
@@ -162,6 +174,11 @@ jobs:
           LO_ENABLE_DLSS: 'ON'
           LO_REQUIRE_DLSS: 'ON'
           LO_DLSS_SDK_ROOT: out\deps\nvidia-dlss
+          LO_ENABLE_STREAMLINE_FG: 'ON'
+          LO_ENABLE_D3D12_DLSS_FG: 'ON'
+          LO_ENABLE_FSR_FG: 'ON'
+          LO_STREAMLINE_SDK_ROOT: ${{ github.workspace }}/out/deps/streamline
+          LO_FSR_FG_RUNTIME: ${{ github.workspace }}/out/deps/fidelityfx-sdk/PrebuiltSignedDLL/amd_fidelityfx_dx12.dll
           LO_ENABLE_FSR: 'ON'
           LO_REQUIRE_FSR: 'ON'
           LO_FSR_SDK_ROOT: ${{ github.workspace }}/out/deps/fidelityfx-sdk
@@ -169,6 +186,25 @@ jobs:
           LO_FSR_DX12_SHADER_DIR: ${{ github.workspace }}/out/fsr-shaders-dx12
           LO_FSR_DX12_ADAPTER_DIR: ${{ github.workspace }}/out/fsr-adapter-dx12
         run: call tools\build_release.bat
+      - name: Stage FG runtime dependencies
+        run: |
+          $runtime = 'out/build/release/LostOdysseyRecomp'
+          Copy-Item -LiteralPath out/deps/streamline/bin/x64/NvLowLatencyVk.dll -Destination $runtime
+          foreach ($dll in @('sl.interposer.dll', 'sl.common.dll', 'sl.dlss_g.dll', 'sl.reflex.dll', 'sl.pcl.dll', 'nvngx_dlssg.dll', 'NvLowLatencyVk.dll', 'amd_fidelityfx_dx12.dll')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $runtime $dll) -PathType Leaf)) { throw "FG runtime missing after build: $dll" }
+          }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $install = & $vswhere -latest -products '*' -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $install) { throw 'Visual Studio installation not found.' }
+          $redist = Get-ChildItem -LiteralPath (Join-Path $install 'VC/Redist/MSVC') -Directory |
+            Where-Object { $_.Name -match '^[0-9]' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'x64/Microsoft.VC143.CRT/msvcp140.dll')) } |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $redist) { throw 'Official x64 VC143 redistributable files not found.' }
+          foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+            $source = Join-Path $redist.FullName "x64/Microsoft.VC143.CRT/$dll"
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "VC143 redistributable file missing: $dll" }
+            Copy-Item -LiteralPath $source -Destination $runtime
+          }
       - name: Fetch portable shader pack
         env:
           GH_TOKEN: ${{ github.token }}

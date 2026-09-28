@@ -96,6 +96,30 @@ int wmain(int argc, wchar_t** argv)
     Check(settings::Read().saveAnywhere, "ordinary save retains debug-only preference");
     Check(settings::SaveDebugLanguage(1) && settings::Read().saveAnywhere,
         "debug language save retains save-anywhere preference");
+    settings::Config fg = settings::GetConfig();
+    fg.frameGenerationProvider = framegen::Provider::Dlss;
+    fg.frameGenerationMode = framegen::Mode::Dynamic;
+    fg.frameGenerationMultiplier = 4;
+    fg.frameGenerationTargetFps = 144;
+    Check(settings::SaveConfig(fg), "save frame-generation settings");
+    const auto restoredFg = settings::Read();
+    Check(restoredFg.frameGenerationProvider == framegen::Provider::Dlss &&
+          restoredFg.frameGenerationMode == framegen::Mode::Dynamic &&
+          restoredFg.frameGenerationMultiplier == 4 && restoredFg.frameGenerationTargetFps == 144,
+        "frame-generation settings survive disk readback");
+    fg.frameGenerationProvider = framegen::Provider::Fsr;
+    Check(settings::SaveConfig(fg), "save FSR frame-generation settings");
+    const auto restoredFsr = settings::Read();
+    Check(restoredFsr.frameGenerationProvider == framegen::Provider::Fsr &&
+          restoredFsr.frameGenerationMode == framegen::Mode::Fixed &&
+          restoredFsr.frameGenerationMultiplier == 2 && restoredFsr.frameGenerationTargetFps == 0,
+        "FSR is normalized to fixed 2x");
+    Write("frame_generation_provider=257\nframe_generation_mode=257\nframe_generation_multiplier=99\nframe_generation_target_fps=9999\n");
+    const auto malformedFg = settings::Read();
+    Check(malformedFg.frameGenerationProvider == framegen::Provider::Off &&
+          malformedFg.frameGenerationMode == framegen::Mode::Fixed &&
+          malformedFg.frameGenerationMultiplier == 2 && malformedFg.frameGenerationTargetFps == 0,
+        "malformed frame-generation settings use safe defaults");
     std::puts("PASS isolated save-anywhere toggle, INI roundtrip and fresh-process restore");
     return 0;
 }

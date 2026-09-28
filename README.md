@@ -23,6 +23,8 @@ Optional diagnostics are off by default and can be disabled in Settings. See [Pr
 
 Windows supports experimental DLSS/FSR upscaling on Direct3D 12 and Vulkan; Linux supports the Vulkan path. When object motion is unavailable, camera/depth reconstruction can provide a bounded hybrid motion fallback. When DLSS or DLAA is unavailable or disabled, a saved TAA selection falls back to SMAA while preserving other anti-aliasing choices. Broader scenes, mixed-DPI/fullscreen behavior and player acceptance remain open; see [development status](docs/STATUS.md).
 
+The in-game **Graphics** settings include a **Frame Generation** section for Windows Direct3D 12. Choose `Off`, `DLSS`, or `FSR`; DLSS offers 2×–16× multipliers subject to GPU and driver support, while FSR uses fixed 2× and hides the multiplier row. Save graphics settings to apply FG changes without restarting the game. The status line distinguishes session readiness from unavailable requests; readiness does not guarantee generated frames in every scene. Changing the graphics backend still requires a restart.
+
 ### Automatic PlayStation controller prompts
 
 The recomp automatically detects the most recently active gamepad via SDL and updates button prompts:
@@ -33,14 +35,14 @@ The recomp automatically detects the most recently active gamepad via SDL and up
 
 ## Roadmap
 
-The **v0.7.3** release builds on the v0.7.2 DLAA sizing and Windows D3D12 SR work, adding DX12 native root signature and descriptor table de-duplication with lifecycle invalidation, plus opt-in render timing and diagnostic/lightweight capture modes. This release retains bounded validation limits: the Issue #70 substitute Uhra scene was not an optimization A/B, full-game performance study, or player acceptance run. Planned roadmap targets for **v0.8.0** include DLSS Frame Generation (fixed 2× DLSS FG on Windows Vulkan, alongside D3D12 DLSS FG), dynamic Multi-Frame Generation, independent FSR Frame Generation, native independent 120 FPS candidate evaluation (`LO_EXPERIMENTAL_120=1`), removal of the legacy PM4 packet translation layer, Linux AArch64, macOS AArch64 (Apple Silicon), and experimental Android support. Experimental Frame Generation remains build-gated/default-off and is not an enabled v0.7.3 feature; development sequencing is tracked in the [roadmap](docs/ROADMAP.md).
+The **v0.7.9** release builds on the v0.7.3 graphics and updater work. It adds an in-game Windows Direct3D 12 Frame Generation section with Off/DLSS/FSR choices, live same-process switching and bounded local Uhra validation. The release keeps its documented limits: generated-frame counters are SDK observations, and complete playthrough, broad hardware coverage, image-quality and physical-scanout validation remain open. Planned roadmap targets for **v0.8.0** include dynamic Multi-Frame Generation, native independent 120 FPS candidate evaluation (`LO_EXPERIMENTAL_120=1`), removal of the legacy PM4 packet translation layer, Linux AArch64, macOS AArch64 (Apple Silicon), and experimental Android support. Development sequencing is tracked in the [roadmap](docs/ROADMAP.md).
 
 Past release notes and detailed changes are recorded in the [changelog](CHANGELOG.md).
 
 ## Start playing
 
 ### Windows
-1. **Download and extract** the v0.7.3 Windows release ZIP (`LostOdysseyRecomp-windows-x64-v0.7.3.zip`) from the [latest release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) to a writable folder.
+1. **Download and extract** the v0.7.9 Windows release ZIP (`LostOdysseyRecomp-windows-x64-v0.7.9.zip`) from the [latest release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) to a writable folder.
 2. **Run `LostOdysseyRecomp.exe`** and import your game files when prompted. The importer accepts an extracted folder, `default.xex`, an XDVDFS ISO or a GOD container.
 3. **Choose your language and graphics settings.** The game continues after setup and shader preparation.
 
@@ -49,16 +51,16 @@ Past release notes and detailed changes are recorded in the [changelog](CHANGELO
   ```bash
   flatpak --system install flathub org.freedesktop.Platform//26.08
   ```
-  Download the v0.7.3 standalone `.flatpak` bundle (`LostOdysseyRecomp-linux-x64-v0.7.3.flatpak`) and install:
+  Download the v0.7.9 standalone `.flatpak` bundle (`LostOdysseyRecomp-linux-x64-v0.7.9.flatpak`) and install:
   ```bash
-  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.3.flatpak
+  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.9.flatpak
   flatpak run io.github.freefrank.LostOdysseyRecomp
   ```
-- **AppImage**: Download `LostOdysseyRecomp-linux-x64-v0.7.3.AppImage`, make it executable (`chmod +x`), and run directly.
+- **AppImage**: Download `LostOdysseyRecomp-linux-x64-v0.7.9.AppImage`, make it executable (`chmod +x`), and run directly.
 
 No Python or Visual Studio installation is needed for the release package. Later launches reuse the shader cache. Keep your save and profile folders when updating.
 
-The current branch updater checks GitHub's latest Release: a higher numeric version updates, and an equal numeric version with a different `-suffix` also triggers an update. The updater additionally permits recovery from an empty updater-only folder and stale or malformed local metadata. After a successful update, the helper asks whether to launch the game and defaults to **No**; silent runs complete without launching. After the download completes, the updater installs through ordinary HTTP/I/O handling, ZIP CRC parsing, path protection and rollback; it does not add SHA-256 or size authentication. The next formal Windows transition package will carry the legacy SHA map once so an already published v0.7.3 updater can upgrade automatically; the new updater ignores those values.
+The current branch updater checks GitHub's latest Release: a higher numeric version updates, and an equal numeric version with a different `-suffix` also triggers an update. The updater additionally permits recovery from an empty updater-only folder and stale or malformed local metadata. After a successful update, the helper asks whether to launch the game and defaults to **No**; silent runs complete without launching. After the download completes, the updater installs through ordinary HTTP/I/O handling, ZIP CRC parsing, path protection and rollback; it does not add SHA-256 or size authentication. The v0.7.9 Windows transition package carries the legacy SHA map once so an already published v0.7.3 updater can upgrade automatically; the v0.7.9 updater ignores those values.
 
 | Requirement | Supported configuration |
 | :--- | :--- |
@@ -84,12 +86,13 @@ See the [installation guide](docs/INSTALLING.md) for accepted disc versions, fil
 | First-launch setup | Language and graphics settings before game initialization |
 | Language settings | English, Japanese, Korean, Traditional and Simplified Chinese interface options; game language selection |
 | Graphics settings | Auto/manual internal resolution (config/legacy fallback), 16:9 / 21:9 resolution presets with Widescreen toggle, Off/FXAA/SMAA/experimental TAA, upscaler options (Off/DLSS/FSR 3.1 with quality controls), Standard/High filtering, 30/60 FPS and output/display controls; fullscreen, mixed DPI and broader upscaler scene coverage need more testing |
+| Frame Generation settings | Graphics-page Off/DLSS/FSR controls, DLSS multipliers, fixed 2× FSR, session status and live application after saving; bounded D3D12 Uhra validation |
 | Settings menu | Original game fonts, scrollable overflowing lists and menu styling; one-click Graphics save/apply, Start/Enter focus-jump to Save without saving, and Now/Later restart choices |
 | Shader preparation | Bundled portable Vulkan shader pack (.lospv), memory-adaptive parallel compilation, interactive skip, and cache reuse |
 | CPU use | Reduced unnecessary polling and reuse of rendering work |
 | Input and debug | Controller and keyboard input; English/Simplified Chinese in-game overlay debug menu (F1 or LB+RB) with capture, map information and same-map POI teleport |
 
-Release packages import game discs and supported DLC with **Files** or **Folder** in `LostOdysseyRecomp.exe`. In v0.7.1, **Gameplay → Import discs & DLC** allows reopening the importer to replace selected discs and DLC. The v0.7.3 release provides Windows ZIP, Linux AppImage, and standalone Linux Flatpak packages. See the [installation guide](docs/INSTALLING.md#automatic-content-import), [build instructions](docs/BUILDING.md#packaging-flatpak), and [development status](docs/STATUS.md) for validation limits.
+Release packages import game discs and supported DLC with **Files** or **Folder** in `LostOdysseyRecomp.exe`. In v0.7.1, **Gameplay → Import discs & DLC** allows reopening the importer to replace selected discs and DLC. The v0.7.9 release provides Windows ZIP, Linux AppImage, and standalone Linux Flatpak packages. See the [installation guide](docs/INSTALLING.md#automatic-content-import), [build instructions](docs/BUILDING.md#packaging-flatpak), and [development status](docs/STATUS.md) for validation limits.
 
 Validation progress and remaining work are tracked in the [Maintainer Project](https://github.com/users/freefrank/projects/3).
 

@@ -72,6 +72,7 @@ public:
     bool Disable(std::string&);
     bool Drain(std::string&);
     bool Quiesce(std::string&);
+    bool Reconfigure(const Config&,std::string&); // Same provider and swapchain, after checked drain.
     bool Shutdown(std::string&);
     bool Active() const { return active_; }
     bool Pending() const { return lease_.Pending(); }

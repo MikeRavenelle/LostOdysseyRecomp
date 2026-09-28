@@ -8,6 +8,7 @@
 #include "translations.h"
 #include <gpu/video.h>
 #include <gpu/frame_plan.h>
+#include <gpu/frame_generation_settings.h>
 #include <kernel/io/file_system.h>
 #include <os/logger.h>
 #include <stdafx.h>
@@ -331,7 +332,38 @@ std::wstring DlssNotice()
 bool GraphicsRowHidden(int r)
 {
     return (r == int(GraphicsRow::DlssQuality) && edit.upscaler == gpu::upscaling::Upscaler::Off) ||
-           (r == int(GraphicsRow::FsrSharpness) && edit.upscaler != gpu::upscaling::Upscaler::Fsr);
+           (r == int(GraphicsRow::FsrSharpness) && edit.upscaler != gpu::upscaling::Upscaler::Fsr) ||
+           (r == int(GraphicsRow::FrameGenerationMultiplier) && edit.frameGenerationProvider != framegen::Provider::Dlss);
+}
+std::vector<framegen::Provider> FgProviders()
+{
+    std::vector<framegen::Provider> providers{framegen::Provider::Off};
+    for (auto provider : {framegen::Provider::Dlss, framegen::Provider::Fsr})
+        if ((edit.graphicsBackend == GraphicsBackend::D3D12 &&
+             gpu::frame_generation::D3D12CompiledProvider(provider)) || edit.frameGenerationProvider == provider)
+            providers.push_back(provider);
+    return providers;
+}
+std::wstring FgNotice()
+{
+    const auto running = gpu::video::GetFrameGenerationStatus();
+    std::wstring text;
+    using gpu::video::FrameGenerationPhase;
+    switch (running.phase) {
+    case FrameGenerationPhase::Pending:
+        text = Tr(L"Applying FG settings…", L"正在套用影格生成設定……"); break;
+    case FrameGenerationPhase::Ready:
+        text = running.applied == framegen::Provider::Dlss ? L"DLSS" : L"FSR";
+        text += Tr(L" FG ready. Generation depends on the current scene.", L" 影格生成已就緒，是否補幀取決於目前場景。"); break;
+    case FrameGenerationPhase::Unavailable:
+        text = Tr(L"FG is unavailable for this request. Normal rendering is in use.",
+                  L"目前的影格生成設定無法使用，正在使用常規渲染。"); break;
+    default:
+        text = Tr(L"Frame generation is off.", L"影格生成已關閉。"); break;
+    }
+    if (running.environmentOverride)
+        text += Tr(L" A diagnostic override controls FG.", L" 影格生成由診斷覆寫控制。");
+    return text;
 }
 static_assert(int(GraphicsRow::Save) + 1 == int(GraphicsRow::Count));
 void Publish(uint8_t *base, uint32_t config)
@@ -470,6 +502,22 @@ void Publish(uint8_t *base, uint32_t config)
                    {L"30 FPS", std::wstring(L"60 FPS") + Tr(L" (experimental)", L"（實驗性）"),
                     std::wstring(L"120 FPS") + Tr(L" (experimental)", L"（實驗性）")},
                    edit.frameRate == 120 ? 2 : edit.frameRate == 60 ? 1 : 0));
+        std::vector<std::wstring> providers;
+        uint32_t selected = 0;
+        for (auto provider : FgProviders()) {
+            if (provider == edit.frameGenerationProvider) selected = uint32_t(providers.size());
+            providers.emplace_back(provider == framegen::Provider::Off ? Tr(L"Off", L"關") :
+                provider == framegen::Provider::Dlss ? L"DLSS" : L"FSR");
+        }
+        placeGraphics(GraphicsRow::FrameGeneration,
+            makeChoices(L"Frame generation", L"影格生成", std::move(providers), selected));
+        std::vector<std::wstring> multipliers;
+        for (uint32_t multiplier = 2; multiplier <= 16; ++multiplier)
+            multipliers.push_back(std::to_wstring(multiplier) + L"×");
+        auto fgMultiplier = makeChoices(L"FG multiplier", L"影格生成倍數", std::move(multipliers),
+            std::clamp(edit.frameGenerationMultiplier, 2u, 16u) - 2);
+        fgMultiplier.hidden = GraphicsRowHidden(int(GraphicsRow::FrameGenerationMultiplier));
+        placeGraphics(GraphicsRow::FrameGenerationMultiplier, std::move(fgMultiplier));
         placeGraphics(GraphicsRow::Brightness, makeChoices(L"Brightness calibration", L"亮度校準", {Tr(L"Open", L"開啟")}, 0));
         placeGraphics(GraphicsRow::Save, makeChoices(L"Save graphics settings", L"儲存圖形設定", {Tr(L"Save", L"儲存")}, 0));
     }
@@ -486,9 +534,9 @@ void Publish(uint8_t *base, uint32_t config)
     }
     // Keep the focused row inside the visible window. Scroll persists per tab
     // so returning to a long list restores its position.
-    if (tab >= 0 && tab < 4)
+    if (tab >= 0 && tab < MenuTabCount)
     {
-        static int scrollByTab[4] = {0, 0, 0, 0};
+        static int scrollByTab[MenuTabCount] = {};
         int visibleCount = 0, visibleFocus = 0;
         for (size_t i = 0; i < next.rows.size(); ++i)
         {
@@ -570,6 +618,21 @@ void Publish(uint8_t *base, uint32_t config)
                 : Tr(L"60/120 FPS are experimental. Verify game speed, audio and battle timing.",
                      L"60/120 FPS 為實驗性功能，請確認遊戲速度、音訊與戰鬥時序。");
             break;
+        case GraphicsRow::FrameGeneration:
+        case GraphicsRow::FrameGenerationMultiplier:
+            if (edit.graphicsBackend != GraphicsBackend::D3D12)
+                next.help = Tr(L"FG requires Direct3D 12. Change the graphics backend and restart first.",
+                               L"影格生成需要 Direct3D 12。請先變更圖形後端並重新啟動。");
+            else if (!gpu::frame_generation::D3D12CompiledProvider(framegen::Provider::Dlss) &&
+                     !gpu::frame_generation::D3D12CompiledProvider(framegen::Provider::Fsr))
+                next.help = Tr(L"Frame generation is unavailable in this build.", L"此版本未包含影格生成功能。");
+            else if (GraphicsRow(row) == GraphicsRow::FrameGenerationMultiplier)
+                next.help = Tr(L"Includes the rendered frame. Available multipliers depend on the GPU and driver.",
+                               L"倍數包含原始渲染影格。可用倍數取決於顯示卡與驅動程式。");
+            else
+                next.help = Tr(L"FG works independently of upscaling. FSR uses a fixed 2× multiplier.",
+                               L"影格生成可獨立於超解析度使用。FSR 固定為 2×。");
+            break;
         case GraphicsRow::DisplayMode:
         case GraphicsRow::Brightness:
         case GraphicsRow::Save:
@@ -623,7 +686,8 @@ void Publish(uint8_t *base, uint32_t config)
         next.dialogChoices = {Tr(L"Open importer", L"開啟匯入器"), Tr(L"Cancel", L"取消")};
         next.dialogSelection = importChoice;
     }
-    next.notice = tab == 2 ? DlssNotice() : std::wstring{};
+    next.notice = tab == 2 ? (row == int(GraphicsRow::FrameGeneration) ||
+        row == int(GraphicsRow::FrameGenerationMultiplier) ? FgNotice() : DlssNotice()) : std::wstring{};
     std::lock_guard lock(snapshotMutex);
     if (next.tab == snapshot.tab && next.row == snapshot.row && next.scroll == snapshot.scroll && next.language == snapshot.language &&
         next.rows == snapshot.rows && next.help == snapshot.help && next.notice == snapshot.notice && next.dialogTitle == snapshot.dialogTitle &&
@@ -703,7 +767,7 @@ void PointerClick(float x, float y, bool reverse)
     }
     if (x >= 386 && x < 1026 && y >= 110 && y < 142)
     {
-        mouseTab = int(x - 386) / 160;
+        mouseTab = int(x - 386) / MenuTabWidth;
         return;
     }
     constexpr int height = 43;
@@ -1059,7 +1123,7 @@ PPC_FUNC(sub_822F19B0)
     bool changed = false;
     if (input & 0x300)
     {
-        tab = (tab + ((input & 0x200) ? 1 : 3)) % 4;
+        tab = (tab + ((input & 0x200) ? 1 : MenuTabCount - 1)) % MenuTabCount;
         row = 0;
         status.clear();
     }
@@ -1197,6 +1261,23 @@ PPC_FUNC(sub_822F19B0)
                 edit.frameRate = rates[cycle(index, 3)];
                 break;
             }
+            case GraphicsRow::FrameGeneration:
+            {
+                const auto providers = FgProviders();
+                auto found = std::find(providers.begin(), providers.end(), edit.frameGenerationProvider);
+                edit.frameGenerationProvider = providers[cycle(uint32_t(found - providers.begin()), uint32_t(providers.size()))];
+                edit.frameGenerationMode = framegen::Mode::Fixed;
+                edit.frameGenerationTargetFps = 0;
+                if (edit.frameGenerationProvider == framegen::Provider::Fsr) edit.frameGenerationMultiplier = 2;
+                break;
+            }
+            case GraphicsRow::FrameGenerationMultiplier:
+                if (!GraphicsRowHidden(row)) {
+                    edit.frameGenerationMultiplier = cycle(std::clamp(edit.frameGenerationMultiplier, 2u, 16u) - 2, 15) + 2;
+                    edit.frameGenerationMode = framegen::Mode::Fixed;
+                    edit.frameGenerationTargetFps = 0;
+                }
+                break;
             case GraphicsRow::Brightness:
             case GraphicsRow::Save:
             case GraphicsRow::Count:
@@ -1248,11 +1329,23 @@ PPC_FUNC(sub_822F19B0)
     if ((input & 0x1000) && tab == 2 && row == int(GraphicsRow::Save))
     {
         previousDisplay = GetConfig();
-        if (!SaveConfig(edit))
+        Config graphics = edit;
+        graphics.uiLanguage = previousDisplay.uiLanguage;
+        graphics.gameLanguage = previousDisplay.gameLanguage;
+        graphics.automaticUpdates = previousDisplay.automaticUpdates;
+        graphics.frameGenerationMode = framegen::Mode::Fixed;
+        graphics.frameGenerationTargetFps = 0;
+        if (graphics.frameGenerationProvider == framegen::Provider::Fsr)
+            graphics.frameGenerationMultiplier = 2;
+        if (!SaveConfig(graphics))
             status = Tr(L"Could not save settings.", L"無法儲存設定。");
         else
         {
-            edit = GetConfig();
+            graphics = GetConfig();
+            graphics.uiLanguage = edit.uiLanguage;
+            graphics.gameLanguage = edit.gameLanguage;
+            graphics.automaticUpdates = edit.automaticUpdates;
+            edit = graphics;
             if (edit.width != previousDisplay.width || edit.height != previousDisplay.height ||
                 edit.windowMode != previousDisplay.windowMode || gpu::video::DisplayModeFailed() || gpu::video::WindowModeOverridden())
             {

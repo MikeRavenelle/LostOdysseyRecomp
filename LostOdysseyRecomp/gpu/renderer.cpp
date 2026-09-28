@@ -628,7 +628,7 @@ namespace gpu::renderer
             bool fgSnapshotAttempted = false;
             std::shared_ptr<frame_generation::ProducerSnapshot> fgInputSnapshot;
             frame_generation::ResolveHandoffPool fgHandoffPool;
-            const bool fgCompositeEnabled = video::FrameGenerationInputCaptureEnabled();
+            bool fgCompositeEnabled = video::FrameGenerationInputCaptureEnabled();
             uint64_t fgCompositeAttemptedFrame = ~0ull;
             std::shared_ptr<frame_generation::CompositeHandoff> fgCompositeHandoff;
             const uint64_t fgUiRequestedFrame = [] {
@@ -9056,6 +9056,14 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     if (slot.fgInputSnapshot) slot.fgInputSnapshot->lineageCanceled = true;
                 fgHandoffPool.CancelAll(reason);
             }
+            void SetFgCompositeEnabled(bool enabled)
+            {
+                if (fgCompositeEnabled == enabled) return;
+                CancelFgSnapshots(frame_generation::HandoffCancel::DisplayChange);
+                fgInputSnapshot.reset();
+                fgCompositeAttemptedFrame = ~0ull;
+                fgCompositeEnabled = enabled;
+            }
             void InvalidateFgResolve(ResolvedSurface& rs)
             {
                 if (auto old = rs.fgPacket.lock(); old && !old->selected)
@@ -10111,6 +10119,11 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
         return g_renderer && g_renderer->PlanSuppressed();
     }
 
+    bool DrainForFrameGenerationReconfigure()
+    {
+        return !g_renderer || (g_renderer->Flush() && g_renderer->WaitForGpu());
+    }
+
     void Flush()
     {
         if (g_renderer)
@@ -10365,6 +10378,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
     void CancelFgHandoffs()
     {
         if (g_renderer) g_renderer->CancelFgSnapshots(frame_generation::HandoffCancel::DisplayChange);
+    }
+    void SetFrameGenerationInputCaptureEnabled(bool enabled)
+    {
+        if (g_renderer) g_renderer->SetFgCompositeEnabled(enabled);
     }
 
     bool SceneAAApplied(uint32_t physicalAddress)
@@ -10627,6 +10644,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
     void Shutdown() {}
     void ScaleResolvedSize(uint32_t, uint32_t&, uint32_t&) {}
     void Draw(const DrawInfo&) {}
+    bool DrainForFrameGenerationReconfigure() { return true; }
     void Flush() {}
     void PreparePresent(uint32_t) {}
     bool SuppressPresent() { return false; }
@@ -10636,6 +10654,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
         frame_plan::FramePlan*, frame_generation::ResolvedHandoff*) { return nullptr; }
     bool AcquireFgCompositeInputs(uint32_t, frame_generation::CompositeHandoff&) { return false; }
     void CancelFgHandoffs() {}
+    void SetFrameGenerationInputCaptureEnabled(bool) {}
     bool ReadbackResolvedSurface(uint32_t, std::vector<uint32_t>&, uint32_t&, uint32_t&) { return false; }
     std::vector<uint32_t> GetResolvedAddresses() { return {}; }
     void DumpRenderTargets(const char*) {}

@@ -4,6 +4,7 @@
 #include <span>
 #include "gpu/backend_selection.h"
 #include "gpu/upscaling_plan.h"
+#include "../../shared/frame_generation/core.h"
 namespace settings
 {
 enum class WindowMode : uint32_t
@@ -52,6 +53,10 @@ struct Config
     gpu::upscaling::DlssQuality dlssQuality = gpu::upscaling::DlssQuality::Quality;
     gpu::upscaling::FsrQuality fsrQuality = gpu::upscaling::FsrQuality::Quality;
     uint32_t fsrSharpnessPercent = 0; // 0 disables FSR RCAS; 1-100 sets its strength.
+    framegen::Provider frameGenerationProvider = framegen::Provider::Off; // D3D12; reconciled at the next presentation boundary.
+    framegen::Mode frameGenerationMode = framegen::Mode::Fixed;
+    uint32_t frameGenerationMultiplier = 2; // Requested total output frames per rendered frame.
+    uint32_t frameGenerationTargetFps = 0; // Dynamic mode: 0 asks the SDK to use the display rate.
     bool fxaa = false; // Legacy serialized mirror; antialiasing is authoritative.
     bool automaticUpdates = true;
     bool skipShaderPrebuild = false;

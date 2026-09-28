@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory)][string]$GameDirectory,
     [ValidateRange(10,600)][int]$Seconds = 120,
     [switch]$DisableFg,
-    [ValidateSet('Legacy','Off','Dlss','Fsr')][string]$FgProvider = 'Legacy',
+    [ValidateSet('Settings','Legacy','Off','Dlss','Fsr')][string]$FgProvider = 'Legacy',
     [ValidateSet('Fixed','Dynamic')][string]$FgMode = 'Fixed',
     [ValidateRange(2,16)][int]$FgMultiplier = 2,
     [ValidateRange(0,1000)][double]$FgTargetFps = 0,
@@ -19,7 +19,8 @@ param(
     [ValidateSet('Diagnostic','Lightweight')][string]$CaptureMode = 'Diagnostic',
     [switch]$Background,
     [switch]$CaptureScreenshots,
-    [string]$ValidationLayerDirectory
+    [string]$ValidationLayerDirectory,
+    [string]$InputRequestPath
 )
 # ACTIVE GAME DRIVER: isolated profile/save/config copies, optional hidden gameplay,
 # muted audio, bounded automated input, then closes only its own game process.
@@ -85,8 +86,8 @@ foreach ($name in @($start.Environment.Keys)) {
     }
 }
 $start.ArgumentList.Add('--game'); $start.ArgumentList.Add($game); $start.ArgumentList.Add('--quiet-kernel')
-$start.Environment['LO_DLSS_FG'] = $(if ($DisableFg) { '0' } else { '1' })
-if ($FgProvider -ne 'Legacy') {
+if ($FgProvider -ne 'Settings') { $start.Environment['LO_DLSS_FG'] = $(if ($DisableFg) { '0' } else { '1' }) }
+if ($FgProvider -notin @('Settings','Legacy')) {
     $start.Environment['LO_FG_PROVIDER'] = $FgProvider.ToLowerInvariant()
     $start.Environment['LO_FG_MODE'] = $FgMode.ToLowerInvariant()
     $start.Environment['LO_FG_MULTIPLIER'] = $FgMultiplier.ToString()
@@ -118,14 +119,17 @@ $start.Environment['LO_LOG_FILE'] = Join-Path $run 'runtime.log'
 $start.Environment['LO_SHADER_CACHE_DIR'] = Join-Path $run 'shader-cache'
 $start.Environment['LO_AUTO_BUTTONS'] = 's@120,a@240,a@360,a@480,a@700,a@900'
 $start.Environment['LO_AUTO_PULSE'] = '6'
+if ($InputRequestPath) { $start.Environment['LO_TEST_INPUT_FILE'] = [IO.Path]::GetFullPath($InputRequestPath) }
 if ($CaptureMode -eq 'Diagnostic') { $start.Environment['LO_RENDER_TIMING'] = '1' }
 $start.Environment['LO_AUTO_STICK'] = '0,18000,1600,1900'
 $process = [Diagnostics.Process]::Start($start)
 $stdout = $process.StandardOutput.ReadToEndAsync()
 $stderr = $process.StandardError.ReadToEndAsync()
 $manifest = [ordered]@{ pid=$process.Id; started=[DateTime]::UtcNow.ToString('o'); exe=$exe;
-    sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; fg=(!$DisableFg -and $FgProvider -ne 'Off');
+    sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash;
+    fg=$(if ($FgProvider -eq 'Settings') { $null } else { !$DisableFg -and $FgProvider -ne 'Off' });
     fg_provider=$FgProvider; fg_mode=$FgMode; fg_multiplier=$FgMultiplier; fg_target_fps=$FgTargetFps;
+    input_request_path=$InputRequestPath;
     foreground=!$Background; muted=$true; object_motion=!$DisableObjectMotion;
     hybrid_motion=!$DisableHybridMotion; hidden_resize_cycle=[bool]$HiddenResizeCycle;
     validation_layer_directory=$validationLayer; synchronization_validation_requested=[bool]$validationLayer;

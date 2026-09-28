@@ -65,6 +65,11 @@ bool MenuFlowDisplayModeFailed();
 #undef __imp__sub_828710A0
 #undef __imp__sub_82889E50
 
+namespace gpu::video {
+FrameGenerationStatus menuFlowFgStatus{};
+FrameGenerationStatus GetFrameGenerationStatus() { return menuFlowFgStatus; }
+}
+
 // Compile the real settings reader/writer into this menu fixture as well.
 // Its public entry points stay distinct from the menu hook's mock persistence.
 #define GameLanguage MenuFlowRealGameLanguage
@@ -96,12 +101,6 @@ gpu::video::DisplayChangeTracker displayChanges;
 void Require(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
-}
-bool covers(const settings::menu_assets::Font& font, const std::wstring& text)
-{
-    return std::all_of(text.begin(), text.end(), [&](wchar_t c) {
-        return c == L' ' || font.glyphs.contains(uint32_t(c));
-    });
 }
 void Poll(uint16_t buttons, bool consumed, int16_t x = 0, int16_t y = 0)
 {
@@ -607,8 +606,8 @@ void CheckBr03DlssMenu(uint8_t* base)
     settings::edit.dlssQuality = DlssQuality::Quality;
     settings::pending = 0;
     Tick(base);
-    Require(settings::snapshot.notice == L"DLSS is not in use. DLSS needs Vulkan and a restart.",
-            "unsaved DLSS on D3D12 says it is not in use and needs Vulkan");
+    Require(settings::snapshot.notice == L"DLSS is not in use. The DLSS choice is not applied yet.",
+            "inactive D3D12 DLSS reports pending choice without claiming submitted output");
     Require(settings::snapshot.notice.find(L"Submitted") == std::wstring::npos,
             "unsaved DLSS is not described as submitted output");
     Require(settings::snapshot.notice.find(L"1707") == std::wstring::npos, "an inactive result does not keep a submitted size");
@@ -1060,6 +1059,140 @@ int main(int argc, char** argv)
 
             std::puts("PASS Start/Enter focus jump, simultaneous confirm suppression, and PointerClick viewport clipping");
         }
+        // FG is a dedicated section within Graphics. Its rows share the
+        // Graphics Save action while Language retains its separate Save.
+        {
+            using framegen::Provider;
+            const auto priorCurrent = currentConfig;
+            const auto priorDisk = diskConfig;
+            settings::Config saved = currentConfig;
+            saved.graphicsBackend = settings::GraphicsBackend::D3D12;
+            saved.uiLanguage = 0;
+            saved.frameGenerationProvider = Provider::Off;
+            saved.frameGenerationMultiplier = 2;
+            currentConfig = diskConfig = saved;
+            settings::edit = saved;
+            settings::tab = 2;
+            settings::row = int(GraphicsRow::FrameGeneration);
+            settings::pending = 0; Tick(base);
+            Require(settings::snapshot.rows.size() == size_t(GraphicsRow::Count), "Graphics page includes FG section rows");
+            Require(settings::snapshot.rows[int(GraphicsRow::FrameGeneration)].choices ==
+                    std::vector<std::wstring>{L"Off", L"DLSS", L"FSR"},
+                    "D3D12 FG section offers Off, DLSS and FSR");
+            Require(settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].hidden,
+                    "Off hides the multiplier");
+            Require(settings::snapshot.notice == L"Frame generation is off.", "FG status shows Off");
+            gpu::video::menuFlowFgStatus.phase = gpu::video::FrameGenerationPhase::Pending;
+            settings::pending = 0; Tick(base);
+            Require(settings::snapshot.notice == L"Applying FG settings…", "FG status shows pending transition");
+            gpu::video::menuFlowFgStatus.phase = gpu::video::FrameGenerationPhase::Ready;
+            gpu::video::menuFlowFgStatus.applied = Provider::Dlss;
+            settings::pending = 0; Tick(base);
+            Require(settings::snapshot.notice.find(L"DLSS FG ready.") != std::wstring::npos,
+                    "FG status names the applied provider");
+            gpu::video::menuFlowFgStatus.phase = gpu::video::FrameGenerationPhase::Unavailable;
+            gpu::video::menuFlowFgStatus.environmentOverride = true;
+            settings::pending = 0; Tick(base);
+            Require(settings::snapshot.notice.find(L"FG is unavailable") != std::wstring::npos &&
+                    settings::snapshot.notice.find(L"diagnostic override") != std::wstring::npos,
+                    "FG status exposes fallback and diagnostic override");
+            gpu::video::menuFlowFgStatus = {};
+            settings::pending = 2; Tick(base);
+            Require(settings::row == int(GraphicsRow::Brightness), "Off navigation skips hidden multiplier");
+
+            settings::row = int(GraphicsRow::FrameGeneration);
+            settings::pending = 8; Tick(base);
+            Require(settings::edit.frameGenerationProvider == Provider::Dlss &&
+                    !settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].hidden,
+                    "DLSS reveals multiplier row");
+            settings::row = int(GraphicsRow::FrameGenerationMultiplier);
+            settings::pending = 4; Tick(base);
+            Require(settings::edit.frameGenerationMultiplier == 16 &&
+                    settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].value == L"16×",
+                    "DLSS multiplier wraps from 2 to 16");
+            settings::pending = 8; Tick(base);
+            Require(settings::edit.frameGenerationMultiplier == 2, "DLSS multiplier wraps from 16 to 2");
+            settings::pending = 8; Tick(base);
+            Require(settings::edit.frameGenerationMultiplier == 3, "DLSS multiplier accepts 3x");
+
+            settings::row = int(GraphicsRow::FrameGeneration);
+            settings::pending = 8; Tick(base);
+            Require(settings::edit.frameGenerationProvider == Provider::Fsr &&
+                    settings::edit.frameGenerationMultiplier == 2 &&
+                    settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].hidden,
+                    "FSR uses fixed 2x and hides multiplier");
+            settings::pending = 2; Tick(base);
+            Require(settings::row == int(GraphicsRow::Brightness), "FSR navigation skips hidden multiplier");
+            settings::row = int(GraphicsRow::FrameGeneration);
+            settings::pending = 4; Tick(base);
+            Require(settings::edit.frameGenerationProvider == Provider::Dlss, "FG provider cycles back to DLSS");
+            settings::row = int(GraphicsRow::FrameGenerationMultiplier);
+            settings::pending = 8; Tick(base);
+            Require(settings::edit.frameGenerationMultiplier == 3, "DLSS multiplier can be reselected after FSR");
+
+            settings::edit.scalingQuality = saved.scalingQuality == 0 ? 1 : 0;
+            settings::edit.uiLanguage = saved.uiLanguage == 4 ? 0 : 4;
+            settings::edit.frameGenerationMode = framegen::Mode::Dynamic;
+            settings::edit.frameGenerationTargetFps = 144;
+            settings::row = int(GraphicsRow::FrameGeneration);
+            const auto beforeSave = saves;
+            settings::pending = 0x1010; Tick(base);
+            Require(settings::row == int(GraphicsRow::Save) && saves == beforeSave,
+                    "Start plus Confirm in Graphics focuses Save without writing");
+            settings::pending = 0x1000; Tick(base);
+            Require(saves == beforeSave + 1 && diskConfig.frameGenerationProvider == Provider::Dlss &&
+                    diskConfig.frameGenerationMultiplier == 3 &&
+                    diskConfig.frameGenerationMode == framegen::Mode::Fixed &&
+                    diskConfig.frameGenerationTargetFps == 0 &&
+                    diskConfig.scalingQuality == settings::edit.scalingQuality &&
+                    diskConfig.uiLanguage == saved.uiLanguage,
+                    "Graphics Save commits FG and graphics together without Language edits");
+            Require(settings::edit.uiLanguage != saved.uiLanguage &&
+                    settings::snapshot.help == L"显示设置已保存。",
+                    "Graphics Save preserves pending Language edit and acknowledges save");
+
+            // The Language page still saves only language fields, leaving a
+            // pending FG change for the shared Graphics Save action.
+            const auto graphicsSaved = diskConfig;
+            settings::edit.frameGenerationProvider = Provider::Fsr;
+            settings::edit.frameGenerationMultiplier = 2;
+            settings::tab = 3;
+            settings::row = 3;
+            const auto beforeLanguageSave = saves;
+            settings::pending = 0x1000; Tick(base);
+            Require(saves == beforeLanguageSave + 1 && diskConfig.uiLanguage == settings::edit.uiLanguage &&
+                    diskConfig.frameGenerationProvider == graphicsSaved.frameGenerationProvider &&
+                    diskConfig.frameGenerationMultiplier == graphicsSaved.frameGenerationMultiplier,
+                    "Language Save does not apply a pending Graphics FG change");
+            Require(settings::edit.frameGenerationProvider == Provider::Fsr,
+                    "Language Save keeps the unsaved FG selection");
+
+            settings::tab = 0;
+            settings::row = 0;
+            settings::pending = 0; Tick(base);
+            settings::PointerClick(float(386 + 2 * settings::MenuTabWidth + 8), 126.0f, false);
+            settings::pending = 0; Tick(base);
+            Require(settings::tab == 2 && settings::row == 0, "mouse selects the Graphics tab");
+            settings::row = int(GraphicsRow::FrameGeneration);
+            settings::pending = 0; Tick(base);
+            int visibleFg = 0;
+            for (int i = 0; i < int(GraphicsRow::FrameGeneration); ++i)
+                visibleFg += !settings::snapshot.rows[size_t(i)].hidden;
+            const int fgSlot = visibleFg - settings::snapshot.scroll;
+            Require(fgSlot >= 0 && fgSlot < settings::kMenuVisibleRows,
+                    "focused FG section stays inside scrolled Graphics viewport");
+            settings::PointerClick(100.0f, float(150 + fgSlot * 43 + 18), false);
+            settings::pending = 0; Tick(base);
+            Require(settings::row == int(GraphicsRow::FrameGeneration),
+                    "mouse hit-testing maps scrolled FG section to its logical row");
+            settings::pending = 0x200; Tick(base);
+            Require(settings::tab == 3, "right shoulder moves Graphics to Language in four tabs");
+            settings::pending = 0x200; Tick(base);
+            Require(settings::tab == 0, "right shoulder wraps Language to Gameplay");
+            currentConfig = priorCurrent;
+            diskConfig = priorDisk;
+            std::puts("PASS Graphics FG section: provider/input navigation, DLSS multiplier bounds, FSR fixed 2x, shared Save, Language isolation, mouse/scroll and four-tab navigation");
+        }
         // FSR sharpness follows quality; Save is always last. Off disables
         // RCAS, and percent changes are bounded.
         {
@@ -1262,17 +1395,61 @@ int main(int argc, char** argv)
             auto assets = settings::menu_assets::Cached(argv[1], 4);
             Require(bool(assets), "installed SCH assets");
             std::filesystem::create_directories(argv[2]);
+            auto labelPainted = [&](settings::MenuSnapshot preview, int label,
+                                    const std::vector<uint32_t>& rendered) {
+                preview.rows[size_t(label)].name.clear();
+                std::vector<uint32_t> withoutLabel;
+                Require(settings::RasterizeMenu(preview, 1280, 720, withoutLabel), "blank-label comparison raster");
+                size_t changedPixels = 0;
+                for (int y = 150; y < 640; ++y)
+                    for (int x = 65; x < 365; ++x)
+                        changedPixels += rendered[size_t(y) * 1280 + x] != withoutLabel[size_t(y) * 1280 + x];
+                return changedPixels > 20;
+            };
             for (GraphicsRow selected : {GraphicsRow::AntiAliasing, GraphicsRow::FrameRate})
             {
                 settings::row = int(selected); settings::Publish(base, ConfigData);
                 auto preview = settings::snapshot; preview.assets = assets;
-                for (GraphicsRow label : {GraphicsRow::AntiAliasing, GraphicsRow::FrameRate, GraphicsRow::Save})
-                    Require(covers(assets->body, preview.rows[int(label)].name), "changed label must use original body face");
                 std::vector<uint32_t> pixels;
                 Require(settings::RasterizeMenu(preview, 1280, 720, pixels), "translated Graphics preview");
+                Require(labelPainted(preview, int(selected), pixels), "selected Graphics label must paint visible pixels");
                 WriteBmp(std::filesystem::path(argv[2]) / (selected == GraphicsRow::AntiAliasing ? "graphics-aa.bmp" : "graphics-rate.bmp"), pixels);
             }
-            std::puts("PASS two Graphics previews from actual Publish/Translate, normal and selected changed labels");
+            settings::tab = 2;
+            settings::row = int(GraphicsRow::FrameGeneration);
+            settings::edit.graphicsBackend = settings::GraphicsBackend::D3D12;
+            settings::edit.frameGenerationProvider = framegen::Provider::Dlss;
+            settings::edit.frameGenerationMultiplier = 3;
+            gpu::video::menuFlowFgStatus.phase = gpu::video::FrameGenerationPhase::Ready;
+            gpu::video::menuFlowFgStatus.applied = framegen::Provider::Dlss;
+            for (uint32_t language : {4u, 0u})
+            {
+                settings::edit.uiLanguage = language;
+                settings::Publish(base, ConfigData);
+                auto preview = settings::snapshot;
+                preview.assets = settings::menu_assets::Cached(argv[1], language);
+                Require(bool(preview.assets), "installed FG preview assets");
+                std::vector<uint32_t> pixels;
+                Require(settings::RasterizeMenu(preview, 1280, 720, pixels), "translated FG preview");
+                Require(labelPainted(preview, int(GraphicsRow::FrameGeneration), pixels),
+                        "FG provider label must paint visible pixels");
+                WriteBmp(std::filesystem::path(argv[2]) /
+                    (language == 4 ? "fg-zh-dlss.bmp" : "fg-en-dlss.bmp"), pixels);
+            }
+            settings::edit.frameGenerationProvider = framegen::Provider::Fsr;
+            settings::edit.frameGenerationMultiplier = 2;
+            gpu::video::menuFlowFgStatus.applied = framegen::Provider::Fsr;
+            settings::Publish(base, ConfigData);
+            auto fsrPreview = settings::snapshot;
+            fsrPreview.assets = settings::menu_assets::Cached(argv[1], 0);
+            Require(fsrPreview.rows[int(GraphicsRow::FrameGenerationMultiplier)].hidden,
+                    "actual English FSR preview hides the multiplier");
+            std::vector<uint32_t> fsrPixels;
+            Require(settings::RasterizeMenu(fsrPreview, 1280, 720, fsrPixels),
+                    "actual English Graphics FSR preview");
+            WriteBmp(std::filesystem::path(argv[2]) / "fg-en-fsr.bmp", fsrPixels);
+            gpu::video::menuFlowFgStatus = {};
+            std::puts("PASS Graphics and bilingual DLSS/English FSR section previews from actual Publish/Translate with installed assets");
         }
         CheckBr03DlssMenu(base);
         {
@@ -1312,6 +1489,39 @@ int main(int argc, char** argv)
             sharpness.fsrSharpnessPercent = 0;
             Require(settings::SaveConfig(sharpness) && settings::Read().fsrSharpnessPercent == 0,
                     "Off roundtrips as zero");
+            writeIni("frame_generation_provider=1\nframe_generation_mode=0\nframe_generation_multiplier=16\n");
+            const auto maxFg = settings::Read();
+            Require(maxFg.frameGenerationProvider == framegen::Provider::Dlss &&
+                    maxFg.frameGenerationMultiplier == 16, "DLSS maximum multiplier reads from INI");
+            writeIni("frame_generation_provider=1\nframe_generation_multiplier=17\n");
+            Require(settings::Read().frameGenerationMultiplier == 2, "out-of-range FG multiplier resets to 2");
+            writeIni("frame_generation_provider=99\nframe_generation_multiplier=2\n");
+            Require(settings::Read().frameGenerationProvider == framegen::Provider::Off,
+                    "unknown FG provider resets to Off");
+            writeIni("frame_generation_provider=2\nframe_generation_mode=1\nframe_generation_multiplier=16\nframe_generation_target_fps=144\n");
+            const auto fsrFg = settings::Read();
+            Require(fsrFg.frameGenerationProvider == framegen::Provider::Fsr &&
+                    fsrFg.frameGenerationMode == framegen::Mode::Fixed &&
+                    fsrFg.frameGenerationMultiplier == 2 && fsrFg.frameGenerationTargetFps == 0,
+                    "FSR INI normalizes to fixed 2x");
+            settings::Config fgConfig{};
+            fgConfig.frameGenerationProvider = framegen::Provider::Dlss;
+            fgConfig.frameGenerationMultiplier = 2;
+            Require(settings::SaveConfig(fgConfig) && settings::Read().frameGenerationMultiplier == 2,
+                    "minimum DLSS multiplier survives real save/reload");
+            fgConfig.frameGenerationMultiplier = 16;
+            Require(settings::SaveConfig(fgConfig), "maximum DLSS multiplier saves");
+            const auto savedFg = settings::Read();
+            Require(savedFg.frameGenerationProvider == framegen::Provider::Dlss &&
+                    savedFg.frameGenerationMultiplier == 16, "maximum DLSS multiplier survives real save/reload");
+            {
+                std::ifstream fgIni("settings.ini");
+                const std::string fgText((std::istreambuf_iterator<char>(fgIni)), std::istreambuf_iterator<char>());
+                Require(fgText.find("frame_generation_provider=1\n") != std::string::npos &&
+                        fgText.find("frame_generation_multiplier=16\n") != std::string::npos,
+                        "real INI writes FG provider and multiplier");
+            }
+            std::puts("PASS FG settings.ini provider and multiplier validation, FSR normalization, and min/max save/reload");
             std::filesystem::current_path(originalDir);
             std::filesystem::remove_all(sandbox);
             std::puts("PASS FSR sharpness settings.ini read, validation and save/reload roundtrip");

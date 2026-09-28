@@ -1,4 +1,5 @@
 #include "menu_render.h"
+#include "menu.h"
 #include "menu_assets.h"
 #include "translations.h"
 #include "../host_ui/rasterizer.h"
@@ -480,9 +481,9 @@ bool settings::RasterizeMenu(const MenuSnapshot &current, uint32_t width, uint32
 
     const wchar_t *enTabs[] = {L"Gameplay", L"Audio", L"Graphics", L"Language"};
     const wchar_t *zhTabs[] = {L"遊戲", L"聲音", L"圖像", L"語言"};
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < MenuTabCount; ++i)
     {
-        constexpr int tabWidth = 160;
+        constexpr int tabWidth = MenuTabWidth;
         const int x = 386 + i * tabWidth;
         const bool selected = i == current.tab;
         cell(x, 110, tabWidth, 32, selected);
@@ -509,6 +510,9 @@ bool settings::RasterizeMenu(const MenuSnapshot &current, uint32_t width, uint32
         const int y = rowTop + slot * rowHeight;
         if (y + rowHeight > 640) break;
         const bool focused = int(index) == current.row;
+        if (current.tab == 2 && (index == size_t(GraphicsRow::FrameGeneration) ||
+                                 index == size_t(GraphicsRow::Brightness)))
+            line(labelLeft, y - 3, choiceLeft + choiceWidth, y - 3, MakeColor(255, 173, 176, 177));
 
         if (focused)
         {

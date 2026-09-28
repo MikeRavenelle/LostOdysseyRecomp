@@ -33,12 +33,15 @@ python tools/perf/analyze-city-comparison.py /path/to/run-a/drive-summary.json /
 `run-fg-game.ps1` is the bounded game driver for experimental Windows
 DLSS/FSR and Streamline FG paths. Use `-Backend D3D12|Vulkan` and
 `-Upscaler Dlss|Fsr|Off` to override the isolated run configuration; `-Quality`
-accepts values `0..3`. For the reusable D3D12 path, `-FgProvider Legacy|Off|Dlss|Fsr`,
+accepts values `0..3`. For the reusable D3D12 path, `-FgProvider Settings|Legacy|Off|Dlss|Fsr`,
 `-FgMode Fixed|Dynamic`, `-FgMultiplier 2..16`, and `-FgTargetFps 0..1000`
-select the provider and runtime policy. These values are passed as
+select the provider and runtime policy for an explicit provider. These values
+are passed as
 `LO_FG_PROVIDER`, `LO_FG_MODE`, `LO_FG_MULTIPLIER`, and `LO_FG_TARGET_FPS`, and
-are recorded in `run.json`. `Legacy` preserves the existing `LO_DLSS_FG`
-selection; `-DisableFg` cannot be combined with `Dlss` or `Fsr`.
+are recorded in `run.json`. `Settings` leaves FG selection to the copied
+`settings.ini` and the in-game Frame Generation section; it does not inject
+FG environment overrides. `Legacy` preserves the existing `LO_DLSS_FG`
+selection; `-DisableFg` cannot be combined with `Settings`, `Dlss`, or `Fsr`.
 `-DisableObjectMotion` sets `LO_MV_REPLAY=0` for a
 camera/depth hybrid comparison and records `object_motion=false` in `run.json`.
 `-CaptureMode Diagnostic|Lightweight` selects the capture overhead; `Diagnostic`
@@ -59,7 +62,10 @@ in `hidden-resize-cycle.json`.
 through `screenshot-request.txt` in the run directory. Both options are
 recorded in `run.json` and are intended for isolated evidence runs.
 The request file must receive a new nonzero serial and count, for example
-`1 1`, before the game writes a requested screenshot.
+`1 1`, before the game writes a requested screenshot. `-InputRequestPath`
+supplies a bounded input request file through `LO_TEST_INPUT_FILE`, allowing
+scripted menu navigation in the isolated child; the path is recorded in
+`run.json`.
 `-ValidationLayerDirectory` optionally injects the Vulkan validation layer from
 the supplied directory. The directory must contain
 `VkLayer_khronos_validation.json`; the driver enables synchronization

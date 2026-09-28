@@ -65,6 +65,10 @@ namespace gpu::renderer
 
     // Called on XE_SWAP before the frontbuffer is presented: finishes all work.
     void Flush();
+    // Drain renderer submissions before replacing the D3D12 presentation queue.
+    bool DrainForFrameGenerationReconfigure();
+    // Called after a drained D3D12 provider change, before the next scene frame.
+    void SetFrameGenerationInputCaptureEnabled(bool enabled);
     // Record the frontbuffer COPY_SOURCE barrier on the still-open swap list.
     // Must run before Flush so Present does not submit a second command list.
     void PreparePresent(uint32_t physicalAddress);

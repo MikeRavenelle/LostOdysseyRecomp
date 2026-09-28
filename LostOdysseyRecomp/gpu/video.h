@@ -6,6 +6,7 @@
 #include "display_change.h"
 #include "present_capture.h"
 #include "upscaling_plan.h"
+#include "../../shared/frame_generation/core.h"
 namespace settings { struct Config; }
 
 namespace plume
@@ -67,6 +68,18 @@ namespace gpu::video
     // configuration is blocked, so the next valid configuration can recover.
     bool FrameGenerationInputCaptureEnabled();
     bool FrameGenerationAvailable();
+    enum class FrameGenerationPhase : uint8_t { Off, Pending, Ready, Unavailable };
+    struct FrameGenerationStatus {
+        FrameGenerationPhase phase = FrameGenerationPhase::Off;
+        framegen::Provider requested = framegen::Provider::Off;
+        framegen::Provider applied = framegen::Provider::Off;
+        uint32_t requestedMultiplier = 2;
+        uint32_t appliedMultiplier = 2;
+        bool environmentOverride = false;
+    };
+    // Ready means the SDK session and swapchain exist, not that a generated
+    // frame was observed. Safe to query from the menu/window thread.
+    FrameGenerationStatus GetFrameGenerationStatus();
     void RequestExit();
     [[noreturn]] void FinishRequestedExit();
 

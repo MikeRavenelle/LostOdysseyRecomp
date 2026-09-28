@@ -46,6 +46,7 @@ bool D3D12Bridge::Initialize(plume::D3D12Device& device, const framegen::Config&
     }
     if (!session_) return false;
     device_ = &device;
+    config_ = config;
     device.presentationHooks = {session_.get(), CreateQueue, CreateSwapchain};
     LOG_INFO("D3D12 FG: provider={} mode={} generated_frames={} target_fps={} input_capture=on sr_dependency=none",
         config.provider == framegen::Provider::Fsr ? "fsr" : "dlss",
@@ -163,6 +164,17 @@ void D3D12Bridge::Quiesce() {
     Require(!recording_, "quiesce before recording cancellation");
     std::string reason; const bool ok = session_->Quiesce(reason); Require(ok, reason);
     depth_->ReleaseAfterInputDrain(); previousFrame_ = previousEpoch_ = 0;
+}
+bool D3D12Bridge::Reconfigure(const framegen::Config& config, std::string& reason) {
+    if (!session_ || config.provider != config_.provider) {
+        reason = "FG reconfiguration requires an existing provider"; return false;
+    }
+    // An SDK/GPU quiesce failure leaves ownership uncertain. Do not resume
+    // ordinary presentation against those resources.
+    const bool configured = session_->Reconfigure(config, reason);
+    Require(configured, reason);
+    config_ = config; previousFrame_ = previousEpoch_ = 0;
+    return true;
 }
 void D3D12Bridge::Shutdown() {
     if (session_) {

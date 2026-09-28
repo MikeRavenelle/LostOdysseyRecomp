@@ -128,6 +128,14 @@ bool D3D12Session::Quiesce(std::string& reason) {
     if (queue_ && (!SignalFence(reason) || !WaitFence(reason))) return false;
     blocked_.reset(); return true;
 }
+bool D3D12Session::Reconfigure(const Config& config,std::string& reason) {
+    if (config.provider!=requested_.provider || config.mode==Mode::Off ||
+        !config.generatedFrames || !std::isfinite(config.targetFrameRate) || config.targetFrameRate<0) {
+        reason="FG reconfiguration requires the existing provider and valid mode"; return false;
+    }
+    if (!Quiesce(reason)) return false;
+    requested_=config; history_.Reset(); blocked_.reset(); return true;
+}
 bool D3D12Session::Shutdown(std::string& reason) {
     if (closed_) return true;
     if (!Quiesce(reason) || !ShutdownNative(reason)) return false;

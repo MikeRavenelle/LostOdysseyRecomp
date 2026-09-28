@@ -11,6 +11,16 @@ from release.version import normalize_release_version, valid_source_version
 
 ROOT = Path(__file__).resolve().parents[1]
 DXC_LICENSES = ROOT / 'thirdparty/dxc-licenses'
+STREAMLINE_RUNTIME = (
+    'sl.interposer.dll', 'sl.common.dll', 'sl.dlss_g.dll',
+    'sl.reflex.dll', 'sl.pcl.dll', 'nvngx_dlssg.dll',
+    'NvLowLatencyVk.dll',
+)
+STREAMLINE_LICENSES = (
+    'license.txt', '3rd-party-licenses.md',
+    'bin/x64/nvngx_dlss.license.txt', 'bin/x64/reflex.license.txt',
+)
+VC_RUNTIME = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 
 
 def run(*args, **kwargs):
@@ -32,11 +42,43 @@ def legacy_updater_file_hash(path):
         return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
+def stage_frame_generation_runtime(runtime_directory, package, licenses, streamline_sdk_root):
+    fsr_license = runtime_directory / 'licenses/LICENSE-FidelityFX.txt'
+    fsr_fg_runtime = runtime_directory / 'amd_fidelityfx_dx12.dll'
+    if fsr_fg_runtime.is_file():
+        if not fsr_license.is_file():
+            raise SystemExit('FSR FG runtime is present without the FidelityFX license.')
+        shutil.copy2(fsr_fg_runtime, package / fsr_fg_runtime.name)
+
+    streamline_present = [name for name in STREAMLINE_RUNTIME if (runtime_directory / name).is_file()]
+    if streamline_present:
+        missing = set(STREAMLINE_RUNTIME) - set(streamline_present)
+        if missing:
+            raise SystemExit(f'Incomplete Streamline runtime: {sorted(missing)}')
+        for name in STREAMLINE_LICENSES:
+            source = streamline_sdk_root / name
+            if not source.is_file():
+                raise SystemExit(f'Missing pinned Streamline SDK license: {source}')
+            destination = licenses / 'NVIDIA-Streamline' / Path(name).name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        for name in STREAMLINE_RUNTIME:
+            shutil.copy2(runtime_directory / name, package / name)
+
+    if streamline_present or fsr_fg_runtime.is_file():
+        for name in VC_RUNTIME:
+            source = runtime_directory / name
+            if not source.is_file():
+                raise SystemExit(f'Missing app-local VC143 redistributable: {name}')
+            shutil.copy2(source, package / name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build', type=Path, default=ROOT / 'out/build/release')
     parser.add_argument('--output', type=Path, default=ROOT / 'out/releases')
     parser.add_argument('--version', default='')
+    parser.add_argument('--streamline-sdk-root', type=Path, default=ROOT / 'out/deps/streamline')
     parser.add_argument('--legacy-updater-manifest', action='store_true',
                         help='Include the SHA256 file map required by older Windows updaters')
     args = parser.parse_args()
@@ -83,6 +125,8 @@ def main():
         fsr_license = runtime.parent / "licenses/LICENSE-FidelityFX.txt"
         if fsr_license.is_file():
             shutil.copy2(fsr_license, licenses / fsr_license.name)
+        stage_frame_generation_runtime(runtime.parent, package, licenses,
+                                       args.streamline_sdk_root.resolve())
         stage_portable_shader_pack(runtime.parent, package, licenses)
         shutil.copy2(ROOT / 'LICENSE', licenses / 'LostOdysseyRecomp.txt')
         shutil.copy2(ROOT / 'thirdparty/miniz-UNLICENSE.txt', licenses / 'miniz-UNLICENSE.txt')

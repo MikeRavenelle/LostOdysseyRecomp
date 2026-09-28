@@ -21,10 +21,14 @@ enum class GraphicsRow : int
     AnisotropicFiltering = 7,
     ScalingQuality = 8,
     FrameRate = 9,
-    Brightness = 10,
-    Save = 11,
-    Count = 12,
+    FrameGeneration = 10,
+    FrameGenerationMultiplier = 11,
+    Brightness = 12,
+    Save = 13,
+    Count = 14,
 };
+inline constexpr int MenuTabCount = 4;
+inline constexpr int MenuTabWidth = 640 / MenuTabCount;
 // Called by input polling before returning the guest-facing controller state.
 bool FilterInput(uint16_t &buttons, int16_t leftX, int16_t leftY);
 // Snapshot rendered on the presentation thread, never accessing guest memory.

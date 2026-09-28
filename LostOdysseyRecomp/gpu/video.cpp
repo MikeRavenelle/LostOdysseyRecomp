@@ -20,6 +20,7 @@
 #include "frame_generation_present_bridge.h"
 #include "frame_generation_composite.h"
 #include "../../shared/frame_generation/environment.h"
+#include "frame_generation_settings.h"
 #if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
 #include "frame_generation_d3d12.h"
 #endif
@@ -268,6 +269,9 @@ namespace gpu::video
         std::unique_ptr<dlss::Controller> g_dlssController;
 #if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
         std::unique_ptr<frame_generation::D3D12Bridge> g_d3dFg;
+        std::mutex g_fgSettingsMutex;
+        framegen::Config g_fgAppliedConfig{};
+        std::optional<framegen::Config> g_fgFailedRequest;
 #endif
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
         std::unique_ptr<dlss_fg::Runtime> g_fgRuntime;
@@ -1150,6 +1154,11 @@ namespace gpu::video
 #endif
 #if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
         if (g_d3dFg) g_d3dFg->Quiesce();
+        {
+            std::lock_guard lock(g_fgSettingsMutex);
+            g_fgAppliedConfig = {};
+            g_fgFailedRequest.reset();
+        }
 #endif
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
         // FG releases its retained producer leases before renderer/device teardown.
@@ -1417,7 +1426,7 @@ namespace gpu::video
 #endif
 #if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
             if (!g_vulkan) {
-                const auto fg = framegen::ParseEnvironment(std::getenv("LO_FG_PROVIDER"),
+                const auto fg = frame_generation::ResolveD3D12Selection(settings::GetConfig(), std::getenv("LO_FG_PROVIDER"),
                     std::getenv("LO_FG_MODE"), std::getenv("LO_FG_MULTIPLIER"),
                     std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
                 if (fg.error) LOG_ERROR("D3D12 FG: {}", fg.error);
@@ -1506,6 +1515,16 @@ namespace gpu::video
         if (selection.selected) {
             g_selectedBackend = static_cast<int>(*selection.selected);
             g_available = true; g_initializing = false;
+#if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
+            if (*selection.selected == backend::Backend::D3D12) {
+                const auto requestedFg = frame_generation::ResolveD3D12Selection(settings::GetConfig(),
+                    std::getenv("LO_FG_PROVIDER"), std::getenv("LO_FG_MODE"),
+                    std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
+                std::lock_guard lock(g_fgSettingsMutex);
+                g_fgAppliedConfig = g_d3dFg ? requestedFg.config : framegen::Config{};
+                if (requestedFg.Enabled() && !g_d3dFg) g_fgFailedRequest = requestedFg.config;
+            }
+#endif
             PublishOwnedDeviceCapability();
             LOG_INFO("video: {} on {}", backend::Name(*selection.selected), g_device->getDescription().name);
         } else {
@@ -1551,6 +1570,39 @@ namespace gpu::video
         if (g_fgSession) return g_fgSession->Available();
 #endif
         return false;
+    }
+    FrameGenerationStatus GetFrameGenerationStatus() {
+        FrameGenerationStatus status;
+        status.environmentOverride = std::getenv("LO_FG_PROVIDER") || std::getenv("LO_FG_MODE") ||
+            std::getenv("LO_FG_MULTIPLIER") || std::getenv("LO_FG_TARGET_FPS") || std::getenv("LO_DLSS_FG");
+#if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32) && defined(LO_GPU_PLUME) && !defined(LO_VIDEO_SUBMISSION_UNIT)
+        const auto request = frame_generation::ResolveD3D12Selection(settings::GetConfig(),
+            std::getenv("LO_FG_PROVIDER"), std::getenv("LO_FG_MODE"),
+            std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
+        status.requested = request.config.provider;
+        status.requestedMultiplier = request.config.generatedFrames + 1;
+        {
+            std::lock_guard lock(g_fgSettingsMutex);
+            status.applied = g_fgAppliedConfig.provider;
+            status.appliedMultiplier = g_fgAppliedConfig.generatedFrames + 1;
+            const auto backend = SelectedBackend();
+            if (request.error || (backend && *backend != backend::Backend::D3D12) ||
+                (g_fgFailedRequest && *g_fgFailedRequest == request.config))
+                status.phase = request.config.provider == framegen::Provider::Off && !request.error
+                    ? FrameGenerationPhase::Off : FrameGenerationPhase::Unavailable;
+            else if (!backend || request.config != g_fgAppliedConfig)
+                status.phase = request.config.provider == framegen::Provider::Off && !backend
+                    ? FrameGenerationPhase::Off : FrameGenerationPhase::Pending;
+            else
+                status.phase = status.applied == framegen::Provider::Off
+                    ? FrameGenerationPhase::Off : FrameGenerationPhase::Ready;
+        }
+#elif !defined(LO_VIDEO_SUBMISSION_UNIT)
+        status.requested = settings::GetConfig().frameGenerationProvider;
+        status.phase = status.requested == framegen::Provider::Off
+            ? FrameGenerationPhase::Off : FrameGenerationPhase::Unavailable;
+#endif
+        return status;
     }
     bool ExitRequested() { return g_exitRequested.load(std::memory_order_acquire); }
     void RequestExit() {
@@ -1931,6 +1983,123 @@ namespace gpu::video
     }
 
 #ifdef LO_GPU_PLUME
+    // Only the command/presentation thread may replace D3D12 FG ownership.
+#if defined(_WIN32) && defined(LO_ENABLE_D3D12_FG)
+    static bool ReconcileD3D12FrameGeneration()
+    {
+        if (g_vulkan || !g_device || !g_queue || !g_swapChain) return true;
+        // The window thread owns this handshake. It may be changing the SDL
+        // surface after observing the quiescent acknowledgement.
+        if (g_fgWindowChange.load() != 0) return true;
+        const auto request = frame_generation::ResolveD3D12Selection(settings::GetConfig(),
+            std::getenv("LO_FG_PROVIDER"), std::getenv("LO_FG_MODE"),
+            std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
+        const framegen::Config desired = request.Enabled() ? request.config : framegen::Config{};
+        framegen::Config applied;
+        {
+            std::lock_guard lock(g_fgSettingsMutex);
+            applied = g_fgAppliedConfig;
+            if (g_fgFailedRequest && *g_fgFailedRequest != request.config) g_fgFailedRequest.reset();
+            if (g_fgFailedRequest) return true;
+        }
+        if (desired == applied) return true;
+        if (!renderer::DrainForFrameGenerationReconfigure() || !WaitForPresentGpu()) {
+            LOG_ERROR("D3D12 FG: could not drain renderer/presentation for settings change");
+            return false;
+        }
+        if (g_d3dFg && desired.provider == applied.provider && desired.provider != framegen::Provider::Off) {
+            std::string reason;
+            if (!g_d3dFg->Reconfigure(desired, reason)) {
+                LOG_ERROR("D3D12 FG: reconfiguration unavailable: {}", reason);
+                std::lock_guard lock(g_fgSettingsMutex);
+                g_fgFailedRequest = request.config;
+                return true;
+            }
+            std::lock_guard lock(g_fgSettingsMutex);
+            g_fgAppliedConfig = desired;
+            g_fgFailedRequest.reset();
+            LOG_INFO("D3D12 FG: updated provider={} multiplier={} without swapchain replacement",
+                desired.provider == framegen::Provider::Dlss ? "dlss" : "fsr", desired.generatedFrames + 1);
+            return true;
+        }
+
+        // The old SDK swapchain and all of its backbuffers must die before the
+        // session DLL unloads. Keep the Plume queue wrapper address: renderer
+        // command lists borrow it for future submissions.
+        if (g_d3dFg) g_d3dFg->Quiesce();
+        g_fgPresent.CancelAll(frame_generation::HandoffCancel::DisplayChange);
+        renderer::CancelFgHandoffs();
+        g_captureRetained.clear();
+        g_captureCopy = {};
+        g_presentedSnapshot.reset();
+        g_snapshotWidth = g_snapshotHeight = 0;
+        g_snapshotFormat = plume::RenderFormat::UNKNOWN;
+        auto* oldSwap = static_cast<plume::D3D12SwapChain*>(g_swapChain.get());
+        if (oldSwap->d3d) oldSwap->d3d->SetFullscreenState(FALSE, nullptr);
+        g_swapChain.reset();
+        g_presentSemaphores.clear();
+        g_d3dFg.reset();
+
+        std::string reason;
+        if (desired.provider != framegen::Provider::Off) {
+            auto bridge = std::make_unique<frame_generation::D3D12Bridge>();
+            const char* fsrPath = std::getenv("LO_FSR_FG_RUNTIME");
+            const auto runtime = desired.provider == framegen::Provider::Fsr
+                ? (fsrPath && *fsrPath ? std::filesystem::path(fsrPath) : DlssRuntimePath() / "amd_fidelityfx_dx12.dll")
+                : DlssRuntimePath();
+            if (bridge->Initialize(*static_cast<plume::D3D12Device*>(g_device.get()), desired, runtime, reason))
+                g_d3dFg = std::move(bridge);
+            else LOG_ERROR("D3D12 FG: provider switch unavailable: {}", reason);
+        }
+        auto* queue = static_cast<plume::D3D12CommandQueue*>(g_queue.get());
+        bool queueReady = queue->recreateNativeQueue();
+        if (!queueReady && g_d3dFg) {
+            LOG_ERROR("D3D12 FG: provider queue creation failed; returning to ordinary presentation");
+            g_d3dFg.reset();
+            queueReady = queue->recreateNativeQueue();
+        }
+        if (!queueReady) {
+            LOG_ERROR("D3D12 FG: native queue replacement failed");
+            StopGpuWork(int32_t(E_FAIL));
+            return false;
+        }
+        auto createSwapchain = [&] {
+            g_swapChain = g_queue->createSwapChain(
+                plume::RenderSwapChainDesc(g_nativeWindow, kSwapChainFormat, kSwapChainBuffers));
+            return g_swapChain && !g_swapChain->isEmpty();
+        };
+        bool swapReady = createSwapchain();
+        if (!swapReady && g_d3dFg) {
+            g_swapChain.reset();
+            LOG_ERROR("D3D12 FG: provider swapchain creation failed; returning to ordinary presentation");
+            g_d3dFg.reset();
+            if (queue->recreateNativeQueue()) swapReady = createSwapchain();
+        }
+        if (!swapReady) {
+            LOG_ERROR("D3D12 FG: ordinary swapchain recovery failed");
+            StopGpuWork(int32_t(E_FAIL));
+            return false;
+        }
+        g_fgWindowSynchronization = bool(g_d3dFg);
+        renderer::SetFrameGenerationInputCaptureEnabled(bool(g_d3dFg));
+        g_presentationDisplay = {};
+        g_forceSwapResize = true;
+        g_hasPresentedImage = false;
+        g_lastPresentedImage = 0;
+        g_fgPresentSerial = 0;
+        {
+            std::lock_guard lock(g_fgSettingsMutex);
+            g_fgAppliedConfig = g_d3dFg ? desired : framegen::Config{};
+            g_fgFailedRequest = desired.provider != framegen::Provider::Off && !g_d3dFg
+                ? std::optional(request.config) : std::nullopt;
+        }
+        LOG_INFO("D3D12 FG: provider switch requested={} applied={} multiplier={} swapchain_replaced=1",
+            desired.provider == framegen::Provider::Dlss ? "dlss" : desired.provider == framegen::Provider::Fsr ? "fsr" : "off",
+            g_d3dFg ? (desired.provider == framegen::Provider::Dlss ? "dlss" : "fsr") : "off",
+            desired.generatedFrames + 1);
+        return true;
+    }
+#endif
     // Sole presentation-thread entry for mode changes and swap-chain recovery.
     // Both guest frames and host-only frames call this BEFORE reading dimensions
     // or rasterizing UI. The returned ticket belongs to these prepared operations.
@@ -1949,6 +2118,9 @@ namespace gpu::video
 #endif
         if (!g_available || !g_swapChain || GpuWorkStopped())
             return false;
+#if defined(_WIN32) && defined(LO_ENABLE_D3D12_FG)
+        if (!ReconcileD3D12FrameGeneration()) return false;
+#endif
         displayTicket = g_displayChanges.PresentationTicket();
         if (g_windowResizeRequested.exchange(false)) g_forceSwapResize = true;
         if (displayTicket && displayTicket != g_presentationDisplay.resizedTicket) {
@@ -2302,9 +2474,18 @@ namespace gpu::video
                 }
                 if (!BeginGpuCommands(g_commandList.get())) return;
 #if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
-                if (g_d3dFg) g_d3dFg->PrepareAfterHostDrain(composite,
-                    *static_cast<plume::D3D12SwapChain*>(g_swapChain.get()),
-                    *static_cast<plume::D3D12CommandList*>(g_commandList.get()), g_deviceEpoch.load());
+                if (g_d3dFg) {
+                    g_d3dFg->PrepareAfterHostDrain(composite,
+                        *static_cast<plume::D3D12SwapChain*>(g_swapChain.get()),
+                        *static_cast<plume::D3D12CommandList*>(g_commandList.get()), g_deviceEpoch.load());
+                    framegen::Config applied;
+                    { std::lock_guard lock(g_fgSettingsMutex); applied = g_fgAppliedConfig; }
+                    const auto caps = g_d3dFg->Supported();
+                    if (caps.available && !framegen::Select(applied, caps).Enabled()) {
+                        std::lock_guard lock(g_fgSettingsMutex);
+                        g_fgFailedRequest = applied;
+                    }
+                }
 #endif
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
                 if (g_fgSession) {

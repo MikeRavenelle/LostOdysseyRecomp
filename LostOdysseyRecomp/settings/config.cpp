@@ -22,6 +22,21 @@ Config Validate(Config value)
     value.dlssQuality = gpu::upscaling::NormalizeDlssQuality(value.dlssQuality);
     value.fsrQuality = gpu::upscaling::NormalizeFsrQuality(value.fsrQuality);
     value.fsrSharpnessPercent = std::min(value.fsrSharpnessPercent, 100u);
+    if (value.frameGenerationProvider != framegen::Provider::Off &&
+        value.frameGenerationProvider != framegen::Provider::Dlss &&
+        value.frameGenerationProvider != framegen::Provider::Fsr)
+        value.frameGenerationProvider = framegen::Provider::Off;
+    if (value.frameGenerationMode != framegen::Mode::Fixed && value.frameGenerationMode != framegen::Mode::Dynamic)
+        value.frameGenerationMode = framegen::Mode::Fixed;
+    if (value.frameGenerationMultiplier < 2 || value.frameGenerationMultiplier > 16)
+        value.frameGenerationMultiplier = 2;
+    if (value.frameGenerationTargetFps > 1000) value.frameGenerationTargetFps = 0;
+    if (value.frameGenerationProvider == framegen::Provider::Fsr)
+    {
+        value.frameGenerationMode = framegen::Mode::Fixed;
+        value.frameGenerationMultiplier = 2;
+        value.frameGenerationTargetFps = 0;
+    }
     if (value.antialiasing > 3) value.antialiasing = 0;
     value.fxaa = value.antialiasing == 1;
     if (value.frameRate != 30 && value.frameRate != 60 && value.frameRate != 120) value.frameRate = 30;
@@ -102,6 +117,16 @@ Config Read()
             value.fsrQuality = gpu::upscaling::FsrQuality(number);
         else if (key == "fsr_sharpness")
             value.fsrSharpnessPercent = number;
+        else if (key == "frame_generation_provider")
+            value.frameGenerationProvider = number <= uint32_t(framegen::Provider::Fsr)
+                ? framegen::Provider(number) : framegen::Provider::Off;
+        else if (key == "frame_generation_mode")
+            value.frameGenerationMode = number <= uint32_t(framegen::Mode::Dynamic)
+                ? framegen::Mode(number) : framegen::Mode::Fixed;
+        else if (key == "frame_generation_multiplier")
+            value.frameGenerationMultiplier = number;
+        else if (key == "frame_generation_target_fps")
+            value.frameGenerationTargetFps = number;
         else if (key == "frame_rate")
             value.frameRate = number;
         else if (key == "fxaa")
@@ -193,6 +218,10 @@ static bool WriteConfig(const Config &value)
            << "\nupscaler=" << uint32_t(value.upscaler) << "\ndlss_quality=" << uint32_t(value.dlssQuality)
            << "\nfsr_quality=" << uint32_t(value.fsrQuality)
            << "\nfsr_sharpness=" << value.fsrSharpnessPercent
+           << "\nframe_generation_provider=" << uint32_t(value.frameGenerationProvider)
+           << "\nframe_generation_mode=" << uint32_t(value.frameGenerationMode)
+           << "\nframe_generation_multiplier=" << value.frameGenerationMultiplier
+           << "\nframe_generation_target_fps=" << value.frameGenerationTargetFps
            << "\ninternal_resolution=" << value.internalResolution
            << "\nfxaa=" << value.fxaa << "\nautomatic_updates=" << value.automaticUpdates
            << "\nskip_shader_prebuild=" << (value.skipShaderPrebuild ? 1 : 0)

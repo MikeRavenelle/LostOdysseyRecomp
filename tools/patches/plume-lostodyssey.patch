@@ -1,5 +1,5 @@
 diff --git a/plume_d3d12.cpp b/plume_d3d12.cpp
-index 2cdcf18..6c9ee19 100644
+index 2cdcf18..0a2805e 100644
 --- a/plume_d3d12.cpp
 +++ b/plume_d3d12.cpp
 @@ -6,6 +6,7 @@
@@ -72,7 +72,22 @@ index 2cdcf18..6c9ee19 100644
 +        }
          d3d->SetMaximumFrameLatency(desc.maxFrameLatency);
          waitableObject = d3d->GetFrameLatencyWaitableObject();
- 
+
+@@ -1376,10 +1386,10 @@ namespace plume {
+     }
+
+     D3D12SwapChain::~D3D12SwapChain() {
+-        for (uint32_t i = 0; i < desc.textureCount; i++) {
+-            if (textures[i].d3d != nullptr) {
+-                textures[i].d3d->Release();
+-                textures[i].d3d = nullptr;
++        for (auto &texture : textures) {
++            if (texture.d3d != nullptr) {
++                texture.d3d->Release();
++                texture.d3d = nullptr;
+             }
+         }
+
 @@ -1406,21 +1416,27 @@ namespace plume {
      }
  
@@ -384,9 +399,17 @@ index 2cdcf18..6c9ee19 100644
              return;
          }
      }
-@@ -2669,11 +2769,15 @@ namespace plume {
+@@ -2668,12 +2768,23 @@ namespace plume {
+         }
      }
- 
+
++    bool D3D12CommandQueue::recreateNativeQueue() {
++        D3D12CommandQueue replacement(device, type);
++        if (!replacement.d3d) return false;
++        std::swap(d3d, replacement.d3d);
++        return true;
++    }
++
      std::unique_ptr<RenderCommandList> D3D12CommandQueue::createCommandList() {
 -        return std::make_unique<D3D12CommandList>(this);
 +        auto object = std::make_unique<D3D12CommandList>(this);
@@ -402,7 +425,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      void D3D12CommandQueue::executeCommandLists(const RenderCommandList **commandLists, uint32_t commandListCount, RenderCommandSemaphore **waitSemaphores, uint32_t waitSemaphoreCount, RenderCommandSemaphore **signalSemaphores, uint32_t signalSemaphoreCount, RenderCommandFence *signalFence) {
-@@ -2762,7 +2866,10 @@ namespace plume {
+@@ -2762,7 +2873,10 @@ namespace plume {
  
          HRESULT res = device->allocator->CreateResource(&allocationDesc, &resourceDesc, resourceStates, nullptr, &allocation, IID_PPV_ARGS(&d3d));
          if (FAILED(res)) {
@@ -414,7 +437,7 @@ index 2cdcf18..6c9ee19 100644
              return;
          }
      }
-@@ -2782,7 +2889,15 @@ namespace plume {
+@@ -2782,7 +2896,15 @@ namespace plume {
          }
  
          void *outputData = nullptr;
@@ -431,7 +454,7 @@ index 2cdcf18..6c9ee19 100644
          return outputData;
      }
  
-@@ -2878,7 +2993,11 @@ namespace plume {
+@@ -2878,7 +3000,11 @@ namespace plume {
  
          HRESULT res = device->allocator->CreateResource(&allocationDesc, &resourceDesc, resourceStates, (desc.optimizedClearValue != nullptr) ? &optimizedClearValue : nullptr, &allocation, IID_PPV_ARGS(&d3d));
          if (FAILED(res)) {
@@ -444,7 +467,7 @@ index 2cdcf18..6c9ee19 100644
              return;
          }
      }
-@@ -2941,7 +3060,7 @@ namespace plume {
+@@ -2941,7 +3067,7 @@ namespace plume {
  
          HRESULT res = device->allocator->CreatePool(&poolDesc, &d3d);
          if (FAILED(res)) {
@@ -453,7 +476,7 @@ index 2cdcf18..6c9ee19 100644
              return;
          }
      }
-@@ -2957,7 +3076,9 @@ namespace plume {
+@@ -2957,7 +3083,9 @@ namespace plume {
      }
  
      std::unique_ptr<RenderTexture> D3D12Pool::createTexture(const RenderTextureDesc &desc) {
@@ -464,7 +487,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      // D3D12Shader
-@@ -3054,7 +3175,11 @@ namespace plume {
+@@ -3054,7 +3182,11 @@ namespace plume {
          psoDesc.pRootSignature = rootSignature->rootSignature;
          psoDesc.CS.pShaderBytecode = computeShader->d3d.data();
          psoDesc.CS.BytecodeLength = computeShader->d3d.size();
@@ -477,7 +500,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      D3D12ComputePipeline::~D3D12ComputePipeline() {
-@@ -3075,6 +3200,7 @@ namespace plume {
+@@ -3075,6 +3207,7 @@ namespace plume {
      // D3D12GraphicsPipeline
  
      D3D12GraphicsPipeline::D3D12GraphicsPipeline(D3D12Device *device, const RenderGraphicsPipelineDesc &desc) : D3D12Pipeline(device, Type::Graphics) {
@@ -485,7 +508,7 @@ index 2cdcf18..6c9ee19 100644
          assert(desc.pipelineLayout != nullptr);
  
          topology = toD3D12(desc.primitiveTopology);
-@@ -3199,7 +3325,14 @@ namespace plume {
+@@ -3199,7 +3332,14 @@ namespace plume {
  
          psoDesc.InputLayout = { inputElements.data(), UINT(inputElements.size()) };
  
@@ -501,7 +524,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      D3D12GraphicsPipeline::~D3D12GraphicsPipeline() {
-@@ -3393,21 +3526,21 @@ namespace plume {
+@@ -3393,21 +3533,21 @@ namespace plume {
              const D3D12RaytracingPipeline *previousRaytracingPipeline = static_cast<const D3D12RaytracingPipeline *>(previousPipeline);
              HRESULT res = device->d3d->AddToStateObject(&pipelineDesc, previousRaytracingPipeline->stateObject, IID_PPV_ARGS(&stateObject));
              if (FAILED(res)) {
@@ -526,7 +549,7 @@ index 2cdcf18..6c9ee19 100644
              return;
          }
  
-@@ -3621,13 +3754,14 @@ namespace plume {
+@@ -3621,13 +3761,14 @@ namespace plume {
          ID3DBlob *errorBlob;
          HRESULT res = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1_0, &signatureBlob, &errorBlob);
          if (FAILED(res)) {
@@ -543,7 +566,7 @@ index 2cdcf18..6c9ee19 100644
              return;
          }
      }
-@@ -3673,18 +3807,16 @@ namespace plume {
+@@ -3673,18 +3814,16 @@ namespace plume {
              const D3D_SHADER_MODEL supportedShaderModels[] = { D3D_SHADER_MODEL_6_0 };
  #       endif
              D3D12_FEATURE_DATA_SHADER_MODEL dataShaderModel = {};
@@ -569,7 +592,7 @@ index 2cdcf18..6c9ee19 100644
              }
  
              // Determine if the device supports sample locations.
-@@ -3754,6 +3886,7 @@ namespace plume {
+@@ -3754,6 +3893,7 @@ namespace plume {
                  adapter = adapterOption;
                  d3d = deviceOption;
                  shaderModel = dataShaderModel.HighestShaderModel;
@@ -577,7 +600,7 @@ index 2cdcf18..6c9ee19 100644
                  capabilities.geometryShader = true;
                  capabilities.raytracing = rtSupportOption;
                  capabilities.raytracingStateUpdate = rtStateUpdateSupportOption;
-@@ -3790,7 +3923,7 @@ namespace plume {
+@@ -3790,7 +3930,7 @@ namespace plume {
          }
  
          if (d3d == nullptr) {
@@ -586,7 +609,7 @@ index 2cdcf18..6c9ee19 100644
              return;
          }
  
-@@ -3806,7 +3939,7 @@ namespace plume {
+@@ -3806,7 +3946,7 @@ namespace plume {
  
          res = D3D12MA::CreateAllocator(&allocatorDesc, &allocator);
          if (FAILED(res)) {
@@ -595,7 +618,7 @@ index 2cdcf18..6c9ee19 100644
              release();
              return;
          }
-@@ -3881,7 +4014,7 @@ namespace plume {
+@@ -3881,7 +4021,7 @@ namespace plume {
          std::unique_ptr<D3D12CommandQueue> timestampCommandQueue = std::make_unique<D3D12CommandQueue>(this, RenderCommandListType::DIRECT);
          res = timestampCommandQueue->d3d->GetTimestampFrequency(&timestampFrequency);
          if (FAILED(res)) {
@@ -604,7 +627,7 @@ index 2cdcf18..6c9ee19 100644
          }
      }
  
-@@ -3894,7 +4027,10 @@ namespace plume {
+@@ -3894,7 +4034,10 @@ namespace plume {
      }
  
      std::unique_ptr<RenderDescriptorSet> D3D12Device::createDescriptorSet(const RenderDescriptorSetDesc &desc) {
@@ -616,7 +639,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      std::unique_ptr<RenderShader> D3D12Device::createShader(const void *data, uint64_t size, const char *entryPointName, RenderShaderFormat format) {
-@@ -3906,11 +4042,15 @@ namespace plume {
+@@ -3906,11 +4049,15 @@ namespace plume {
      }
  
      std::unique_ptr<RenderPipeline> D3D12Device::createComputePipeline(const RenderComputePipelineDesc &desc) {
@@ -634,7 +657,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      std::unique_ptr<RenderPipeline> D3D12Device::createRaytracingPipeline(const RenderRaytracingPipelineDesc &desc, const RenderPipeline *previousPipeline) {
-@@ -3918,20 +4058,28 @@ namespace plume {
+@@ -3918,20 +4065,28 @@ namespace plume {
      }
  
      std::unique_ptr<RenderCommandQueue> D3D12Device::createCommandQueue(RenderCommandListType type) {
@@ -667,7 +690,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      std::unique_ptr<RenderAccelerationStructure> D3D12Device::createAccelerationStructure(const RenderAccelerationStructureDesc &desc) {
-@@ -3943,15 +4091,21 @@ namespace plume {
+@@ -3943,15 +4098,21 @@ namespace plume {
      }
  
      std::unique_ptr<RenderPipelineLayout> D3D12Device::createPipelineLayout(const RenderPipelineLayoutDesc &desc) {
@@ -692,7 +715,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      std::unique_ptr<RenderFramebuffer> D3D12Device::createFramebuffer(const RenderFramebufferDesc &desc) {
-@@ -4161,7 +4315,9 @@ namespace plume {
+@@ -4161,7 +4322,9 @@ namespace plume {
      }
  
      bool D3D12Device::isValid() const {
@@ -703,7 +726,7 @@ index 2cdcf18..6c9ee19 100644
      }
  
      bool D3D12Device::beginCapture() {
-@@ -4195,7 +4351,7 @@ namespace plume {
+@@ -4195,7 +4358,7 @@ namespace plume {
  
          HRESULT res = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&dxgiFactory));
          if (FAILED(res)) {
@@ -713,7 +736,7 @@ index 2cdcf18..6c9ee19 100644
          }
  
 diff --git a/plume_d3d12.h b/plume_d3d12.h
-index 4827452..aba3bdf 100644
+index 4827452..85073ff 100644
 --- a/plume_d3d12.h
 +++ b/plume_d3d12.h
 @@ -166,6 +166,24 @@ namespace plume {
@@ -768,7 +791,17 @@ index 4827452..aba3bdf 100644
          void checkTopology();
          void checkStencilRef();
          void checkFramebufferSamplePositions();
-@@ -431,7 +462,16 @@ namespace plume {
+@@ -262,6 +293,9 @@ namespace plume {
+
+         D3D12CommandQueue(D3D12Device *device, RenderCommandListType type);
+         ~D3D12CommandQueue() override;
++        // Caller must have drained all work and released the old swapchain.
++        // Preserve this wrapper's address for renderer command lists.
++        bool recreateNativeQueue();
+         std::unique_ptr<RenderCommandList> createCommandList() override;
+         std::unique_ptr<RenderSwapChain> createSwapChain(const RenderSwapChainDesc &desc) override;
+         void executeCommandLists(const RenderCommandList **commandLists, uint32_t commandListCount, RenderCommandSemaphore **waitSemaphores, uint32_t waitSemaphoreCount, RenderCommandSemaphore **signalSemaphores, uint32_t signalSemaphoreCount, RenderCommandFence *signalFence) override;
+@@ -431,7 +465,16 @@ namespace plume {
          ~D3D12PipelineLayout() override;
      };
  

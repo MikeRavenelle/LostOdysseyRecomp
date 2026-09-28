@@ -23,8 +23,10 @@ public:
     void Presented(bool);
     void CancelUnsubmitted(plume::RenderCommandList*);
     void Quiesce();
+    bool Reconfigure(const framegen::Config&, std::string&);
     void Shutdown(); // after every external swapchain COM reference is released
     bool Available() const { return session_ && session_->Active(); }
+    framegen::Capabilities Supported() const { return session_ ? session_->Supported() : framegen::Capabilities{}; }
 private:
     void Require(bool, const std::string&);
     plume::D3D12Device* device_ = nullptr;
@@ -32,6 +34,7 @@ private:
     std::shared_ptr<dlss_fg::DepthRemapper> depth_;
     plume::D3D12CommandList* recording_ = nullptr;
     bool attempted_ = false;
+    framegen::Config config_{};
     temporal::Matrix previousVP_{};
     temporal::Viewport previousRaster_{};
     frame_plan::FramePlan previousPlan_{};
