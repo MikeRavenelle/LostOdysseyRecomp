@@ -35,7 +35,9 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 ## Unreleased / 未发布
 
 - Removed the one-time legacy updater manifest option after the v0.7.9 transition release.
+- Portable installs now prefer the `game` directory beside the executable and retain the parent `../game` location as a compatibility fallback.
 - v0.7.9 过渡版本发布后，移除一次性的旧更新器清单打包选项。
+- 便携式安装现在优先使用可执行文件旁的 `game` 目录，并保留上级 `../game` 作为兼容性后备路径。
 
 ## v0.7.3 — 2026-09-27
 

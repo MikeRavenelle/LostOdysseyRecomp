@@ -117,7 +117,7 @@ namespace settings::game_path
     {
         if (!os::user_paths::UsePortableLayout())
             return (os::user_paths::DataDir() / "game").lexically_normal();
-        return (executableDirectory / ".." / "game").lexically_normal();
+        return (executableDirectory / "game").lexically_normal();
     }
 
     inline Resolution Resolve(const std::filesystem::path& executableDirectory,
@@ -157,17 +157,21 @@ namespace settings::game_path
         }
 
         // The order is intentional: an empty file (or no file) first gets the
-        // package default ../game beside the executable, then direct EXE and
-        // legacy/dev layouts. Every candidate is checked for a real default.xex.
-        const std::vector<std::filesystem::path> candidates = {
-            exeDirectory / ".." / "game" / "disc1",
-            exeDirectory / ".." / "game",
-            exeDirectory,
-            exeDirectory / "game" / "disc1",
-            exeDirectory / "game",
-            exeDirectory / ".." / ".." / ".." / "LostOdysseyRecompLib" / "private" / "disc1",
-            exeDirectory / "LostOdysseyRecompLib" / "private" / "disc1",
-        };
+        // package default ./game beside the executable, then direct EXE,
+        // parent ../game and legacy/dev layouts. Every candidate is checked for a real default.xex.
+        std::vector<std::filesystem::path> candidates;
+        if (!os::user_paths::UsePortableLayout())
+        {
+            candidates.push_back(os::user_paths::DataDir() / "game" / "disc1");
+            candidates.push_back(os::user_paths::DataDir() / "game");
+        }
+        candidates.push_back(exeDirectory / "game" / "disc1");
+        candidates.push_back(exeDirectory / "game");
+        candidates.push_back(exeDirectory);
+        candidates.push_back(exeDirectory / ".." / "game" / "disc1");
+        candidates.push_back(exeDirectory / ".." / "game");
+        candidates.push_back(exeDirectory / ".." / ".." / ".." / "LostOdysseyRecompLib" / "private" / "disc1");
+        candidates.push_back(exeDirectory / "LostOdysseyRecompLib" / "private" / "disc1");
         for (const auto& candidate : candidates)
         {
             if (const auto root = RecognizeDefaultDirectory(candidate))
