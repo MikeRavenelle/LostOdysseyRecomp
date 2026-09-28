@@ -251,7 +251,8 @@ jobs:
   release-linux:
     name: Linux Release
     needs: [create-draft-release, prepare-fsr]
-    runs-on: ubuntu-24.04
+    # Build the runtime AND all bundled dependencies against glibc 2.35.
+    runs-on: ubuntu-22.04
     timeout-minutes: 360
     permissions:
       contents: write
@@ -277,14 +278,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install baseline-compatible C++23 toolchain
+        run: bash tools/release/install_appimage_toolchain.sh
       - name: Install build and packaging dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang \
-            lld \
             ninja-build \
-            cmake \
             libcurl4-openssl-dev \
             libvulkan-dev \
             pkg-config \
@@ -306,7 +306,9 @@ jobs:
             libudev-dev \
             file \
             wget
-          python -m pip install -r tools/release/requirements.txt
+          # Jammy's distribution CMake predates the project's 3.28 minimum.
+          python -m pip install 'cmake==3.31.6' -r tools/release/requirements.txt
+          python -m unittest discover -s tools/tests -p test_appimage_compat.py
       - name: Retrieve private build input
         uses: actions/checkout@v4
         with:
@@ -350,8 +352,8 @@ jobs:
         run: |
           cmake -S tools/xexdump -B out/build/tools -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18
           cmake --build out/build/tools --target XenonRecomp XenonAnalyse xexdump
       - name: Fetch NVIDIA DLSS SDK
         run: python3 tools/release/fetch_dlss_sdk.py --dest out/deps/nvidia-dlss
@@ -363,8 +365,8 @@ jobs:
         run: |
           cmake -S . -B out/build/linux -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
             -DLO_ENABLE_DLSS=ON \
             -DLO_REQUIRE_DLSS=ON \
             -DLO_DLSS_SDK_ROOT="$GITHUB_WORKSPACE/out/deps/nvidia-dlss" \

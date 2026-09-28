@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from portable_shader_pack_payload import stage_portable_shader_pack
+from appimage_compat import CompatibilityError, compiler_libraries, validate_abi, validate_loader
 
 ROOT = Path(__file__).resolve().parents[1]
 LINUX_PACKAGING = ROOT / "packaging/linux"
@@ -52,6 +53,8 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "out/releases")
     parser.add_argument("--version", default="")
     parser.add_argument("--linuxdeploy", default="linuxdeploy")
+    parser.add_argument("--cxx-compiler", default=os.environ.get("CXX", "clang++"),
+                        help="Build compiler used to locate the bundled GCC runtimes")
     parser.add_argument("--appdir", type=Path, help="Persist the final deployed AppDir at this new path")
     parser.add_argument("--dry-layout", action="store_true", help="Create and list an AppDir without linuxdeploy")
     args = parser.parse_args()
@@ -67,6 +70,8 @@ def main():
         if not path.is_file():
             raise SystemExit(f"Missing Linux build artifact: {path}")
     tag = asset_tag(build, args.version)
+    # Existing released updaters match this name exactly. A cosmetic rename
+    # for AppImageHub would break their upgrade path.
     name = f"LostOdysseyRecomp-linux-x64-{tag}"
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -156,23 +161,41 @@ def main():
         command = [deploy, "--appdir", str(appdir),
                    "--desktop-file", str(desktop), "--icon-file", str(icon),
                    "--exclude-library", "libwayland*"]
+        # Explicit --library force-deploys these normally excluded libraries,
+        # including their copyright files and origin-relative RPATHs.
+        for library in compiler_libraries(args.cxx_compiler):
+            command.extend(("--library", str(library)))
         # linuxdeploy can succeed without creating AppRun. Check the deployed
         # entry before invoking the output plugin, rather than shipping that warning.
         subprocess.run(command, cwd=temporary, check=True)
         validate_apprun(appdir)
+        validate_appdir_links(appdir)
+        validate_abi(appdir)
         subprocess.run([*command, "--output", "appimage"], cwd=temporary, check=True)
         validate_apprun(appdir)
         validate_appdir_links(appdir)
         produced = next(Path(temporary).glob("*.AppImage"), None)
         if produced is None:
             raise SystemExit("linuxdeploy did not produce an AppImage")
+        if not produced.stat().st_size:
+            raise SystemExit("linuxdeploy produced an empty AppImage")
+        # Test the final image, not just the pre-compression staging directory.
+        # Extraction does not require FUSE, and ldd does not initialize the GPU.
+        extracted = Path(temporary) / "verify"
+        extracted.mkdir()
+        subprocess.run([str(produced), "--appimage-extract"], cwd=extracted,
+                       stdout=subprocess.DEVNULL, check=True, timeout=180)
+        final_appdir = extracted / "squashfs-root"
+        validate_apprun(final_appdir)
+        validate_appdir_links(final_appdir)
+        validate_abi(final_appdir)
+        validate_loader(final_appdir)
         destination = output / f"{name}.AppImage"
         shutil.move(str(produced), destination)
-        if not destination.stat().st_size:
-            raise SystemExit("linuxdeploy produced an empty AppImage")
         if appdir_destination:
             appdir_destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(appdir, appdir_destination, symlinks=True)
+            # Flatpak consumes the same bytes that were verified above.
+            shutil.copytree(final_appdir, appdir_destination, symlinks=True)
             validate_apprun(appdir_destination)
             validate_appdir_links(appdir_destination)
             print(f"AppDir: {appdir_destination}")
@@ -180,4 +203,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except CompatibilityError as error:
+        raise SystemExit(str(error)) from error
