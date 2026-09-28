@@ -503,7 +503,7 @@ int main(int argc, char** argv)
     std::cout << "[PASS] Transactional installation of 4 discs" << std::endl;
 
     // 5. Test DefaultGameDirectory and WriteGamePath
-    auto defaultDir = install::DefaultGameDirectory(tempDir / "bin");
+    auto defaultDir = install::DefaultGameDirectory(tempDir);
     assert(defaultDir == (tempDir / "game").lexically_normal());
 
     std::string writeErr;

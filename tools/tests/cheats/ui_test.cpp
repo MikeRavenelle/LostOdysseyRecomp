@@ -24,13 +24,14 @@ int main(int argc,char** argv) {
     session.Enable(false);session.Tick(context,memory,true);
     Check(session.Get().available && !session.Get().enabled);
     Model m;
-    m.row=3;m.Input(Nav::Confirm,false);Check(m.confirm && !m.yes);
+    Check(m.Rows()==8);
+    m.row=4;m.Input(Nav::Confirm,false);Check(m.confirm && !m.yes);
     m.Input(Nav::NextCategory,false);Check(m.confirm && m.category==0);
     m.Input(Nav::Confirm,false);Check(!session.Get().enabled); // default Cancel
     m.Input(Nav::Confirm,false);m.Input(Nav::Right,false);m.Input(Nav::Cancel,false);Check(!session.Get().enabled);
     m.Input(Nav::Confirm,false);m.Input(Nav::Right,false);m.Input(Nav::Confirm,false);Check(session.Get().enabled);
     auto baseline=bytes;
-    m.row=5;m.Input(Nav::Confirm,false);Check(m.confirm && !session.HasPending());
+    m.row=6;m.Input(Nav::Confirm,false);Check(m.confirm && !session.HasPending());
     m.Input(Nav::Right,false);m.Input(Nav::Confirm,false);Check(session.HasPending() && bytes==baseline);
     session.Tick(context,memory,true);Check(memory.U32(Gold)==GoldLimit && session.Get().result==Result::Applied);
     m.category=1;m.row=1;m.Input(Nav::Confirm,false);Check(m.picker==Picker::Character);
@@ -51,7 +52,10 @@ int main(int argc,char** argv) {
     m.Open(Picker::Character,0);m.Input(Nav::NextCategory,false);
     Check(m.category==5 && m.picker==Picker::Character);m.Input(Nav::Cancel,false);
     m.category=0;m.row=1;fast_forward::Enable(false);m.Input(Nav::Confirm,false);Check(fast_forward::GetStatus().enabled);
-    m.row=2;for(unsigned n=0;n<5;++n)m.Input(Nav::Right,false);Check(fast_forward::GetStatus().multiplier==2);
+    m.row=2;Check(fast_forward::GetStatus().mode==fast_forward::Mode::Hold);
+    m.Input(Nav::Confirm,false);Check(fast_forward::GetStatus().mode==fast_forward::Mode::Toggle);
+    m.Input(Nav::Left,false);Check(fast_forward::GetStatus().mode==fast_forward::Mode::Hold);
+    m.row=3;for(unsigned n=0;n<5;++n)m.Input(Nav::Right,false);Check(fast_forward::GetStatus().multiplier==2);
     fast_forward::Enable(false);
     std::mt19937 random(25);
     for(unsigned n=0;n<5000;++n) {
@@ -60,6 +64,7 @@ int main(int argc,char** argv) {
         if(m.picker!=Picker::None)Check(m.picked<m.PickCount());
         session.Tick(context,memory,true);
     }
+    fast_forward::SetMode(fast_forward::Mode::Toggle);
     host_ui::PixelBuffer pixels;Check(pixels.Resize());host_ui::Rasterizer raster(pixels);
     // Paint all categories and both nested flows through the actual renderer.
     const std::filesystem::path output=argc>1 ? argv[1] : ".";
@@ -69,14 +74,14 @@ int main(int argc,char** argv) {
         pixels.Clear(host_ui::MakeColor(255,17,22,30));
         raster.FillRect(260,90,760,540,host_ui::MakeColor(255,24,29,38));
         raster.DrawWString(280,103,zh ? L"F1 / Cheats - 测试界面" : L"F1 / Cheats - synthetic UI fixture",host_ui::MakeColor(255,230,235,242));
-        Render(raster,view,zh,290,176,700);
+        Render(raster,view,zh,290,176,700,false);
         Ppm(output/(std::string(zh ? "zh-":"en-")+std::to_string(category)+".ppm"),pixels);
     }
     for(bool confirmation:{false,true}) {
         Model view;view.category=3;view.row=3;view.equipmentSlot=1;
         if(confirmation) { view.confirm=true;view.yes=false; }
         else { view.Open(Picker::Equipment,235); }
-        pixels.Clear(host_ui::MakeColor(255,17,22,30));Render(raster,view,false,290,176,700);
+        pixels.Clear(host_ui::MakeColor(255,17,22,30));Render(raster,view,false,290,176,700,false);
         Ppm(output/(confirmation ? "confirm.ppm":"picker.ppm"),pixels);
     }
     std::printf("PASS: %u UI checks; default-cancel confirmation, nested back, paging, 5000 navigation steps, 14 renders\n",checks);

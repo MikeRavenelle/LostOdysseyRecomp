@@ -20,13 +20,14 @@ enum class GraphicsRow : int
     FsrSharpness = 6,
     AnisotropicFiltering = 7,
     ScalingQuality = 8,
-    FrameRate = 9,
-    FrameGeneration = 10,
-    FrameGenerationMultiplier = 11,
-    VariableRefreshRate = 12,
-    Brightness = 13,
-    Save = 14,
-    Count = 15,
+    RgbRange = 9,
+    FrameRate = 10,
+    FrameGeneration = 11,
+    FrameGenerationMultiplier = 12,
+    VariableRefreshRate = 13,
+    Brightness = 14,
+    Save = 15,
+    Count = 16,
 };
 inline constexpr int MenuTabCount = 4;
 inline constexpr int MenuTabWidth = 640 / MenuTabCount;

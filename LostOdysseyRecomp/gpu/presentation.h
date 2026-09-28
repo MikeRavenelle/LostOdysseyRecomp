@@ -16,6 +16,7 @@ struct PresentationOptions
 {
     Antialiasing antialiasing = Antialiasing::Off;
     ScalingFilter scalingFilter = ScalingFilter::Bilinear;
+    bool expandRgbRange = false;
 };
 // Owned by the presentation thread. Resources stay alive until the present fence.
 class Presentation
@@ -61,7 +62,8 @@ class Presentation
     // Same ownership/layout contract as Draw (source ends COPY_SOURCE).
     void DrawComposited(plume::RenderCommandList *commands, plume::RenderTexture *source,
                         plume::RenderTexture *target, uint32_t sourceWidth, uint32_t sourceHeight,
-                        uint32_t outputWidth, uint32_t outputHeight, ScalingFilter scalingFilter);
+                        uint32_t outputWidth, uint32_t outputHeight, ScalingFilter scalingFilter,
+                        bool expandRgbRange = false);
     void Draw(plume::RenderCommandList *, plume::RenderTexture *, plume::RenderTexture *,
               uint32_t, uint32_t, uint32_t, uint32_t, const PresentationOptions &, bool toSwapchain = true);
     void Draw(plume::RenderCommandList *, plume::RenderTexture *, plume::RenderTexture *,

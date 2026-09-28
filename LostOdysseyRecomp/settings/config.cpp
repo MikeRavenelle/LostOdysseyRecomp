@@ -108,6 +108,8 @@ Config Read()
             value.antialiasing = number;
         else if (key == "scaling_quality")
             value.scalingQuality = number;
+        else if (key == "expand_rgb_range" && number <= 1)
+            value.expandRgbRange = number == 1;
         else if (key == "anisotropic_filtering")
             value.anisotropicFiltering = number;
         else if (key == "upscaler")
@@ -217,6 +219,7 @@ static bool WriteConfig(const Config &value)
            << "\ndebug_language=" << value.debugLanguage
            << "\nantialiasing=" << value.antialiasing << "\nframe_rate=" << value.frameRate
            << "\nscaling_quality=" << value.scalingQuality
+           << "\nexpand_rgb_range=" << (value.expandRgbRange ? 1 : 0)
            << "\nanisotropic_filtering=" << value.anisotropicFiltering
            << "\nupscaler=" << uint32_t(value.upscaler) << "\ndlss_quality=" << uint32_t(value.dlssQuality)
            << "\nfsr_quality=" << uint32_t(value.fsrQuality)

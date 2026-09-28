@@ -10,6 +10,7 @@
 #include "f2548_jitter_capture.h"
 #include "f6131_late_floor_jitter_capture.h"
 #include "f6131_e810_jitter_capture.h"
+#include "f3449_sky_jitter_capture.h"
 #include "feedback_mapping_cases.h"
 #include "screen_batch_cases.h"
 
@@ -1438,6 +1439,92 @@ static void CapturedF6131E810ConstantSample()
     std::printf("Captured f6131 e810 constant sample: %u checks, draw746/depth178, 32 phases, 1440p/4K; old separation %.6f px\n",
         checks,oldSeparation);
 }
+// f3449 VS bda41 lines 427-444 have the same independently transcribed
+// world/clip arithmetic as TireMaterialFf9; paired depth VS b030 uses
+// TireDepthB030. Captured banks are exact; the local vertices below are
+// synthetic because the F1 trace does not include the vertex buffer.
+static void CapturedF3449Sky()
+{
+    using namespace issue67_sky_f3449;
+    const auto& draw=draws[0];
+    Constants original{},originalDepth{},originalPs{};
+    std::copy(draw.vertex.begin(),draw.vertex.end(),original.begin());
+    std::copy(draw.vertexLate.begin(),draw.vertexLate.end(),original.begin()+254*4);
+    std::copy(draw.depth.begin(),draw.depth.end(),originalDepth.begin());
+    std::copy(draw.pixel.begin(),draw.pixel.end(),originalPs.begin());
+    std::array<uint32_t,16> vp{};
+    std::copy_n(original.begin()+7*4,16,vp.begin());
+    Check(draw.vs==0xbda41a11626a545cull && draw.ps==0xa9e9542e2c60029aull &&
+        draw.depthVs==0xb030ab4e17a20783ull && draw.slot==7 &&
+        draw.draw==172 && draw.depthDraw==16 &&
+        std::equal(original.begin(),original.begin()+16,originalDepth.begin()) &&
+        std::equal(vp.begin(),vp.end(),originalDepth.begin()+4*4),
+        "f3449 sky and depth share captured world and scene camera");
+    constexpr uint64_t unmatchedPs=0x12345678ull; // synthetic negative control
+    Check(PositionVPSlot(draw.vs)==-1 && DrawPositionVPSlot(draw.vs,draw.ps)==7 &&
+        DrawPositionVPSlot(draw.vs,unmatchedPs)==-1,
+        "f3449 sky slot 7 is restricted to the reviewed VS/PS pair");
+    const Viewport extent{0,0,3840,2160}; // captured raster extent
+    double maxPixelError=0,oldSeparation=0;
+    const auto startChecks=checks;
+    for (uint64_t phase=0;phase<32;++phase)
+    {
+        const SceneAnchor anchor{vp,extent,0x10000};
+        auto depth=originalDepth,layer=original,ps=originalPs,depthPs=originalPs;
+        const auto depthResult=ApplyDrawJitter(draw.depthVs,0,phase,true,true,&anchor,
+            anchor.depthAllocation,extent,depth.data(),depthPs.data());
+        const auto layerResult=ApplyDrawJitter(draw.vs,draw.ps,phase,true,true,&anchor,
+            anchor.depthAllocation,extent,layer.data(),ps.data());
+        Check(depthResult.applied && layerResult.applied && layerResult.slot==7 &&
+            layerResult.rejection==JitterRejection::None && !layerResult.shadowCompensated &&
+            ps==originalPs && depthPs==originalPs,
+            "f3449 sky and depth accept one phase without changing PS constants");
+        for (unsigned i=0;i<layer.size();++i)
+            if (i<7*4 || i>=11*4 || i%4>=2)
+                Check(layer[i]==original[i],"f3449 sky keeps non-VP and VP Z/W constants");
+        for (const auto local:{Float4{-250,-100,20,1},Float4{120,90,80,1},Float4{10,250,160,1}})
+        {
+            const auto reference=TireDepthB030(depth,local);
+            const auto current=TireMaterialFf9(layer,local);
+            const auto legacy=TireMaterialFf9(original,local);
+            Check(reference==current,"f3449 independent material clip agrees with paired depth");
+            Check(current[2]==legacy[2] && current[3]==legacy[3],
+                "f3449 sky jitter preserves clip Z and W");
+            Check(std::isfinite(current[3]) && std::abs(current[3])>1,
+                "f3449 synthetic local vertex has a usable clip W");
+            for (unsigned axis=0;axis<2;++axis)
+            {
+                const double dimension=axis?extent.height:extent.width;
+                const double pixels=(double(current[axis])/current[3]-
+                    double(legacy[axis])/legacy[3])*dimension*(axis?-.5:.5);
+                const double expected=axis?layerResult.sample.pixelY:layerResult.sample.pixelX;
+                maxPixelError=std::max(maxPixelError,std::abs(pixels-expected));
+                oldSeparation=std::max(oldSeparation,std::abs(pixels));
+                Check(std::abs(pixels-expected)<.003,
+                    "f3449 independent clip shift matches the requested physical jitter");
+            }
+        }
+    }
+    const SceneAnchor anchor{vp,extent,0x10000};
+    const auto reject=[&](bool enabled,uint64_t psHash,const SceneAnchor* camera,
+        uint64_t depthAllocation,JitterRejection expected) {
+        auto layer=original,ps=originalPs;
+        const auto result=ApplyDrawJitter(draw.vs,psHash,9,enabled,true,camera,
+            depthAllocation,extent,layer.data(),ps.data());
+        Check(!result.applied && result.rejection==expected &&
+            layer==original && ps==originalPs,
+            "f3449 disabled or mismatched sky draw leaves both banks unchanged");
+    };
+    reject(false,draw.ps,&anchor,anchor.depthAllocation,JitterRejection::Disabled);
+    reject(true,unmatchedPs,&anchor,anchor.depthAllocation,JitterRejection::UnknownShader);
+    auto otherCamera=anchor;
+    otherCamera.vpBits[0]^=1;
+    reject(true,draw.ps,&otherCamera,anchor.depthAllocation,JitterRejection::CameraMismatch);
+    reject(true,draw.ps,&anchor,anchor.depthAllocation+1,JitterRejection::DepthMismatch);
+    Check(oldSeparation>.3,"f3449 old unjittered sky separates from paired depth");
+    std::printf("Captured f3449 sky: %u checks, draw172/depth16, 32 synthetic phases at captured 4K; old separation %.6f px, max jitter error %.6f px\n",
+        checks-startChecks,oldSeparation,maxPixelError);
+}
 static float Dot(const Float4& a,const Float4& b)
 {
     float result=0;
@@ -1597,6 +1684,8 @@ int main(int argc,char** argv)
     { CapturedF6131LateFloor(); return 0; }
     if (argc==2 && std::strcmp(argv[1],"--captured-f6131-e810")==0)
     { CapturedF6131E810ConstantSample(); return 0; }
+    if (argc==2 && std::strcmp(argv[1],"--captured-f3449-sky")==0)
+    { CapturedF3449Sky(); return 0; }
     if (argc==2 && std::strcmp(argv[1],"--captured-f5912-layers")==0)
     { CapturedF5912Layers(); return 0; }
     if (argc==2 && std::strcmp(argv[1],"--captured-f5997-layers")==0)
@@ -1609,6 +1698,7 @@ int main(int argc,char** argv)
     CapturedF2548Layers();
     CapturedF6131LateFloor();
     CapturedF6131E810ConstantSample();
+    CapturedF3449Sky();
     FeedbackMappingBatch();
     ScreenMappingBatch();
     TireMaterialCoverage();

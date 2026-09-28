@@ -27,7 +27,7 @@ struct Model {
     enum class Confirmation { Write, Enable, Editor } confirmation=Confirmation::Write;
     Request request;
     std::wstring notice;
-    unsigned Rows() const { constexpr unsigned rows[]={7,8,6,5,7,2}; return rows[category]; }
+    unsigned Rows() const { constexpr unsigned rows[]={8,8,6,5,7,2}; return rows[category]; }
     void ChangeCategory(int direction) { category=Wrap(category,direction,unsigned(std::size(Categories))); row=0; }
     std::span<const cheats::data::Entry> EquipmentList() const {
         if (equipmentSlot==0) return cheats::data::Weapons;
@@ -126,16 +126,18 @@ struct Model {
         if (category==0) {
             const auto speed=fast_forward::GetStatus();
             if (row==1) fast_forward::Enable(!speed.enabled);
-            else if (row==2) {
+            else if (row==2) fast_forward::SetMode(speed.mode==fast_forward::Mode::Hold
+                ? fast_forward::Mode::Toggle : fast_forward::Mode::Hold);
+            else if (row==3) {
                 unsigned index=0;
                 for(unsigned i=0;i<std::size(fast_forward::Rates);++i) if(fast_forward::Rates[i]==speed.multiplier)index=i;
                 fast_forward::SetRate(fast_forward::Rates[Wrap(index,direction,unsigned(std::size(fast_forward::Rates)))]);
-            } else if (row==3 && activate) {
+            } else if (row==4 && activate) {
                 if (cheats::session.Get().enabled) cheats::session.Enable(false);
                 else { confirmation=Confirmation::Enable; confirm=true; yes=false; }
-            } else if (activate && row==4) Write(Action::AddGold,100000,0,false,zh);
-            else if (activate && row==5) Write(Action::SetGold,cheats::GoldLimit,0,true,zh);
-            else if (activate && row==6) Write(Action::HealParty,0,0,false,zh);
+            } else if (activate && row==5) Write(Action::AddGold,100000,0,false,zh);
+            else if (activate && row==6) Write(Action::SetGold,cheats::GoldLimit,0,true,zh);
+            else if (activate && row==7) Write(Action::HealParty,0,0,false,zh);
         } else if (category==1) {
             if(row==1) { if(activate)Open(Picker::Character,character);else character=Wrap(character,direction,9); }
             else if(row==2 && activate) Write(Action::Heal,0,0,false,zh);
@@ -221,12 +223,14 @@ inline void Render(host_ui::Rasterizer& r,const Model& m,bool zh,int x,int y,int
     const bool writable=s.enabled && s.available;
     const auto charName=cheats::data::Characters[m.character];
     if(m.category==0) {
-        row(1,zh ? L"按住 LT 加速" : L"Hold LT to speed up",speed.enabled ? L"ON":L"OFF");
-        row(2,zh ? L"加速倍率" : L"Speed multiplier",std::to_wstring(speed.multiplier)+L"x");
-        row(3,zh ? L"允许内存修改" : L"Allow memory edits",s.enabled ? L"ON":L"OFF");
-        row(4,zh ? L"增加 100,000 金币" : L"Add 100,000 gold",L"",writable);
-        row(5,zh ? L"金币设为 9,999,999" : L"Set gold to 9,999,999",L"",writable);
-        row(6,zh ? L"恢复当前队伍 HP / MP" : L"Restore party HP / MP",L"",writable);
+        row(1,zh ? L"变速" : L"Fast-forward",speed.enabled ? L"ON":L"OFF");
+        row(2,zh ? L"变速模式" : L"Speed mode",speed.mode==fast_forward::Mode::Hold
+            ? (zh ? L"按住" : L"Hold") : (zh ? L"切换" : L"Toggle"));
+        row(3,zh ? L"加速倍率" : L"Speed multiplier",std::to_wstring(speed.multiplier)+L"x");
+        row(4,zh ? L"允许内存修改" : L"Allow memory edits",s.enabled ? L"ON":L"OFF");
+        row(5,zh ? L"增加 100,000 金币" : L"Add 100,000 gold",L"",writable);
+        row(6,zh ? L"金币设为 9,999,999" : L"Set gold to 9,999,999",L"",writable);
+        row(7,zh ? L"恢复当前队伍 HP / MP" : L"Restore party HP / MP",L"",writable);
     } else if(m.category==1) {
         row(1,zh ? L"角色" : L"Character",charName);
         row(2,zh ? L"恢复 HP / MP" : L"Restore HP / MP",L"",writable);
@@ -262,7 +266,12 @@ inline void Render(host_ui::Rasterizer& r,const Model& m,bool zh,int x,int y,int
         drawText(rx+12,y+152,zh ? L"先退出原版编辑器，再关闭此开关" : L"Exit the retail editor before disabling this switch",rw-24,muted);
     }
     const wchar_t* hints[][2]={
-        {L"Release LT to return to 1x. LT+RT does not boost. Audio is not time-stretched.",L"松开 LT 恢复原速；LT+RT 不加速。音频不做时间拉伸。"},
+        {speed.mode==fast_forward::Mode::Hold
+            ? L"Hold LT to boost; release for 1x. LT+RT does not boost. Audio is not time-stretched."
+            : L"Press LT to toggle boost. LT+RT does not boost. Audio is not time-stretched.",
+         speed.mode==fast_forward::Mode::Hold
+            ? L"按住 LT 加速，松开恢复原速；LT+RT 不加速。音频不做时间拉伸。"
+            : L"按 LT 切换加速；LT+RT 不加速。音频不做时间拉伸。"},
         {L"HP/MP are out-of-battle values. EXP is progress, not a level selector.",L"HP/MP 为非战斗数值；EXP 是经验进度，不是等级。"},
         {L"Choose item: A opens a paged list. Sort the inventory once to refresh.",L"按 A 打开可翻页列表；修改后在游戏内整理物品以刷新。"},
         {L"Only existing accessory slots. Check character compatibility before applying.",L"仅能修改已有饰品槽；应用前请确认角色适用的装备。"},

@@ -144,7 +144,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: freefrank/LostOdysseyRecomp-build-inputs
-          ref: 2695699896a956af7206fcabdbe9de319aa4b955
+          ref: 54538f7fd0f47d0f0383c2091c0a483598432706
           path: out/shader-input
           sparse-checkout: |
             shaders/
@@ -328,7 +328,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: freefrank/LostOdysseyRecomp-build-inputs
-          ref: 2695699896a956af7206fcabdbe9de319aa4b955
+          ref: 54538f7fd0f47d0f0383c2091c0a483598432706
           path: out/shader-input
           sparse-checkout: |
             shaders/
@@ -506,7 +506,9 @@ jobs:
               f'LostOdysseyRecomp-linux-x64-{tag}.AppImage',
               f'LostOdysseyRecomp-linux-x64-{tag}.flatpak',
           }
-          assert {asset['name'] for asset in assets} == expected, 'Expected exactly three installable packages'
+          names = {asset['name'] for asset in assets}
+          optional = {'portable_dx12.lospd'}
+          assert expected <= names <= expected | optional, 'Expected installable packages and optional DX12 shader pack'
           assert all(asset['size'] > 0 and asset['state'] == 'uploaded' for asset in assets), 'Incomplete release upload'
           PY
           if [ "$(jq -r '.isDraft' release.json)" != true ]; then

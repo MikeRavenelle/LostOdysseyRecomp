@@ -4,11 +4,28 @@ Base: `menu@257f3866e9f9f5d3e65550c86dce453290cf7ee4`.
 This change follows reblue's build/distribution separation; it does not copy its
 renderer or change Lost Odyssey's shader translation semantics.
 
+## Current v0.7.10 release
+
+The current shader-pack follow-up adds backend-specific selection and a DX12
+`.lospd` format alongside the existing Vulkan `.lospv` path. The new Vulkan
+pack contains 28,546 records and is 180,198,461 bytes; it covers 8,186
+installed v24 `.spv` cache entries, 62 source microcodes and 205 direct DLC
+candidates. The new DX pack contains 28,546 records and is 80,222,382 bytes;
+`LoShaderPackTool verify` passed for it. The CPU contract passed 74 checks and
+the development game build passed.
+
+These packs are published with v0.7.10. A Windows D3D12
+`--prepare-shaders-only` run selected the DX12 backend and loaded the default-path
+DX pack, reporting `28546 records`, `25057 unique binaries` and `80222382 file
+bytes`; guest startup was intentionally skipped. The standalone DX asset is
+published separately. The runtime-hit check used `--prepare-shaders-only` and did not
+start the guest or validate GPU draws, image quality or full-game coverage.
+
 ## v0.6.15 release
 
 The v0.6.15 GitHub Release was published on 2026-09-24T19:47:35Z from source `6eef30d257f2e14ce30a546217574a0dc74fad69` via Release CI [36044604844](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36044604844). The updated portable Vulkan shader pack contains 28,527 shaders (178,332,830 bytes, SHA-256 `b486c87d121968bcec67fae6bc1aa7926378455281bc8b2a221409b8c06c6e2b`), consolidating 45 newly compiled microcodes from recent gameplay caches with the 28,482 baseline records.
 
-Fixed hash and FidelityFX license gates passed in Release CI. The pack is bundled directly into the official Windows and Linux application packages; users do not need a standalone Vulkan bundle, and the standalone ZIP and sidecar were removed from public release assets. A DX12 bundle is planned for a future release (unversioned, not yet implemented).
+Fixed hash and FidelityFX license gates passed in Release CI. The pack is bundled directly into the official Windows and Linux application packages; users do not need a standalone Vulkan bundle, and the standalone ZIP and sidecar were removed from public release assets. The DX12 bundle statement above supersedes the historical note that a DX12 bundle was not yet implemented.
 
 ## v0.6.1 release
 
@@ -63,9 +80,10 @@ Deck, AppImage update transactions and full-game shader coverage remain unverifi
   decompression boundaries. It loads records on demand and does not scan every
   SPIR-V payload at startup. A malformed record disables the pack and leaves
   the local fallback retryable, without inserting an invalid shader entry.
-- Windows ZIP and Linux AppImage staging copy only `shaders/portable_vk.lospv`,
+- Windows ZIP and Linux AppImage staging currently copy only `shaders/portable_vk.lospv`,
   validate it with the native tool, and retain the Zstandard license. They do not
   scoop up `cache/shaders`, debug output, HLSL, both backends, or old cache versions.
+  DX12 `.lospd` packaging remains a separate follow-up.
 
 ## Applying
 

@@ -29,6 +29,17 @@ Bytes Shader(bool pixel,uint32_t generator=0,size_t nops=0) {
     words.insert(words.end(),nops,1u<<16); // OpNop
     Bytes b(words.size()*4);for(size_t i=0;i<words.size();++i)Put32(b,i*4,words[i]);return b;
 }
+Bytes Dxil(bool pixel) {
+    // DXIL container framing fixture; this CPU test makes no driver claim.
+    Bytes b(72);
+    std::memcpy(b.data(),"DXBC",4);
+    Put32(b,24,uint32_t(b.size())); Put32(b,28,1); Put32(b,32,36);
+    std::memcpy(b.data()+36,"DXIL",4); Put32(b,40,28);
+    Put32(b,44,pixel ? 0x60 : 0x10060); Put32(b,48,7);
+    std::memcpy(b.data()+52,"DXIL",4); Put32(b,56,0x100);
+    Put32(b,60,16); Put32(b,64,4); Put32(b,68,0xdec04342);
+    return b;
+}
 int main(int argc,char** argv) try {
     auto root=fs::temp_directory_path()/ ("lo-portable-test-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directories(root);
@@ -128,6 +139,24 @@ int main(int argc,char** argv) try {
     for(int t=0;t<8;++t)threads.emplace_back([&]{try{for(int i=0;i<32;++i){auto r=reader.Get(true,20+(i%2));if(!r || r->binary!=pb)concurrentOk=false;}}catch(...){concurrentOk=false;}});
     threads.clear();Check(concurrentOk,"concurrent reader");
     Check(p::Reader::Inspect(big,true).fileBytes==fs::file_size(big),"offline verifier");
+    const auto dxContract=p::Contract(23,"d3d12;O3","guest","prelude","discovery",xex,1,p::PackFormat::Dxil);
+    Check(dxContract!=contract,"backend contracts must differ");
+    const auto dxFile=root/"portable_dx12.lospd";
+    const auto dxBinary=Dxil(false), dxPixel=Dxil(true);
+    {p::Writer w(dxFile,dxContract,"DXC",p::PackFormat::Dxil);
+     w.Add(1,vs,dxBinary);w.Add(2,ps,dxPixel);w.Finish();}
+    Check(p::Reader::Inspect(dxFile,true).format==p::PackFormat::Dxil,"DXIL inspection format");
+    p::Reader dxReader(dxFile,dxContract,p::PackFormat::Dxil);
+    Check(dxReader.Get(false,1)->binary==dxBinary,"DXIL roundtrip");
+    Check(dxReader.Get(true,2)->binary==dxPixel,"DXIL pixel roundtrip");
+    Reject([&]{p::Reader r(dxFile,dxContract);},"DXIL opened as SPIR-V");
+    Reject([&]{p::Reader r(file,contract,p::PackFormat::Dxil);},"SPIR-V opened as DXIL");
+    {p::Writer w(root/"invalid.lospd",dxContract,"DXC",p::PackFormat::Dxil);
+     Reject([&]{w.Add(2,vs,vb);},"SPIR-V accepted as DXIL");}
+    {p::Writer w(root/"invalid-stage.lospd",dxContract,"DXC",p::PackFormat::Dxil);
+     Reject([&]{w.Add(3,vs,dxPixel);},"pixel DXIL accepted as vertex");}
+    {p::Writer w(root/"invalid.lospv",contract,"DXC");
+     Reject([&]{w.Add(2,vs,dxBinary);},"DXIL accepted as SPIR-V");}
     if(argc>1) {fs::copy_file(big,argv[1],fs::copy_options::overwrite_existing);}
     std::cout<<"PASS "<<checks<<" portable-pack CPU checks (no game/DXC/GPU execution)\n";return 0;
 } catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}

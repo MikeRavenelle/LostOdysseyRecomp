@@ -4,13 +4,43 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 
 按新到旧记录简短更新，日期采用 UTC。技术验证见[开发状态](docs/STATUS.md)，后续计划见[路线图](docs/ROADMAP.zh-CN.md)。
 
+## Unreleased / 未发布 (target v0.7.12 / 目标 v0.7.12)
+
+### English
+
+- Added an optional Graphics setting to expand the game image RGB range from 16–235 to 0–255. It is Off by default and is saved with the graphics configuration.
+- Added Hold/Toggle speed mode to F1 Cheats. Hold remains the default; each LT press switches acceleration in Toggle mode.
+- Added a targeted TAA jitter mapping for the reported sky-flicker path: VS `bda41a11626a545c` and PS `a9e9542e2c60029a` now use Slot 7 with the existing scene anchor. The conservative motion fallback remains in place; physical-display and broader gameplay acceptance are pending.
+- Removed the one-time legacy updater manifest option after the v0.7.9 transition release.
+- Portable installs now prefer the `game` directory beside the executable and retain the parent `../game` location as a compatibility fallback.
+
+### 简体中文
+
+- 图像设置新增可选的 RGB Range：将游戏画面的 RGB 范围从 16–235 扩展到 0–255，默认关闭，并随图形配置保存。
+- F1 Cheats 新增按住／切换变速模式。默认按住；切换模式下每次按下 LT 可开启或关闭加速。
+- 针对反馈的天空闪烁路径新增限定范围的 TAA 抖动映射：VS `bda41a11626a545c` 与 PS `a9e9542e2c60029a` 使用现有场景锚点映射至 Slot 7，并保留保守的运动回退；实体显示与更广游戏流程验收仍待完成。
+- v0.7.9 过渡版本发布后，移除一次性的旧更新器清单打包选项。
+- 便携式安装现在优先使用可执行文件旁的 `game` 目录，并保留上级 `../game` 作为兼容性后备路径。
+
+## [v0.7.10 — 2026-09-28](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.10)
+
+### English
+
+- Added refreshed bundled Vulkan shaders with 19 additional captured shader records.
+- Added a separate DX12 shader pack for `shaders/portable_dx12.lospd`.
+
+### 简体中文
+
+- 更新内置 Vulkan shader，增加 19 条捕获的 shader 记录。
+- 新增独立 DX12 shader pack，放入 `shaders/portable_dx12.lospd`。
+
 ## v0.7.9 — 2026-09-28
 
 ### English
 
 - Added Windows D3D12 frame generation in Graphics: Off/DLSS/FSR, DLSS multipliers and fixed 2× FSR. Save to apply without restarting.
 - Fixed stale rendering bindings and Vulkan frame-generation input handling.
-- Fixed AppImage compatibility with Ubuntu 22.04 and improved Flatpak packaging.
+- Fixed AppImage compatibility with Ubuntu 22.04, improved Flatpak packaging.
 - Simplified Windows updates while preserving rollback on failure.
 
 ### 简体中文
@@ -19,11 +49,6 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 - 修复残留渲染绑定与 Vulkan 帧生成输入处理。
 - 修复 Ubuntu 22.04 AppImage 兼容性，改进 Flatpak 打包。
 - 简化 Windows 更新流程，保留失败回滚。
-
-## Unreleased / 未发布
-
-- Removed the one-time legacy updater manifest option after the v0.7.9 transition release.
-- v0.7.9 过渡版本发布后，移除一次性的旧更新器清单打包选项。
 
 ## v0.7.3 — 2026-09-27
 

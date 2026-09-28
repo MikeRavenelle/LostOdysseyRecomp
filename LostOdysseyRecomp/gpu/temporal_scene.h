@@ -130,6 +130,9 @@ inline int PositionVPSlot(uint64_t shader) {
 // may use the slot-7 path, and only with a constant single-texel screen sample.
 // Keep it out of the VS-wide table so other consumers cannot self-anchor it.
 inline int DrawPositionVPSlot(uint64_t vs, uint64_t ps, bool constantScreenSample = false) {
+    // Grand Staff f3448-f3450: this exact material pair shares the earlier
+    // b030 depth draw's c4-c7 camera at c7-c10. Other PS pairs stay held.
+    if (vs == 0xbda41a11626a545cull && ps == 0xa9e9542e2c60029aull) return 7;
     if (vs == 0xe810cfacc107fd3cull && ps == 0xfe31f3d6588fde95ull && constantScreenSample) return 7;
     return PositionVPSlot(vs);
 }

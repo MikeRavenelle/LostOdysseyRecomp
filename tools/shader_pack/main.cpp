@@ -12,7 +12,7 @@ int main(int argc,char** argv) try {
     const bool runtime = command == "verify-runtime";
     if ((runtime ? argc != 4 : argc != 3) ||
         (command != "inspect" && command != "verify" && !runtime)) {
-        std::cerr << "Usage: LoShaderPackTool <inspect|verify> pack.lospv\n"
+        std::cerr << "Usage: LoShaderPackTool <inspect|verify> pack.lospv|pack.lospd\n"
                      "       LoShaderPackTool verify-runtime pack.lospv decrypted-image.bin\n"
                      "       LoShaderPackTool merge baseline.lospv decrypted-image.bin manifest.tsv output-dir\n";
         return 2;
@@ -21,6 +21,9 @@ int main(int argc,char** argv) try {
     const auto path = std::filesystem::path(reinterpret_cast<const char8_t*>(argv[2]));
     xenos::portable_pack::Report r;
     if (runtime) {
+        const auto stored = xenos::portable_pack::Reader::Inspect(path);
+        if (stored.format != xenos::portable_pack::PackFormat::Spirv)
+            throw std::runtime_error("DXIL verify-runtime requires the loaded XEX image; use verify and a runtime pack hit");
         std::ifstream in(std::filesystem::path(reinterpret_cast<const char8_t*>(argv[3])), std::ios::binary);
         std::vector<uint8_t> image(xenos::portable_pack::RuntimeXexBytes);
         if (!in.read(reinterpret_cast<char*>(image.data()), std::streamsize(image.size())))
@@ -31,7 +34,6 @@ int main(int argc,char** argv) try {
         // have this audited contract pair; other images use the direct value.
         if (xenos::resources::Sha256Hex(expected) ==
             "d5a2fab10441a46444b6b41ffcb4f1ba562bea75668a7b445fd43688aec67507") {
-            const auto stored = xenos::portable_pack::Reader::Inspect(path);
             if (xenos::resources::Sha256Hex(stored.contract) ==
                 "f6fd1179b50f6ff9b63d6be84c662d1337af6b7dfa78865a9a6c025509c9b77f")
                 expected = stored.contract;
@@ -41,6 +43,7 @@ int main(int argc,char** argv) try {
         r = reader.Info();
     } else r = xenos::portable_pack::Reader::Inspect(path, verified);
     std::cout<<"{\n  \"schema\": "<<xenos::portable_pack::Schema
+        <<",\n  \"format\": \""<<(r.format == xenos::portable_pack::PackFormat::Spirv ? "spirv" : "dxil")<<"\""
         <<",\n  \"contract\": \""<<xenos::resources::Sha256Hex(r.contract)<<"\""
         <<",\n  \"records\": "<<r.records<<",\n  \"unique_binaries\": "<<r.uniqueBinaries
         <<",\n  \"blocks\": "<<r.blocks<<",\n  \"failures_omitted\": "<<r.failuresOmitted
