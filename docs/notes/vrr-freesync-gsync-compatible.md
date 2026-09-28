@@ -34,6 +34,10 @@ D3D12复用Plume已有的flip-discard、能力查询、创建/ResizeBuffers时�
 
 动态DLSS MFG将有效SDK目标限制在输出预算以内，0（自动目标）变为该预算；较低显式目标保留。原生上限也不高于该有效动态目标，但不按最大MFG倍数机械相除。切屏、刷新率变化、VRR On/Off经既有FG reconfigure更新有效请求；VRR会调整宿主帧率上限和动态MFG的有效输出目标，固定FG倍数仍取已应用的配置。单独切换并保存VRR不会覆盖磁盘中的FG provider、mode、multiplier或target；实际切换FG provider或multiplier时，原有菜单逻辑会重置mode和target。SDK请求失败沿用原有失败/回退路径，不假装支持。
 
+DLSS FG与FSR FG不能在保留当前Streamline/NGX会话的同一进程中替换。保存时会阻止该切换，并明确提示“DLSS FG切到FSR FG需要重启；现在重启/稍后”；选择稍后会保留FSR配置、让当前FG保持Off，状态行也会说明需要重启。前台运行已观察到该切换被阻止；`LoMenuFlowTest`和`LoRestartTest`验证了提示与重启状态路径，但本次没有重新启动游戏，也不据此宣称FSR FG启动后的运行效果。
+
+正常退出还曾在FG Off/On运行后于`NGX D3D12 ReleaseFeature`的execute路径发生访问冲突。当前两阶段修复在renderer/GPU drain之后，由`D3D12Bridge::ReleaseFeatureAfterGpuDrain`在FG和SR会话都仍存活时调用经过检查且可重复的FG feature release（`slFreeResources`）；随后执行SR的ReleaseFeature、parameters和Shutdown1，最后才由`g_d3dFg.reset()`执行Streamline shutdown/unload，此时device/queue仍保持有效。这样保留FG资源释放所需的NGX会话；历史共存探针曾显示先关闭NGX会话会使`slFreeResources`返回`FeatureNotFound`。完整Windows Clang游戏构建已在两阶段修复后再次通过，但尚未重新进行运行时退出验证，因此不视为已验收。DLSS FG初始化中途失败、以及新建DLSS bridge后队列／交换链创建失败时的卸载回退路径仍需单独处理。
+
 `LO_FPS=0`仍保持诊断性不限帧，会绕过VRR自动上限。普通验收应清除`LO_FPS`、`LO_GUEST_INTERVAL=0`和非必要FG环境覆盖。游戏帧率不足时不会用修改时钟补偿，显示器低帧率补偿由外部显示系统处理。
 
 ## 日志与验证
@@ -48,7 +52,7 @@ cmake --build out/vrr-tests --config Release
 ctest --test-dir out/vrr-tests -C Release --output-on-failure
 ```
 
-完整游戏构建、真实D3D12/Vulkan呈现、显示器实际VRR和FG组合仍由本地实机验收。先对同一场景FG Off测试VRR On/Off、60/90/120档和设置重新打开；再测固定FG/动态MFG、跨显示器移动、Alt+Enter、最小化/恢复与暂停设置。通过显示器/驱动指示器确认实际VRR，并比较等现实时间行走、Aim Ring及音画同步。本提交不宣称AMD或NVIDIA认证、稳定达到目标FPS或已完成硬件验收。
+Windows Clang `RelWithDebInfo` 的完整 `LostOdysseyRecomp` 目标构建、`LoFramePacerTest` 和 `LoReusableFgCoreTest` 已通过。隔离目录 `out/pr80-runtime-smoke` 使用现有游戏数据和 shader packs 运行 Vulkan 与 D3D12 的 `--prepare-shaders-only`，两者均正常退出，命中 shader pack 并报告 renderer ready；两后端各有一次后台窗口启动片段，使用 `LO_BACKGROUND=1`、VRR On、native target 120、FG Off 和 1280×720，游戏线程运行约20秒且日志无 warning/error。该后台片段的日志显示 `refresh_hz=144`、`host_cap=120`、`requested/reported_vsync=false`、`guest_refresh=60` 和 `clocks=unchanged`；稳定片段约为60 presents/s、`game_time_ratio`约为1，因此不能据此证明120 FPS或完整实景体验。用户在同一场景确认RTSS输出稳定低于144，source约47 FPS、output约141/s；FG Off 前台运行超过20秒无崩溃且DLSS SR继续提交，随后切换到Fixed 2×也运行正常，但之后的正常退出曾触发上述NGX访问冲突，修复后的退出路径尚未重新运行验证。用户确认FG Off时视觉异常消失；Fixed 2×下VRR On/Off的运动物体边缘重影/碎裂程度相近，该画质问题记录为独立的FG画质待验收项，不能归因或宣称为VRR tearing已通过。用户还通过显示器/驱动指示器确认刷新率变化和G-SYNC启用；软件日志中的`hardware_vrr=unverified`仍表示程序没有自行检测硬件状态。上述运行使用隔离的安装/存档副本，未修改D盘安装。仍需覆盖60/90/120档、设置重新打开、动态MFG、跨显示器移动、Alt+Enter、最小化/恢复与暂停设置，并比较等现实时间行走、Aim Ring及音画同步；本提交不宣称AMD或NVIDIA认证或所有目标FPS均已稳定达到。
 
 ## 对照接口资料
 

@@ -66,7 +66,7 @@ bool D3D12Session::WaitFence(std::string& reason) {
     return SUCCEEDED(device_->GetDeviceRemovedReason()) || Failure("FG device removed",device_->GetDeviceRemovedReason(),reason);
 }
 bool D3D12Session::Prepare(const D3D12Frame& f,ID3D12GraphicsCommandList* commands,std::string& reason) {
-    if (!initialized_ || closed_ || !commands || !Valid(f,device_.Get())) { reason="FG invalid frame input"; return false; }
+    if (!initialized_ || closed_ || nativeFeatureReleased_ || !commands || !Valid(f,device_.Get())) { reason="FG invalid frame input"; return false; }
     if (!Drain(reason)) return false;
     key_={f.deviceEpoch,f.temporalEpoch,f.width,f.height,f.inputWidth,f.inputHeight,uint32_t(f.format),requested_};
     if (blocked_ && *blocked_==key_) { reason="FG configuration blocked after SDK failure; change configuration or quiesce first"; return false; }
@@ -123,22 +123,27 @@ bool D3D12Session::Disable(std::string& reason) {
     active_=false; prepared_=false; history_.Reset(); return true;
 }
 bool D3D12Session::Quiesce(std::string& reason) {
-    if (!initialized_ || closed_) return true;
+    if (!initialized_ || closed_ || nativeFeatureReleased_) return true;
     if (!Drain(reason) || !Disable(reason) || !WaitNative(reason)) return false;
     if (queue_ && (!SignalFence(reason) || !WaitFence(reason))) return false;
     blocked_.reset(); return true;
 }
 bool D3D12Session::Reconfigure(const Config& config,std::string& reason) {
-    if (config.provider!=requested_.provider || config.mode==Mode::Off ||
+    if (nativeFeatureReleased_ || config.provider!=requested_.provider || config.mode==Mode::Off ||
         !config.generatedFrames || !std::isfinite(config.targetFrameRate) || config.targetFrameRate<0) {
         reason="FG reconfiguration requires the existing provider and valid mode"; return false;
     }
     if (!Quiesce(reason)) return false;
     requested_=config; history_.Reset(); blocked_.reset(); return true;
 }
+bool D3D12Session::ReleaseFeatureAfterGpuDrain(std::string& reason) {
+    if (nativeFeatureReleased_ || closed_) return true;
+    if (!Quiesce(reason) || !ReleaseNativeFeature(reason)) return false;
+    nativeFeatureReleased_=true; return true;
+}
 bool D3D12Session::Shutdown(std::string& reason) {
     if (closed_) return true;
-    if (!Quiesce(reason) || !ShutdownNative(reason)) return false;
+    if (!ReleaseFeatureAfterGpuDrain(reason) || !ShutdownNative(reason)) return false;
     closed_=true; return true;
 }
 } // namespace framegen

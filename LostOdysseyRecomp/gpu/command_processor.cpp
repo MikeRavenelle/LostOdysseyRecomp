@@ -795,9 +795,13 @@ namespace gpu
             frame_timing::PacingSample pacing;
             {
                 static FramePacer pacer;
+                static OutputFramePacer outputPacer;
                 static DeadlineWait pacingWait;
                 // Preserve the original schedule anchor; sleep without millisecond rounding.
-                const auto deadline = pacer.Schedule(timingPace, fpsCap);
+                const auto nativeDeadline = pacer.Schedule(timingPace, fpsCap);
+                const auto output = video::GetDynamicFgOutputPacing(GetFrameRateTarget());
+                const auto outputDeadline = outputPacer.Schedule(timingPace, output.outputFps, output.actualPresents);
+                const auto deadline = std::max(nativeDeadline, outputDeadline);
                 const auto sleepStart = timingEnabled ? std::chrono::steady_clock::now() : timingPace;
                 pacingWait.Until(deadline);
                 if (timingEnabled)

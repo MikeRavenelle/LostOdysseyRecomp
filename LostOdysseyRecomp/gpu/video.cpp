@@ -279,6 +279,7 @@ namespace gpu::video
         std::unique_ptr<frame_generation::D3D12Bridge> g_d3dFg;
         std::mutex g_fgSettingsMutex;
         framegen::Config g_fgAppliedConfig{};
+        framegen::Provider g_fgSessionProvider = framegen::Provider::Off;
         std::optional<framegen::Config> g_fgFailedRequest;
 #endif
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
@@ -1170,6 +1171,7 @@ namespace gpu::video
         {
             std::lock_guard lock(g_fgSettingsMutex);
             g_fgAppliedConfig = {};
+            g_fgSessionProvider = framegen::Provider::Off;
             g_fgFailedRequest.reset();
         }
 #endif
@@ -1199,6 +1201,11 @@ namespace gpu::video
         g_fgPresent = FgPresentBridge{}; g_fgPresentSerial = 0;
         g_presentation.reset();
         g_uploadBuffer.reset();
+#if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
+        // Release DLSS-G's NGX feature while both SDK sessions remain live.
+        // Renderer and presentation work have already been drained.
+        if (g_d3dFg) g_d3dFg->ReleaseFeatureAfterGpuDrain();
+#endif
 #ifdef _WIN32
         if (g_swapChain && !g_vulkan) {
             auto* swap = static_cast<plume::D3D12SwapChain*>(g_swapChain.get());
@@ -1206,11 +1213,6 @@ namespace gpu::video
         }
 #endif
         g_swapChain.reset(); g_presentSemaphores.clear();
-#if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
-        // SDK proxy vtables must stay loaded until all external swapchain refs
-        // and their buffers are gone. The device/queue are still live here.
-        g_d3dFg.reset();
-#endif
         if (g_temporalUpscaler) {
             g_temporalUpscaler->ShutdownAfterGpuDrain();
             if (!g_temporalUpscaler->ShutdownComplete()) {
@@ -1218,6 +1220,12 @@ namespace gpu::video
                 std::fflush(nullptr); std::_Exit(EXIT_FAILURE);
             }
         }
+#if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
+        // Keep the FG SDK loaded until NGX SR has released its feature and
+        // parameters. Its proxy vtables also outlive all swapchain references.
+        // The device and queue are still live for FG shutdown here.
+        g_d3dFg.reset();
+#endif
         g_releaseSemaphore.reset(); g_acquireSemaphore.reset();
         g_fence.reset(); g_commandList.reset(); g_queue.reset();
 #if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
@@ -1455,6 +1463,7 @@ namespace gpu::video
                         g_d3dFg = std::move(bridge);
                         std::lock_guard lock(g_fgSettingsMutex);
                         g_fgAppliedConfig = fg.config; // Exact request used by Initialize, not a later monitor sample.
+                        g_fgSessionProvider = fg.config.provider;
                     }
                     else LOG_ERROR("D3D12 FG: unavailable; ordinary presentation retained: {}", reason);
                 }
@@ -1538,7 +1547,10 @@ namespace gpu::video
                     std::getenv("LO_FG_PROVIDER"), std::getenv("LO_FG_MODE"),
                     std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"), g_displayRefreshHz.load(std::memory_order_relaxed));
                 std::lock_guard lock(g_fgSettingsMutex);
-                if (!g_d3dFg) g_fgAppliedConfig = {};
+                if (!g_d3dFg) {
+                    g_fgAppliedConfig = {};
+                    g_fgSessionProvider = framegen::Provider::Off;
+                }
                 if (requestedFg.Enabled() && !g_d3dFg) g_fgFailedRequest = requestedFg.config;
             }
 #endif
@@ -1572,7 +1584,7 @@ namespace gpu::video
 
     bool FrameGenerationInputCaptureEnabled() {
 #if defined(LO_GPU_PLUME) && defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
-        if (g_d3dFg) return true;
+        if (g_d3dFg && g_d3dFg->Enabled()) return true;
 #endif
 #if defined(LO_GPU_PLUME) && defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
         if (g_fgSession) return true;
@@ -1631,6 +1643,27 @@ namespace gpu::video
         return paced;
     }
 
+    DynamicFgOutputPacing GetDynamicFgOutputPacing(uint32_t nativeTarget)
+    {
+#if defined(LO_GPU_PLUME) && defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
+        if (!nativeTarget || !settings::GetConfig().variableRefreshRate || !g_d3dFg)
+            return {};
+        const auto limit = vrr::OutputLimit(g_displayRefreshHz.load(std::memory_order_relaxed));
+        if (!limit) return {};
+        std::lock_guard lock(g_fgSettingsMutex);
+        if (g_fgAppliedConfig.provider != framegen::Provider::Dlss ||
+            g_fgAppliedConfig.mode != framegen::Mode::Dynamic)
+            return {};
+        const auto requested = vrr::DynamicTarget(g_fgAppliedConfig.targetFrameRate, true,
+            g_displayRefreshHz.load(std::memory_order_relaxed));
+        const auto budget = requested > 0 ? uint32_t(std::clamp(requested, 1.0f, float(limit))) : limit;
+        return {budget, g_d3dFg->ActualPresents()};
+#else
+        (void)nativeTarget;
+        return {};
+#endif
+    }
+
     FrameGenerationStatus GetFrameGenerationStatus() {
         FrameGenerationStatus status;
         status.environmentOverride = std::getenv("LO_FG_PROVIDER") || std::getenv("LO_FG_MODE") ||
@@ -1644,6 +1677,7 @@ namespace gpu::video
         {
             std::lock_guard lock(g_fgSettingsMutex);
             status.applied = g_fgAppliedConfig.provider;
+            status.sessionProvider = g_fgSessionProvider;
             status.appliedMultiplier = g_fgAppliedConfig.generatedFrames + 1;
             const auto backend = SelectedBackend();
             if (request.error || (backend && *backend != backend::Backend::D3D12) ||
@@ -2101,7 +2135,34 @@ namespace gpu::video
             LOG_ERROR("D3D12 FG: could not drain renderer/presentation for settings change");
             return false;
         }
-        if (g_d3dFg && desired.provider == applied.provider && desired.provider != framegen::Provider::Off) {
+        if (g_d3dFg && desired.provider == framegen::Provider::Off) {
+            g_d3dFg->Suspend();
+            g_fgPresent.CancelAll(frame_generation::HandoffCancel::DisplayChange);
+            renderer::CancelFgHandoffs();
+            renderer::SetFrameGenerationInputCaptureEnabled(false);
+            g_captureRetained.clear();
+            g_captureCopy = {};
+            std::lock_guard lock(g_fgSettingsMutex);
+            g_fgAppliedConfig = {};
+            g_fgFailedRequest.reset();
+            LOG_INFO("D3D12 FG: disabled; Streamline retained for live DLSS SR");
+            return true;
+        }
+        if (g_d3dFg && g_d3dFg->Provider() == framegen::Provider::Dlss &&
+            desired.provider != framegen::Provider::Dlss) {
+            g_d3dFg->Suspend();
+            g_fgPresent.CancelAll(frame_generation::HandoffCancel::DisplayChange);
+            renderer::CancelFgHandoffs();
+            renderer::SetFrameGenerationInputCaptureEnabled(false);
+            g_captureRetained.clear();
+            g_captureCopy = {};
+            std::lock_guard lock(g_fgSettingsMutex);
+            g_fgAppliedConfig = {};
+            g_fgFailedRequest = request.config;
+            LOG_WARNING("D3D12 FG: switch from DLSS to FSR requires restart while Streamline is retained for DLSS SR");
+            return true;
+        }
+        if (g_d3dFg && desired.provider == g_d3dFg->Provider()) {
             std::string reason;
             if (!g_d3dFg->Reconfigure(desired, reason)) {
                 LOG_ERROR("D3D12 FG: reconfiguration unavailable: {}", reason);
@@ -2112,7 +2173,8 @@ namespace gpu::video
             std::lock_guard lock(g_fgSettingsMutex);
             g_fgAppliedConfig = desired;
             g_fgFailedRequest.reset();
-            LOG_INFO("D3D12 FG: updated provider={} multiplier={} without swapchain replacement",
+            renderer::SetFrameGenerationInputCaptureEnabled(true);
+            LOG_INFO("D3D12 FG: enabled provider={} multiplier={} without swapchain replacement",
                 desired.provider == framegen::Provider::Dlss ? "dlss" : "fsr", desired.generatedFrames + 1);
             return true;
         }
@@ -2184,6 +2246,7 @@ namespace gpu::video
         {
             std::lock_guard lock(g_fgSettingsMutex);
             g_fgAppliedConfig = g_d3dFg ? desired : framegen::Config{};
+            g_fgSessionProvider = g_d3dFg ? desired.provider : framegen::Provider::Off;
             g_fgFailedRequest = desired.provider != framegen::Provider::Off && !g_d3dFg
                 ? std::optional(request.config) : std::nullopt;
         }
@@ -2607,7 +2670,7 @@ namespace gpu::video
                 }
                 if (!BeginGpuCommands(g_commandList.get())) return;
 #if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
-                if (g_d3dFg) {
+                if (g_d3dFg && g_d3dFg->Enabled()) {
                     g_d3dFg->PrepareAfterHostDrain(composite,
                         *static_cast<plume::D3D12SwapChain*>(g_swapChain.get()),
                         *static_cast<plume::D3D12CommandList*>(g_commandList.get()), g_deviceEpoch.load());

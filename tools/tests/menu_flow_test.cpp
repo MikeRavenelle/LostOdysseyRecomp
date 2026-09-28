@@ -1098,7 +1098,7 @@ int main(int argc, char** argv)
                     "FG status exposes fallback and diagnostic override");
             gpu::video::menuFlowFgStatus = {};
             settings::pending = 2; Tick(base);
-            Require(settings::row == int(GraphicsRow::Brightness), "Off navigation skips hidden multiplier");
+            Require(settings::row == int(GraphicsRow::VariableRefreshRate), "Off navigation skips hidden multiplier");
 
             settings::row = int(GraphicsRow::FrameGeneration);
             settings::pending = 8; Tick(base);
@@ -1122,7 +1122,7 @@ int main(int argc, char** argv)
                     settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].hidden,
                     "FSR uses fixed 2x and hides multiplier");
             settings::pending = 2; Tick(base);
-            Require(settings::row == int(GraphicsRow::Brightness), "FSR navigation skips hidden multiplier");
+            Require(settings::row == int(GraphicsRow::VariableRefreshRate), "FSR navigation skips hidden multiplier");
             settings::row = int(GraphicsRow::FrameGeneration);
             settings::pending = 4; Tick(base);
             Require(settings::edit.frameGenerationProvider == Provider::Dlss, "FG provider cycles back to DLSS");
@@ -1142,8 +1142,8 @@ int main(int argc, char** argv)
             settings::pending = 0x1000; Tick(base);
             Require(saves == beforeSave + 1 && diskConfig.frameGenerationProvider == Provider::Dlss &&
                     diskConfig.frameGenerationMultiplier == 3 &&
-                    diskConfig.frameGenerationMode == framegen::Mode::Fixed &&
-                    diskConfig.frameGenerationTargetFps == 0 &&
+                    diskConfig.frameGenerationMode == framegen::Mode::Dynamic &&
+                    diskConfig.frameGenerationTargetFps == 144 &&
                     diskConfig.scalingQuality == settings::edit.scalingQuality &&
                     diskConfig.uiLanguage == saved.uiLanguage,
                     "Graphics Save commits FG and graphics together without Language edits");
@@ -1189,6 +1189,19 @@ int main(int argc, char** argv)
             Require(settings::tab == 3, "right shoulder moves Graphics to Language in four tabs");
             settings::pending = 0x200; Tick(base);
             Require(settings::tab == 0, "right shoulder wraps Language to Gameplay");
+            gpu::video::menuFlowFgStatus.sessionProvider = Provider::Dlss;
+            gpu::video::menuFlowFgStatus.requested = Provider::Fsr;
+            settings::tab = 2;
+            settings::row = int(GraphicsRow::Save);
+            settings::pending = 0x1000; Tick(base);
+            Require(settings::restartPrompt && settings::savedRestartPrompt &&
+                    settings::snapshot.dialogMessage.find(L"DLSS FG") != std::wstring::npos &&
+                    settings::snapshot.dialogMessage.find(L"FSR FG") != std::wstring::npos,
+                    "DLSS FG to FSR FG save explains that restart is required");
+            settings::pending = 0x2000; Tick(base);
+            Require(!settings::restartPrompt && diskConfig.frameGenerationProvider == Provider::Fsr,
+                    "Later retains the FSR FG choice for the next launch");
+            gpu::video::menuFlowFgStatus = {};
             currentConfig = priorCurrent;
             diskConfig = priorDisk;
             std::puts("PASS Graphics FG section: provider/input navigation, DLSS multiplier bounds, FSR fixed 2x, shared Save, Language isolation, mouse/scroll and four-tab navigation");

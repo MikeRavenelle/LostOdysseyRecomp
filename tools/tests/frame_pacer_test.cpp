@@ -58,6 +58,21 @@ int main()
     for (const auto invalid : {0u, 29u, 59u, 61u, 119u, 144u, 1000u, 0xFFFFFFFFu})
         Require(!rate::Supported(invalid) && rate::Normalize(invalid) == 30 && rate::MenuIndex(invalid) == 0,
             "invalid persisted rate defaults to 30; diagnostics are separate");
+    {
+        gpu::OutputFramePacer output;
+        const auto period = nanoseconds(1000000000ull / 141);
+        Require(output.Schedule(origin, 141, 100) == origin, "first FG output observation starts a new cadence");
+        const auto twoFrames = output.Schedule(origin + milliseconds(1), 141, 102);
+        Require(twoFrames == origin + period * 2, "two SDK presents reserve two output periods");
+        Require(output.Schedule(twoFrames + milliseconds(1), 141, 104) == twoFrames + period * 2,
+            "FG output pacing follows cumulative SDK presents");
+        Require(output.Schedule(origin + seconds(3), 141, 106) == origin + seconds(3),
+            "a long stall does not accumulate output debt");
+        Require(output.Schedule(origin + seconds(3), 0, 108) == origin + seconds(3),
+            "FG output pacing turns off with the VRR budget");
+        Require(output.Schedule(origin + seconds(4), 141, 110) == origin + seconds(4),
+            "FG output pacing restarts after an off-to-on transition");
+    }
     Require(rate::FromMenuIndex(rate::kCount) == 30, "invalid menu index is bounded");
     for (const auto fps : {30u, 60u, 90u, 120u, 0u, 144u})
     {

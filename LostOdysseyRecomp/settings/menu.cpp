@@ -46,6 +46,7 @@ bool displayRollback = false, rollbackSaveFailed = false;
 bool collectionPrompt = false;
 int collectionChoice = 1;
 bool restartPrompt = false, savedRestartPrompt = false, restartSaveFailed = false;
+bool restartForFgProvider = false;
 int restartChoice = 0;
 bool mainMenuPrompt = false;
 int mainMenuChoice = 1;
@@ -348,6 +349,10 @@ std::vector<framegen::Provider> FgProviders()
 std::wstring FgNotice()
 {
     const auto running = gpu::video::GetFrameGenerationStatus();
+    if (running.sessionProvider == framegen::Provider::Dlss &&
+        running.requested == framegen::Provider::Fsr)
+        return Tr(L"FSR FG requires a restart after DLSS FG. Frame generation is off until then.",
+                  L"從 DLSS 影格生成切換到 FSR 影格生成需要重新啟動；在此之前影格生成會關閉。");
     std::wstring text;
     using gpu::video::FrameGenerationPhase;
     switch (running.phase) {
@@ -665,6 +670,9 @@ void Publish(uint8_t *base, uint32_t config)
         next.dialogMessage = restartSaveFailed
             ? Tr(L"Settings could not be saved. Check settings.ini permissions, then retry or cancel.",
                  L"無法儲存設定。請檢查 settings.ini 權限後重試或取消。")
+            : savedRestartPrompt && restartForFgProvider
+                ? Tr(L"Switching from DLSS FG to FSR FG requires a restart. Settings saved. Restart now?",
+                     L"從 DLSS 影格生成切換到 FSR 影格生成需要重新啟動。設定已儲存，現在重新啟動嗎？")
             : savedRestartPrompt ? Tr(L"Settings saved. Restart now?", L"設定已儲存。立即重新啟動嗎？")
             : Tr(L"Save these settings and restart now?", L"儲存這些設定並立即重新啟動嗎？");
         next.dialogChoices = {Tr(L"Restart now", L"立即重新啟動"), Tr(L"Later", L"稍後"), Tr(L"Cancel", L"取消")};
@@ -926,6 +934,7 @@ PPC_FUNC(sub_822F19B0)
         restartPrompt = false;
         savedRestartPrompt = false;
         restartSaveFailed = false;
+        restartForFgProvider = false;
         mainMenuPrompt = false;
         importPrompt = false;
         importLaunchPending = false;
@@ -1022,6 +1031,7 @@ PPC_FUNC(sub_822F19B0)
                 restartPrompt = false;
                 savedRestartPrompt = false;
                 restartSaveFailed = false;
+                restartForFgProvider = false;
 #ifdef _WIN32
                 status = restartChoice == 0
                     ? Tr(L"Saved. Preparing a safe restart…", L"已儲存，正在準備安全重新啟動……")
@@ -1035,6 +1045,7 @@ PPC_FUNC(sub_822F19B0)
             {
                 restartPrompt = false;
                 restartSaveFailed = false;
+                restartForFgProvider = false;
                 status = Tr(L"Changes requiring restart were cancelled.", L"已取消需要重新啟動的變更。");
             }
             else if (SaveConfig(restartAfter))
@@ -1042,6 +1053,7 @@ PPC_FUNC(sub_822F19B0)
                 edit = restartAfter;
                 restartPrompt = false;
                 restartSaveFailed = false;
+                restartForFgProvider = false;
 #ifdef _WIN32
                 status = restartChoice == 0
                     ? Tr(L"Saved. Preparing a safe restart…", L"已儲存，正在準備安全重新啟動……")
@@ -1099,7 +1111,12 @@ PPC_FUNC(sub_822F19B0)
     }
     auto graphicsSaved = [&] {
         status = Tr(L"Display settings saved.", L"顯示設定已儲存。");
-        if (restart::Required(previousDisplay, edit))
+        const auto running = gpu::video::GetFrameGenerationStatus();
+        restartForFgProvider = edit.graphicsBackend == GraphicsBackend::D3D12 &&
+            edit.frameGenerationProvider == framegen::Provider::Fsr &&
+            (previousDisplay.frameGenerationProvider == framegen::Provider::Dlss ||
+             running.sessionProvider == framegen::Provider::Dlss);
+        if (restart::Required(previousDisplay, edit) || restartForFgProvider)
         {
             restartPrompt = savedRestartPrompt = true;
             restartSaveFailed = false;
@@ -1390,6 +1407,7 @@ PPC_FUNC(sub_822F19B0)
             restartPrompt = true;
             savedRestartPrompt = false;
             restartSaveFailed = false;
+            restartForFgProvider = false;
             restartChoice = 0;
             restartAfter = languages;
         }
