@@ -5,6 +5,10 @@ param(
     [Parameter(Mandatory)][string]$GameDirectory,
     [ValidateRange(10,600)][int]$Seconds = 120,
     [switch]$DisableFg,
+    [ValidateSet('Legacy','Off','Dlss','Fsr')][string]$FgProvider = 'Legacy',
+    [ValidateSet('Fixed','Dynamic')][string]$FgMode = 'Fixed',
+    [ValidateRange(2,16)][int]$FgMultiplier = 2,
+    [ValidateRange(0,1000)][double]$FgTargetFps = 0,
     [switch]$DisableObjectMotion,
     [switch]$DisableHybridMotion,
     [switch]$WindowCycle,
@@ -23,6 +27,7 @@ $ErrorActionPreference = 'Stop'
 if ($Background -and $WindowCycle) { throw 'WindowCycle requires foreground interaction.' }
 if ($HiddenResizeCycle -and !$Background) { throw 'HiddenResizeCycle requires Background.' }
 if ($HiddenResizeCycle -and $WindowCycle) { throw 'HiddenResizeCycle and WindowCycle are mutually exclusive.' }
+if ($DisableFg -and $FgProvider -notin @('Legacy','Off')) { throw 'DisableFg conflicts with the selected FG provider.' }
 $build = (Resolve-Path -LiteralPath $BuildDirectory).Path
 $baseline = (Resolve-Path -LiteralPath $BaselineDirectory).Path
 $game = (Resolve-Path -LiteralPath $GameDirectory).Path
@@ -81,6 +86,12 @@ foreach ($name in @($start.Environment.Keys)) {
 }
 $start.ArgumentList.Add('--game'); $start.ArgumentList.Add($game); $start.ArgumentList.Add('--quiet-kernel')
 $start.Environment['LO_DLSS_FG'] = $(if ($DisableFg) { '0' } else { '1' })
+if ($FgProvider -ne 'Legacy') {
+    $start.Environment['LO_FG_PROVIDER'] = $FgProvider.ToLowerInvariant()
+    $start.Environment['LO_FG_MODE'] = $FgMode.ToLowerInvariant()
+    $start.Environment['LO_FG_MULTIPLIER'] = $FgMultiplier.ToString()
+    $start.Environment['LO_FG_TARGET_FPS'] = $FgTargetFps.ToString([Globalization.CultureInfo]::InvariantCulture)
+}
 if ($CaptureMode -eq 'Diagnostic') { $start.Environment['LO_MV_LOG'] = '1' }
 if ($DisableObjectMotion) { $start.Environment['LO_MV_REPLAY'] = '0' }
 if ($DisableHybridMotion) { $start.Environment['LO_SR_HYBRID_MV'] = '0' }
@@ -113,7 +124,8 @@ $process = [Diagnostics.Process]::Start($start)
 $stdout = $process.StandardOutput.ReadToEndAsync()
 $stderr = $process.StandardError.ReadToEndAsync()
 $manifest = [ordered]@{ pid=$process.Id; started=[DateTime]::UtcNow.ToString('o'); exe=$exe;
-    sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; fg=!$DisableFg;
+    sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash; fg=(!$DisableFg -and $FgProvider -ne 'Off');
+    fg_provider=$FgProvider; fg_mode=$FgMode; fg_multiplier=$FgMultiplier; fg_target_fps=$FgTargetFps;
     foreground=!$Background; muted=$true; object_motion=!$DisableObjectMotion;
     hybrid_motion=!$DisableHybridMotion; hidden_resize_cycle=[bool]$HiddenResizeCycle;
     validation_layer_directory=$validationLayer; synchronization_validation_requested=[bool]$validationLayer;

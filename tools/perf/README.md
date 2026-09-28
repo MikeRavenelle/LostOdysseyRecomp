@@ -33,7 +33,13 @@ python tools/perf/analyze-city-comparison.py /path/to/run-a/drive-summary.json /
 `run-fg-game.ps1` is the bounded game driver for experimental Windows
 DLSS/FSR and Streamline FG paths. Use `-Backend D3D12|Vulkan` and
 `-Upscaler Dlss|Fsr|Off` to override the isolated run configuration; `-Quality`
-accepts values `0..3`. `-DisableObjectMotion` sets `LO_MV_REPLAY=0` for a
+accepts values `0..3`. For the reusable D3D12 path, `-FgProvider Legacy|Off|Dlss|Fsr`,
+`-FgMode Fixed|Dynamic`, `-FgMultiplier 2..16`, and `-FgTargetFps 0..1000`
+select the provider and runtime policy. These values are passed as
+`LO_FG_PROVIDER`, `LO_FG_MODE`, `LO_FG_MULTIPLIER`, and `LO_FG_TARGET_FPS`, and
+are recorded in `run.json`. `Legacy` preserves the existing `LO_DLSS_FG`
+selection; `-DisableFg` cannot be combined with `Dlss` or `Fsr`.
+`-DisableObjectMotion` sets `LO_MV_REPLAY=0` for a
 camera/depth hybrid comparison and records `object_motion=false` in `run.json`.
 `-CaptureMode Diagnostic|Lightweight` selects the capture overhead; `Diagnostic`
 is the default and enables `LO_RENDER_TIMING` plus motion logging, while
@@ -74,6 +80,53 @@ Quality, FSR Quality, DLAA and FSR Native AA; each ran 65 seconds with exit 0,
 no forced stop and preserved the baseline. These runs cover the camera/depth
 hybrid fallback and do not establish broader scene coverage or player
 acceptance.
+
+The initial 2026-09-27/28 bounded D3D12 FG checks were muted background runs. The DLSS2
+SR Off run (`run02-dlss2-offsr`, 75 seconds) exited 0 with the baseline preserved;
+after the same-queue repair its metadata, ordered-input and matched-input flags
+were true, with `active=true` and `accepted=true`. Its hidden resize completed
+2560×1440 → 2048×1152 → 2560×1440 and runtime recovery was logged, while
+`generated_intervals=0`. The FSR FG SR Off run (`run03-fsr2-offsr`, 75 seconds)
+and the dynamic DLSS FG target-144 plus FSR SR Quality run (`run04`, 75 seconds)
+also exited 0 with `forced_stop=false`, preserved baselines, and completed the
+same hidden resize and recovery. `run03` recorded 2,459 FSR generation
+dispatches. Those dispatches are SDK work, not display-frame measurements, and
+the generic `actual_presents=0` field is unfilled for this FSR path.
+`run05-fsr2-dlsssr` used FSR FG with DLSS SR Quality for 65 seconds; it exited 0,
+preserved the baseline, reported `active=true` and `accepted=true`, and recorded
+1,682 FSR generation dispatches. These runs are bounded background evidence and
+do not establish physical display rate, image quality, pacing, UI separation,
+provider parity or a complete playthrough.
+
+The first foreground muted Uhra run, `run06-front-dlss2-offsr`, exited 0 with
+`forced_stop=false` and the baseline preserved. Its final sample recorded
+`source=3720`, `generated_intervals=2703`, and `actual_presents=5407`; the desktop
+capture showed the Uhra scene with OSD 120. PresentMon started too late and its
+CSV is unusable. `run07-front-dynamic-fsrsr` used dynamic DLSS FG target 144
+with FSR Quality and exited 0 with the baseline preserved; its final sample
+recorded `source=3240`, `generated_intervals=2247`, and `actual_presents=6752`.
+A continuous interval showed 120 source frames to about 360 presents. PresentMon
+captured 1,428 display events on one swapchain, all `Composed: Flip`, with mean
+6.954472 ms, median 6.9444 ms, and p95 6.9691 ms, approximately 144 OS display
+events per second. Treat these as OS display events rather than physical scanout
+measurements. The desktop capture showed the Uhra scene with OSD 144.
+`run08-front-fsr2-offsr` ran 75 seconds with FSR FG and SR Off, exited 0 with
+the baseline preserved, and recorded 2,965 FSR generation dispatches. PresentMon
+captured 1,192 `Composed: Flip` events on one swapchain with mean 8.34884077 ms,
+median 6.9485 ms, and p95 13.8963 ms, approximately 119.8 OS display events per
+second; the desktop capture showed Uhra with OSD 119. `run09-front-fgoff` ran
+SR Off with `LO_FG_PROVIDER=off` overriding `LO_DLSS_FG=1` for 65 seconds, exited
+0 with the baseline preserved, and recorded zero snapshot and ordered-input
+samples because the provider was not initialized. PresentMon captured 596 events
+with mean 16.72094614 ms, median 13.9121 ms, and p95 27.7699 ms, approximately
+59.8 OS display events per second. All nine summaries are retained in
+`out/acceptance/results.json`; all exited 0 without forced stop, preserved the
+baseline, and had no `[error]` log entries. Seven SDK warnings remained on each
+foreground DLSS run, so these runs are not SDK or validation-clean evidence.
+Foreground evidence is limited to the local RTX 5080, driver 616.56, Uhra and
+65–75 second windows. Hidden resize evidence covers only the three background
+runs. The checks do not establish complete playthrough, HUD/UI separation, broad
+scene coverage, frame-by-frame interpolation image quality or physical scanout.
 
 The FG game path must be built with `LO_ENABLE_STREAMLINE_FG=ON` and a local
 pinned Streamline SDK. The runtime flag is opt-in and defaults to off. A typical paired

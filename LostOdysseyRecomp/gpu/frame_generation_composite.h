@@ -9,6 +9,20 @@
 
 namespace gpu::frame_generation {
 
+inline bool NativeCompositePlan(const frame_plan::FramePlan& plan) {
+    return plan.requestedUpscaler == upscaling::Upscaler::Off &&
+        plan.consumer == upscaling::TemporalConsumer::None && !plan.requiresReadback &&
+        !plan.inputProbe && !plan.failed && plan.frameGeneration == upscaling::FrameGeneration::Off &&
+        plan.width && plan.height;
+}
+inline bool CompositePlanSupported(const frame_plan::FramePlan& plan) {
+    return dlss_fg::CompositePlanSupported(plan) || NativeCompositePlan(plan);
+}
+inline resolution::Size CompositeSourceExtent(const frame_plan::FramePlan& plan) {
+    return NativeCompositePlan(plan) ? resolution::Size{plan.width, plan.height} :
+        resolution::Size{plan.output.width, plan.output.height};
+}
+
 // Source storage may include alignment rows (2560x1472 for a 2560x1440
 // scene). Only the full, selected output resolve defines the backbuffer.
 struct CompositeResolveGeometry {
@@ -16,7 +30,7 @@ struct CompositeResolveGeometry {
     uint32_t writeX = 0, writeY = 0, writeWidth = 0, writeHeight = 0;
 
     bool Matches(const frame_plan::FramePlan& plan) const {
-        const auto output = plan.output;
+        const auto output = CompositeSourceExtent(plan);
         return output.width && output.height &&
             sourceAllocation.width >= output.width &&
             sourceAllocation.height >= output.height &&
@@ -53,7 +67,7 @@ struct CompositeHandoff {
             !p.sourceColor.region.texture && !p.sourceColor.lifetime &&
             !p.motionInvalidity.region.texture && !p.motionInvalidity.lifetime &&
             !p.sceneColorCandidate.region.texture && !p.sceneColorCandidate.lifetime;
-        return dlss_fg::CompositePlanSupported(plan) &&
+        return CompositePlanSupported(plan) &&
             p.ui == UiSeparation::Unavailable &&
             !p.lineageCanceled && !p.producerDiscarded && !p.producerWaitFailed &&
             !resolveDiscarded && !resolveWaitFailed &&
@@ -73,7 +87,7 @@ struct CompositeHandoff {
             input.temporalEpoch == historyEpoch &&
             p.resolveSourceAllocation == sourceAllocation &&
             sourceAllocation && resolveOrdinal && targetAllocation &&
-            outputWidth == plan.output.width && outputHeight == plan.output.height &&
+            outputWidth == CompositeSourceExtent(plan).width && outputHeight == CompositeSourceExtent(plan).height &&
             outputWidth && outputHeight;
     }
     bool ReadyForOrderedSubmission() const {

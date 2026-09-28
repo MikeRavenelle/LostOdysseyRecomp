@@ -340,7 +340,7 @@ public:
     // a legacy resolve. This advances input history independently of taaResolved.
     bool CaptureColorInputs(plume::RenderCommandList* commands, plume::RenderTexture* source,
         const SceneObservation& scene, const frame_plan::FramePlan& plan, const JitterSample& jitter, ColorEncoding encoding,
-        const MotionFrameView* motion = nullptr, TemporalResetReason reset = TemporalResetReason::None, bool allowHybrid = false) {
+        const MotionFrameView* motion = nullptr, TemporalResetReason reset = TemporalResetReason::None, bool allowHybrid = false, bool frameGenerationInputs = false) {
         auto& current=frames_[frame_%2];const auto& previous=frames_[(frame_+1)%2];
         captureFailure_=InputCaptureFailure::None; hybridAttempted_=false;
         if(frameResourceFailure_!=InputCaptureFailure::None) {captureFailure_=frameResourceFailure_;return false;}
@@ -375,9 +375,11 @@ public:
             if(!previous.camera || !ContinuousHistoryCamera(*current.camera,*previous.camera)) automatic=automatic|TemporalResetReason::CameraDiscontinuity;
             if(!SameInputConfiguration(previous.plan,plan)) automatic=automatic|TemporalResetReason::PlanConfigurationChanged;
         }
-        // Only production SR opts in. Probe/legacy TAA and future FG keep their
-        // existing contracts. A stale ready geometry view cannot be papered over.
-        if (allowHybrid && upscaling::MatchesSrProvider(plan.requestedUpscaler,plan.consumer) &&
+        // Independent FG opts in explicitly without selecting SR or jitter.
+        // A stale ready geometry view remains invalid for either route.
+        const bool nativeFg = frameGenerationInputs && plan.requestedUpscaler == upscaling::Upscaler::Off &&
+            plan.consumer == upscaling::TemporalConsumer::None && !plan.requiresReadback && !plan.inputProbe && !plan.failed;
+        if (((allowHybrid && upscaling::MatchesSrProvider(plan.requestedUpscaler,plan.consumer)) || nativeFg) &&
             plan.frameGeneration == upscaling::FrameGeneration::Off &&
             !(motion && motion->ready && !motionVectorValid_)) {
             hybridAttempted_ = true;
@@ -391,10 +393,10 @@ public:
             // An optional composer failure may retain already-valid geometric
             // motion; it may never turn missing resources into complete inputs.
         }
-        if(upscaling::RequiresMotionDepth(plan.consumer,plan.frameGeneration)&&!motionVectorValid_)
+        if((nativeFg || upscaling::RequiresMotionDepth(plan.consumer,plan.frameGeneration))&&!motionVectorValid_)
             automatic=automatic|TemporalResetReason::IncompleteInputs;
         current.inputReset=reset|automatic;
-        current.inputsComplete=!upscaling::RequiresMotionDepth(plan.consumer,plan.frameGeneration)||motionVectorValid_;
+        current.inputsComplete=(!nativeFg && !upscaling::RequiresMotionDepth(plan.consumer,plan.frameGeneration))||motionVectorValid_;
         aa_.RecordExternalUse(); hybridMotion_.RecordConsumerUse(aa_.RecordedSerial()); return true;
     }
     TemporalFrameInputs CurrentInputs() const {

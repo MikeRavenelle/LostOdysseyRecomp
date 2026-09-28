@@ -24,6 +24,7 @@ endif()
 include(cmake/LoOptimization.cmake)
 include(cmake/LoDlss.cmake)
 include(cmake/LoStreamline.cmake)
+include(cmake/LoFrameGeneration.cmake)
 include(cmake/LoFsr.cmake)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 

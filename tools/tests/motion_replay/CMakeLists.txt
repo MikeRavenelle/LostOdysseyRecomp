@@ -225,3 +225,28 @@ endif()
 # Executes actual SR continuation -> full resolve -> production video diagnostic boundary.
 add_test(NAME frame_generation_handoff_renderer COMMAND LoNativeDlssRendererTest --fg-handoff-only)
 set_tests_properties(frame_generation_handoff_renderer PROPERTIES LABELS "fg;gpu;renderer;handoff" TIMEOUT 180)
+
+# Main renderer/video/native bridge compile boundary; no generated guest code,
+# SDK execution or physical GPU acceptance is performed by this target.
+option(LO_FG_GAME_COMPILE_CHECK "Compile the actual D3D12 FG game path" OFF)
+if(LO_FG_GAME_COMPILE_CHECK)
+ if(NOT WIN32 OR NOT TARGET p2_video_compile)
+  message(FATAL_ERROR "FG game compile check requires Windows and LO_P2_VIDEO_COMPILE_CHECK")
+ endif()
+ add_subdirectory("${ROOT}/shared/frame_generation" fg-adapters)
+ if(NOT TARGET framegen_d3d12)
+  message(FATAL_ERROR "Choose at least one FRAMEGEN_WITH_DLSS/FSR adapter")
+ endif()
+ add_library(fg_game_bridge STATIC
+  "${ROOT}/LostOdysseyRecomp/gpu/frame_generation_d3d12.cpp"
+  "${ROOT}/LostOdysseyRecomp/gpu/dlss_fg_depth.cpp")
+ target_compile_definitions(fg_game_bridge PUBLIC LO_ENABLE_D3D12_FG=1)
+ target_link_libraries(fg_game_bridge PUBLIC mv_runtime framegen_d3d12)
+ target_link_libraries(p2_video_compile PRIVATE fg_game_bridge)
+ add_executable(LoFgGameBridgeLink "${ROOT}/tools/tests/frame_generation/game_bridge_link.cpp")
+ target_link_libraries(LoFgGameBridgeLink PRIVATE fg_game_bridge)
+endif()
+add_executable(LoFgGameInputTest "${ROOT}/tools/tests/frame_generation/game_input_test.cpp")
+target_include_directories(LoFgGameInputTest PRIVATE "${ROOT}")
+target_link_libraries(LoFgGameInputTest PRIVATE mv_runtime)
+add_test(NAME fg_game_input_contract COMMAND LoFgGameInputTest)

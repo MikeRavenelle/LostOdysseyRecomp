@@ -1,11 +1,12 @@
 #pragma once
 
-#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
-#include "dlss_fg_constants.h"
+#if defined(_WIN32) && (defined(LO_ENABLE_STREAMLINE_FG) || defined(LO_ENABLE_D3D12_FG))
+#include "frame_generation_camera.h"
 #include <plume_vulkan.h>
 #include <memory>
 
 namespace gpu::dlss_fg {
+using frame_generation::DepthRemap;
 
 // One recorded depth image remains owned by this object until the caller's
 // checked post-Present input-completion fence. No image is recycled earlier.

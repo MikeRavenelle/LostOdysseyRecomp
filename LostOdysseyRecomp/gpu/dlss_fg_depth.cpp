@@ -1,8 +1,9 @@
 #include "dlss_fg_depth.h"
-#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+#if defined(_WIN32) && (defined(LO_ENABLE_STREAMLINE_FG) || defined(LO_ENABLE_D3D12_FG))
 #include "shader/dxc_compiler.h"
 #include <plume_render_interface_builders.h>
 #include <cmath>
+#include <plume_d3d12.h>
 #include <cstring>
 
 namespace gpu::dlss_fg {
@@ -12,7 +13,7 @@ Texture2D<float> sourceDepth : register(t0);
 #ifdef __spirv__
 [[vk::binding(1,0)]]
 #endif
-cbuffer Parameters : register(b0) {
+cbuffer Parameters : register(b1) {
     float scale;
     float bias;
     uint originX;
@@ -36,17 +37,20 @@ void Describe(plume::RenderDescriptorSetBuilder& b) {
 
 bool DepthRemapper::Initialize(plume::RenderDevice* device) {
     if (pipeline_) return device == device_;
-    if (!device || device->getCapabilities().shaderFormat != plume::RenderShaderFormat::SPIRV) return false;
+    if (!device) return false;
+    const auto format=device->getCapabilities().shaderFormat;
+    if (format != plume::RenderShaderFormat::SPIRV && format != plume::RenderShaderFormat::DXIL) return false;
+    const auto binary=format==plume::RenderShaderFormat::SPIRV ? xenos::ShaderBinaryFormat::Spirv : xenos::ShaderBinaryFormat::Dxil;
     device_ = device;
     plume::RenderDescriptorSetBuilder set; Describe(set);
     plume::RenderPipelineLayoutBuilder builder;
     builder.begin(false,false); builder.addDescriptorSet(set); builder.end();
     layout_ = builder.create(device);
-    auto vs = xenos::CompileCachedHlsl(kShader,"vertex","vs_6_0",xenos::ShaderBinaryFormat::Spirv);
-    auto ps = xenos::CompileCachedHlsl(kShader,"pixel","ps_6_0",xenos::ShaderBinaryFormat::Spirv);
+    auto vs = xenos::CompileCachedHlsl(kShader,"vertex","vs_6_0",binary);
+    auto ps = xenos::CompileCachedHlsl(kShader,"pixel","ps_6_0",binary);
     if (!layout_ || !vs.ok || !ps.ok) return false;
-    vertex_ = device->createShader(vs.bytecode.data(),vs.bytecode.size(),"vertex",plume::RenderShaderFormat::SPIRV);
-    pixel_ = device->createShader(ps.bytecode.data(),ps.bytecode.size(),"pixel",plume::RenderShaderFormat::SPIRV);
+    vertex_ = device->createShader(vs.bytecode.data(),vs.bytecode.size(),"vertex",format);
+    pixel_ = device->createShader(ps.bytecode.data(),ps.bytecode.size(),"pixel",format);
     if (!vertex_ || !pixel_) return false;
     plume::RenderGraphicsPipelineDesc desc{};
     desc.pipelineLayout=layout_.get(); desc.vertexShader=vertex_.get(); desc.pixelShader=pixel_.get();
@@ -66,13 +70,23 @@ plume::RenderTexture* DepthRemapper::Record(plume::RenderCommandList* commands,
         source.width < 1 || source.height < 1 || !std::isfinite(mapping.scale) ||
         !std::isfinite(mapping.bias) || !(mapping.scale > 0) ||
         !(mapping.nearDistance > 0) || !(mapping.farDistance > mapping.nearDistance)) return nullptr;
-    const auto& image=*static_cast<const plume::VulkanTexture*>(source.texture);
-    if (image.device != device_ || !image.vk || !image.imageView || !image.allocation ||
-        image.desc.dimension != plume::RenderTextureDimension::TEXTURE_2D ||
-        image.desc.format != plume::RenderFormat::R32_FLOAT || image.imageFormat != VK_FORMAT_R32_SFLOAT ||
-        image.desc.width != source.allocation.width || image.desc.height != source.allocation.height ||
-        image.desc.mipLevels != 1 || image.desc.arraySize != 1 ||
-        image.textureLayout != plume::RenderTextureLayout::SHADER_READ) return nullptr;
+    const bool vulkan=device_->getCapabilities().shaderFormat==plume::RenderShaderFormat::SPIRV;
+    const plume::RenderTextureDesc* desc=nullptr;
+    if (vulkan) {
+        const auto& image=*static_cast<const plume::VulkanTexture*>(source.texture);
+        if (image.device != device_ || !image.vk || !image.imageView || !image.allocation ||
+            image.imageFormat != VK_FORMAT_R32_SFLOAT || image.textureLayout != plume::RenderTextureLayout::SHADER_READ) return nullptr;
+        desc=&image.desc;
+    } else {
+        const auto& image=*static_cast<const plume::D3D12Texture*>(source.texture);
+        if (image.device != device_ || !image.d3d ||
+            !(image.resourceStates & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)) return nullptr;
+        desc=&image.desc;
+    }
+    if (desc->dimension != plume::RenderTextureDimension::TEXTURE_2D ||
+        desc->format != plume::RenderFormat::R32_FLOAT ||
+        desc->width != source.allocation.width || desc->height != source.allocation.height ||
+        desc->mipLevels != 1 || desc->arraySize != 1) return nullptr;
     std::unique_ptr<Active> next;
     if (available_ && available_->width == source.width && available_->height == source.height) {
         next=std::move(available_);
@@ -82,7 +96,7 @@ plume::RenderTexture* DepthRemapper::Record(plume::RenderCommandList* commands,
         next->width=source.width; next->height=source.height;
         next->output=device_->createTexture(plume::RenderTextureDesc::Texture2D(source.width,source.height,1,
             plume::RenderFormat::R32_FLOAT,plume::RenderTextureFlag::RENDER_TARGET));
-        next->constants=device_->createBuffer(plume::RenderBufferDesc::UploadBuffer(sizeof(Constants),plume::RenderBufferFlag::CONSTANT));
+        next->constants=device_->createBuffer(plume::RenderBufferDesc::UploadBuffer(256,plume::RenderBufferFlag::CONSTANT));
         plume::RenderDescriptorSetBuilder b; Describe(b); next->set=b.create(device_);
         if (!next->output || !next->constants || !next->set) return nullptr;
         const plume::RenderTexture* attachments[]={next->output.get()};
@@ -93,7 +107,7 @@ plume::RenderTexture* DepthRemapper::Record(plume::RenderCommandList* commands,
     if (!mapped) { available_=std::move(next); return nullptr; }
     const Constants constants{mapping.scale,mapping.bias,source.x,source.y};
     std::memcpy(mapped,&constants,sizeof(constants)); next->constants->unmap();
-    next->set->setBuffer(1,next->constants.get(),sizeof(constants));
+    next->set->setBuffer(1,next->constants.get(),256); // D3D12 CBV size must be 256-byte aligned.
     next->set->setTexture(0,source.texture,plume::RenderTextureLayout::SHADER_READ);
     // From here command recording can reference the batch even if it fails.
     active_=std::move(next);
