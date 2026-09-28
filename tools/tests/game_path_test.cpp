@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -188,15 +189,40 @@ int main()
     {
         const bool previousPortable = os::user_paths::g_usePortableLayout;
         os::user_paths::g_usePortableLayout = false;
+        const auto previousEnv = [](const char* name) -> std::optional<std::string> {
+            if (const char* value = std::getenv(name)) return value;
+            return std::nullopt;
+        };
+        const auto savedDataHome = previousEnv("XDG_DATA_HOME");
+        const auto savedConfigHome = previousEnv("XDG_CONFIG_HOME");
         const auto dataHome = fixture.root / "xdg-data";
+        const auto configHome = fixture.root / "xdg-config";
         setenv("XDG_DATA_HOME", dataHome.c_str(), 1);
+        setenv("XDG_CONFIG_HOME", configHome.c_str(), 1);
+        const auto dataGame = dataHome / "lost-odyssey-recomp" / "game";
+        const auto dataDisc = dataGame / "disc1";
+        fixture.Marker(dataDisc);
+        fixture.Marker(adjacentDisc);
+        CheckRoot(Resolve(fixture.exe), dataDisc, Source::DefaultSearch,
+                  "non-portable XDG game did not take priority over adjacent game");
+
+        fs::remove_all(dataGame, error);
+        CheckRoot(Resolve(fixture.exe), adjacentDisc, Source::DefaultSearch,
+                  "non-portable adjacent game fallback was not recognized");
+
+        fs::remove_all(adjacentGame, error);
         const auto nonPortable = Resolve(fixture.exe);
         Check(nonPortable.root == (dataHome / "lost-odyssey-recomp" / "game").lexically_normal(),
               "non-portable fallback did not use the XDG data game directory");
         Check(nonPortable.source == Source::Fallback && !nonPortable.valid,
               "non-portable missing default did not report fallback state");
         os::user_paths::g_usePortableLayout = previousPortable;
-        unsetenv("XDG_DATA_HOME");
+        const auto restoreEnv = [](const char* name, const std::optional<std::string>& value) {
+            if (value) setenv(name, value->c_str(), 1);
+            else unsetenv(name);
+        };
+        restoreEnv("XDG_DATA_HOME", savedDataHome);
+        restoreEnv("XDG_CONFIG_HOME", savedConfigHome);
     }
 #endif
 
