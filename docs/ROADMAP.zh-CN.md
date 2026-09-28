@@ -2,19 +2,20 @@
 
 [English](ROADMAP.md) · [开发状态](STATUS.md) · [更新日志](../CHANGELOG.md) · [维护者 Project](https://github.com/users/freefrank/projects/3)
 
-2026-09-26 根据实时 Issue、Project 字段、已合并提交与发布记录核对。`[x]` 表示所述范围已交付；`[~]` 表示仍有明确余项；`[ ]` 表示规划工作。关闭跟踪项不代表新增游戏或硬件验证。
+2026-09-28 根据实时 Issue、Project 字段、已合并提交与发布记录核对。`[x]` 表示所述范围已交付；`[~]` 表示仍有明确余项；`[ ]` 表示规划工作。关闭跟踪项不代表新增游戏或硬件验证。
 
 ## 当前交付
 
 - [x] **v0.7.0 已发布：**源码 `4142f23`，Release CI [36228746088](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36228746088)。Windows 与 Linux 包见[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.0)。
 - [x] **v0.7.1 已发布：**源码提交 `c585ef820cb72993ad87a90a1a03c1c648fb654c`，打标 `v0.7.1`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1)（2026-09-26T21:51:24Z），Release CI [36274702691](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36274702691)。包含 Gameplay → 导入光盘与 DLC、安全重启至导入器、选择性替换与失败回滚。公开产物已核实 SHA256：Windows 包 `LostOdysseyRecomp-windows-x64-v0.7.1.zip`（243,762,106 字节，SHA256 `e53753a71b06ab39c41a3a5b327a8477523db4b006543c54e70834b183c5291f`），Linux AppImage `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage`（251,038,200 字节，SHA256 `878d04f9a530771fc2ba752842c1c9b5ba1cfc3fea63555a401dd53b46dd6e65`），正式独立 Flatpak `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`（265,618,800 字节，SHA256 `2efe0a4ba556037f9118894b36cba4b7667132b708c9ec3ea325db9c16f71775`，stable 分支），以及 Flathub 输入 runtime `LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz`（SHA256 `661838345ca5e1590dce99e35a9dba2bc1138d073c1c76d947aec34ea4db931f`）。Flatpak 经验证获 psvita 用户验收（严格限制于该验证范围，不推断性能或多场景兼容性）。
 - [x] **v0.7.2 已发布：**merge 源码 `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`，打标 `v0.7.2`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2)（2026-09-27T08:59:13Z），Release CI [36305268629](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36305268629)。新增有界的 Windows D3D12 DLSS/FSR SR、DLAA 尺寸修正，以及原生物体运动不可用时的相机／深度 hybrid motion。10 个资产均与 GitHub SHA-256 和大小记录一致；Windows ZIP、AppImage sidecar 和 Flatpak CI 核验通过。更广场景、画质、性能和其他 GPU 覆盖不在本次发布证据范围内。
+- [x] **v0.7.9 已发布：**打标 `v0.7.9`，tag commit 为 `99fdcfa232e4deff2a80989d217524e7eb4bb365`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9)（2026-09-28T05:03:17Z），Release CI [36378342125](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36378342125)。新增 Windows D3D12 图像页 FG 分区，支持关／DLSS／FSR 和同进程即时生效，并加入 Ubuntu 22.04 AppImage 基线及 AppDir 复用 Flatpak。公开发布仅包含 Windows ZIP、Linux AppImage 和 stable Flatpak；更广游戏、跨 GPU、画质及物理显示验证仍待完成。
 
 ## 已完成功能与已核对跟踪项
 
 - [x] **Flatpak 独立发布：**原计划 v0.8.0，现提前随 v0.7.1 交付。独立包 `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak` 已发布并通过 psvita 用户验收。独立 Flatpak 目标不以 Flathub 上架为前提。Flathub 商店提交流程单独跟踪（未创建 PR）：因 Flathub `requirements#generative-ai-policy` 严格禁止 AI 生成或协助编写 manifest 与 PR，且 PR 模板要求附带应用演示视频（application demonstration video），需由维护者本人人工另制 manifest、提供应用视频并提交 PR。
 
-- [x] **DLSS/DLAA 与 FSR 超分：**v0.7.0 范围已在记录的 Windows／原生 Linux 覆盖内通过用户验收。FSR P1/P2 完成，插帧见下方计划。
+- [x] **DLSS/DLAA、FSR 超分与 D3D12 FG：**v0.7.0 范围已在记录的 Windows／原生 Linux 覆盖内通过用户验收；v0.7.9 新增有界的 Windows D3D12 DLSS／FSR FG 和游戏内同进程切换。更广 FG 硬件、场景、节奏、画质和物理显示覆盖仍待完成。
 - [x] **PlayStation 按键提示：**宿主与游戏内面键、肩键、Start/Back 提示已验收并随 v0.7.0 发布。
 - [x] **Mod API v1 与 Wiki：**`457ba24`／PR #68 已交付清单解析、禁用与回退、重载、LOTEX1/PNG 工具、原生菜单图集与字体替换及 Mod 指南。Windows/Linux Mod API 与 Wiki CI 已通过。任意游戏纹理／模型替换和真实 MO2 验收不属于此已完成范围。
 - [x] **IME、闲置光标与手柄改进：**已随 v0.6.19 发布，旧 IME“未开始”条目已关闭。更广设备组合仍属回归覆盖。
@@ -41,9 +42,9 @@
 1. [~] **P0：**共同时序契约已实现，Gate 1 宿主验证已由维护者于 2026-09-27 接受通过，依据为本地 `fe6f255` 加 Gate 1 宿主修复。原生构建和限定检查通过；FSR+FG 限定运行 exit 0、serial 为 820/820 且清理完整；获授权的 70 秒静音前台运行 exit 0、serial 为 2975/2975，生成区间 1,980 次、actual presents 4,955 次，采样 SDK／feature 创建错误为 0。已知 SDK 相关的 `PRESENT-AFTER-WRITE` 记录保留到 backlog，不再阻塞 Gate 1。`Application`／`ComposedFlip` 分类不足以证明生成帧到达物理显示；native failure injection 和 settings restart 仍属后续工作，native CPU 检查不等于 D3D12 GPU 验收。详见[Gate 1 宿主修复记录](notes/gate1-host-repair-20260927.md)。
 2. [~] **P3：**Streamline 呈现接入、provider-neutral present／输入生命周期跟踪，以及最终合成 backbuffer 的 FG 路径已合入 [`81fe304`](https://github.com/freefrank/LostOdysseyRecomp/commit/81fe3048569f06bdeca4f1bd24c8fdc106428abc)／PR [#72](https://github.com/freefrank/LostOdysseyRecomp/pull/72)。v0.8.0 剩余工作是解决同步问题，并验证 resize、模式切换和退出生命周期。生产级 HUDless／UI 分离属于独立的 v1.0.0 目标，不再是 v0.8.0 完成条件。
 3. [~] **P4：**Windows Vulkan 固定 2× DLSS 插帧已接入。经授权的 70 秒 Uhra 运行记录 48 个 enabled 周期、`actual_presents=2`、2,830 个生成区间和 0 个 SDK error；较早的同步 validation 运行失败，该历史结果仍保留在证据中。维护者之后已接受 Gate 1 通过，已知 SDK 例外转入 backlog。DLSS／DLAA／FSR 组合、生命周期恢复、节奏、画质和外部显示验证仍待完成。
-4. [ ] **独立 FSR 插帧：**独立目标，不预设 API、平台和倍率。
-5. [ ] **D3D12 DLSS 插帧：**D3D12 后端 DLSS 插帧规划目标，独立于 Windows Vulkan P4 里程碑。
-6. [ ] **动态 MFG：**动态多帧生成独立目标，不预设平台与倍率。
+4. [~] **独立 FSR 插帧后续：**独立 D3D12 FSR FG provider 已随 v0.7.9 交付；更广硬件、场景、节奏和画质验证仍待完成。
+5. [~] **D3D12 DLSS 插帧后续：**D3D12 DLSS FG 和图像菜单即时切换已随 v0.7.9 交付；更广验证和 failure injection 覆盖仍待完成。
+6. [~] **动态 MFG 后续：**D3D12 adapter 已包含受能力限制的诊断动态 MFG 路径，游戏内菜单仍只提供固定模式。更广 API、平台、倍率和硬件验证仍待完成。
 7. [ ] **可选原生 120 FPS：**游戏独立帧呈现，不是生成帧；需验证节奏、Ring、音频与过场，默认保留 60 FPS。
 8. [ ] **移除 PM4 转换器：**替代架构可行性提前调查，执行排在插帧与呈现工作之后。
 9. [ ] **Linux AArch64：**平台交付目标，尚不宣称官方包或实机验收。

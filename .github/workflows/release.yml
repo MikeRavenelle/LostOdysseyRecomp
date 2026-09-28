@@ -219,7 +219,7 @@ jobs:
             throw 'FSR license was not staged by the Windows runtime build.'
           }
           if ($env:RELEASE_TAG) {
-            python tools/package_release.py --version $env:RELEASE_TAG --legacy-updater-manifest
+            python tools/package_release.py --version $env:RELEASE_TAG
             if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed.' }
           } else {
             python tools/package_release.py

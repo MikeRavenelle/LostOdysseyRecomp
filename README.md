@@ -19,25 +19,16 @@ Optional diagnostics are off by default and can be disabled in Settings. See [Pr
 > [!IMPORTANT]
 > **This project is still in early testing.** Opening areas and selected scenes have been tested; a complete playthrough has not. Rendering and stability issues remain. You must supply your own supported game files.
 
-### Upscaling (DLSS & FSR)
+## Recent releases
 
-Windows supports experimental DLSS/FSR upscaling on Direct3D 12 and Vulkan; Linux supports the Vulkan path. When object motion is unavailable, camera/depth reconstruction can provide a bounded hybrid motion fallback. When DLSS or DLAA is unavailable or disabled, a saved TAA selection falls back to SMAA while preserving other anti-aliasing choices. Broader scenes, mixed-DPI/fullscreen behavior and player acceptance remain open; see [development status](docs/STATUS.md).
+| Version | Highlights |
+| :--- | :--- |
+| [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 frame generation (Off/DLSS/FSR), applied on Save without restarting; Ubuntu 22.04 AppImage compatibility and updater improvements. |
+| [v0.7.3](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3) | D3D12 binding de-duplication and opt-in rendering diagnostics. |
+| [v0.7.2](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2) | D3D12 DLSS/FSR super-resolution routes and DLAA sizing correction. |
+| [v0.7.1](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1) | Standalone Flatpak and in-game disc/DLC selection and re-import. |
 
-The in-game **Graphics** settings include a **Frame Generation** section for Windows Direct3D 12. Choose `Off`, `DLSS`, or `FSR`; DLSS offers 2×–16× multipliers subject to GPU and driver support, while FSR uses fixed 2× and hides the multiplier row. Save graphics settings to apply FG changes without restarting the game. The status line distinguishes session readiness from unavailable requests; readiness does not guarantee generated frames in every scene. Changing the graphics backend still requires a restart.
-
-### Automatic PlayStation controller prompts
-
-The recomp automatically detects the most recently active gamepad via SDL and updates button prompts:
-- **Controller prompts**: Updates ABXY action buttons, shoulder buttons (LB/RB/LT/RT to L1/R1/L2/R2), and Start/Select (Options/Share and Options/Create) across host menus (settings, installer, debug overlay) and in-game pause menu and cutscenes.
-- **Technical reference**: Texture replacement, atlas hash matching, and GPU upload lifecycle details are documented in the [Issue #40 UI resource map](docs/notes/issue-40-ui-resource-map.md) and [development status](docs/STATUS.md).
-- **Status & acceptance**: Verified in development testing and accepted by the user after pause menu and cutscene review; included in v0.7.0.
-- **Validation limits**: User acceptance is bounded to tested controller hardware and verified scenes, without claiming universal controller hardware compatibility or complete full-game playthrough coverage. Issue #40 mod support was not implemented in this scope.
-
-## Roadmap
-
-The **v0.7.9** release builds on the v0.7.3 graphics and updater work. It adds an in-game Windows Direct3D 12 Frame Generation section with Off/DLSS/FSR choices, live same-process switching and bounded local Uhra validation. The release keeps its documented limits: generated-frame counters are SDK observations, and complete playthrough, broad hardware coverage, image-quality and physical-scanout validation remain open. Planned roadmap targets for **v0.8.0** include dynamic Multi-Frame Generation, native independent 120 FPS candidate evaluation (`LO_EXPERIMENTAL_120=1`), removal of the legacy PM4 packet translation layer, Linux AArch64, macOS AArch64 (Apple Silicon), and experimental Android support. Development sequencing is tracked in the [roadmap](docs/ROADMAP.md).
-
-Past release notes and detailed changes are recorded in the [changelog](CHANGELOG.md).
+See the [roadmap](docs/ROADMAP.md) for current plans and the [changelog](CHANGELOG.md) for detailed release history.
 
 ## Start playing
 

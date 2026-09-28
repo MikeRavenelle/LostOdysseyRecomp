@@ -38,15 +38,14 @@ The existing `LostOdysseyRecomp-linux-x64-<tag>.AppImage` name is intentionally
 retained: already-released updaters match it exactly. AppImageHub's naming
 warning is non-fatal. Published historical assets/tags are not changed.
 
-To verify this change, dispatch Release on the fix branch with **release_tag
-empty**, or build a new version tag pointing at the fix. Supplying an old tag
-checks out its old build scripts and will not apply these changes. Successful
-artifact generation includes the ABI/loader checks; it is not full-game or
-AppImageHub acceptance. Then test the installer on Ubuntu 22.04 and the game on
-Steam Deck / a supported Vulkan GPU before publishing a new version and asking
-AppImageHub to retest. Normal FUSE mounting should also be checked on the target
-machine; the loader-only check does not claim to verify that path.
+The v0.7.9 Release CI run [36378342125](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36378342125)
+completed the Ubuntu 22.04 release build, ABI and loader checks, and Flatpak
+reuse from the same AppDir. The Linux toolchain installed `clang-tools-18`
+18.1.8 for the build. These results establish the package baseline and do not
+constitute AppImageHub re-review, normal FUSE mounting, or actual GPU/game
+execution on Ubuntu 22.04 or Steam Deck; those remain follow-up checks.
 
 Local source-level checks for this patch: Python syntax, workflow YAML, POSIX
 shell syntax, and five focused ABI parsing regressions. The full Linux release
-build and GPU/game execution have not been run in this editing environment.
+build is now covered by the v0.7.9 CI record above; GPU/game execution and
+AppImageHub/FUSE acceptance remain unverified.

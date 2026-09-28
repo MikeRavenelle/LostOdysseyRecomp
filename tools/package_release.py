@@ -1,6 +1,5 @@
 """Build a portable Windows release using an explicit runtime payload allowlist."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -35,11 +34,6 @@ def check_dxc_payload(runtime_directory):
             raise SystemExit(f'Missing or empty built DXC library: {name}')
     if not DXC_LICENSES.is_dir():
         raise SystemExit('Missing DXC licenses')
-
-
-def legacy_updater_file_hash(path):
-    with path.open('rb') as source:
-        return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
 def stage_frame_generation_runtime(runtime_directory, package, licenses, streamline_sdk_root):
@@ -79,8 +73,6 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'out/releases')
     parser.add_argument('--version', default='')
     parser.add_argument('--streamline-sdk-root', type=Path, default=ROOT / 'out/deps/streamline')
-    parser.add_argument('--legacy-updater-manifest', action='store_true',
-                        help='Include the SHA256 file map required by older Windows updaters')
     args = parser.parse_args()
     if args.version:
         try:
@@ -203,9 +195,6 @@ def main():
             'dependencies': dependencies_report,
             'files': file_sizes,
         }
-        if args.legacy_updater_manifest:
-            # Transitional releases must remain readable by the previous updater.
-            manifest['files'] = {name: legacy_updater_file_hash(path) for name, path in payload_files.items()}
         (package / 'manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
         shutil.make_archive(str(package_zip.with_suffix('')), 'zip', work, name)
     print(package_zip)

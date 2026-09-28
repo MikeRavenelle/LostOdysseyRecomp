@@ -19,25 +19,16 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 > [!IMPORTANT]
 > **本项目仍处于早期测试阶段。** 已测试开场区域和部分场景，尚未通关。渲染和稳定性仍有问题。请自行提供受支持版本的游戏文件。
 
-### 超分辨率（DLSS 与 FSR）
+## 近期版本
 
-Windows 在 Direct3D 12 与 Vulkan 上提供实验性的 DLSS/FSR 超分，Linux 使用 Vulkan 路径。对象运动不可用时，可使用相机／深度重建提供有界的 hybrid motion 回退。当 DLSS 或 DLAA 不可用或被禁用时，已保存的 TAA 选择自动回退至 SMAA，其余抗锯齿选择保持不变。更广场景、混合 DPI／全屏行为和玩家验收仍待完成，详见[开发状态](docs/STATUS.md)。
+| 版本 | 主要更新 |
+| :--- | :--- |
+| [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 帧生成（关／DLSS／FSR），保存后无需重启；修复 Ubuntu 22.04 AppImage 兼容性，改进更新器。 |
+| [v0.7.3](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3) | 减少 D3D12 重复绑定，新增可选渲染诊断。 |
+| [v0.7.2](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2) | D3D12 DLSS／FSR 超分路径和 DLAA 尺寸修正。 |
+| [v0.7.1](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1) | 独立 Flatpak，以及游戏内光盘／DLC 选择和重新导入。 |
 
-游戏内“图像”设置包含独立的 **FG 帧生成分区**，供 Windows Direct3D 12 使用。可选择“关”“DLSS”“FSR”；DLSS 提供 2×–16× 倍数，实际支持取决于显卡与驱动，FSR 固定为 2× 并隐藏倍数行。保存图形设置后，FG 变更无需重启游戏即可生效。状态列区分会话就绪与请求不可用；就绪不代表每个场景都会生成帧。变更图形后端仍需重启。
-
-### 自动 PlayStation 手柄按键提示
-
-项目基于 SDL 自动识别最近活动的手柄并动态切换按键提示：
-- **按键提示切换**：覆盖 ABXY 动作键、肩键（LB/RB/LT/RT 对应 L1/R1/L2/R2）及暂停菜单 Start/Select（Options/Share 与 Options/Create），覆盖宿主界面（设置菜单、安装器、调试覆盖层）与客端游戏（暂停菜单及过场动画）。
-- **技术文档**：客端纹理替换、图集内容哈希匹配与 GPU 上传生命周期细节归档于 [Issue #40 界面资源映射](docs/notes/issue-40-ui-resource-map.zh-CN.md)及[开发状态](docs/STATUS.md)。
-- **状态与验收**：功能已通过用户在暂停菜单与过场动画的实机验收，已纳入 v0.7.0 发布版。
-- **边界说明**：用户实机验收覆盖实测手柄与场景，不代表所有手柄硬件或全流程通关覆盖。Issue #40 同时提及的 Mod 支持本次未做，不视为该 Issue 整体完成。
-
-## 路线图
-
-**v0.7.9** 发布版本承接 v0.7.3 的图形与更新器工作，新增 Windows Direct3D 12 游戏内 FG 分区，支持关／DLSS／FSR、同进程即时切换，并完成限定的本机 Uhra 验证。发布边界保持明确：生成帧计数属于 SDK 观测，完整通关、更广硬件覆盖、画质和物理 scanout 验证仍待完成。**v0.8.0** 路线图保留动态多帧生成、原生独立 120 FPS 候选评估（`LO_EXPERIMENTAL_120=1`）、移除既有 PM4 数据包转换层、Linux AArch64、macOS AArch64（Apple Silicon）以及实验性 Android 支持；开发顺序见[路线图](docs/ROADMAP.zh-CN.md)。
-
-历史版本发布说明与详细变更记录见[更新日志](CHANGELOG.md)。
+当前计划见[路线图](docs/ROADMAP.zh-CN.md)，详细版本记录见[更新日志](CHANGELOG.md)。
 
 ## 开始游戏
 

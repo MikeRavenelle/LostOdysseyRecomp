@@ -1,106 +1,79 @@
 # Changelog / 更新日志
 
-One record of completed changes, with unpublished work separated from verified releases. Dates below are UTC release dates. Planned work belongs in the [roadmap](docs/ROADMAP.md), not release entries.
+Brief release highlights, newest first. Dates are UTC. Technical validation is recorded in [development status](docs/STATUS.md); future plans are in the [roadmap](docs/ROADMAP.md).
 
-本文统一记录已完成改动，并区分未发布内容与已确认发布版本；日期采用 UTC 发布日期。后续计划见[路线图](docs/ROADMAP.zh-CN.md)，不作为已发布功能记录。
+按新到旧记录简短更新，日期采用 UTC。技术验证见[开发状态](docs/STATUS.md)，后续计划见[路线图](docs/ROADMAP.zh-CN.md)。
 
-## v0.7.9 — Unreleased / 未发布
+## v0.7.9 — 2026-09-28
 
 ### English
 
-- Added a Frame Generation section inside Graphics settings for Windows Direct3D 12 with Off/DLSS/FSR, DLSS multiplier choices and fixed 2× FSR. Saving applies changes in the running game; the menu and bounded same-process switching checks passed.
-- Added reusable D3D12 DLSS/FSR Frame Generation support and documented its bounded local Uhra validation. Detailed counters, SDK observations and remaining image-quality, hardware and physical-scanout limits are recorded in the [reusable FG integration note](docs/notes/reusable-fg-game-integration.md).
-- Fixed stale renderer image bindings and Vulkan FG swapchain/input qualification. Gate 1 received maintainer acceptance within the recorded scope; the known SDK synchronization warning and remaining coverage are tracked in the [host repair note](docs/notes/gate1-host-repair-20260927.md).
-- AppImage now targets Ubuntu 22.04 / glibc 2.35 and bundles the required C++ runtime libraries, addressing startup failures on older supported distributions. ABI and loader checks run during packaging; full-game compatibility remains outside these checks.
-- Linux packaging now builds once and reuses the AppImage `usr` tree for the stable Flatpak bundle, with the documented package fixtures passing. The release still contains only the Windows ZIP, Linux AppImage and stable Linux Flatpak.
-- The updater transition removes routine SHA-256, repository-wide provenance and package-audit gates from normal update paths while retaining ordinary HTTP/I/O handling, ZIP CRC parsing, path protection and rollback. The v0.7.9 Windows transition package carries the legacy SHA map once so published v0.7.3 updaters can upgrade automatically; the v0.7.9 updater ignores those values. Windows main and `LoUpdaterTest` incremental builds, the default updater fixture and 11 archive fixtures passed within their documented scope. No package gameplay or full-game validation is implied by these checks.
+- Added Windows D3D12 frame generation in Graphics: Off/DLSS/FSR, DLSS multipliers and fixed 2× FSR. Save to apply without restarting.
+- Fixed stale rendering bindings and Vulkan frame-generation input handling.
+- Fixed AppImage compatibility with Ubuntu 22.04 and improved Flatpak packaging.
+- Simplified Windows updates while preserving rollback on failure.
 
 ### 简体中文
 
-- 在图像设置内新增 Windows Direct3D 12 FG 分区，提供关／DLSS／FSR、DLSS 倍数和固定 2× FSR。保存后在当前游戏进程内生效；菜单和限定的同进程切换检查已通过。
-- 新增可复用的 D3D12 DLSS／FSR 帧生成支持，并完成限定的本机 Uhra 验证。详细计数、SDK 观测及画质、硬件和物理 scanout 边界见[可复用 FG 接入记录](docs/notes/reusable-fg-game-integration.md)。
-- 修正 renderer 残留图像绑定及 Vulkan FG 的 swapchain／输入判断。Gate 1 已获维护者限定验收；已知 SDK 同步警告和剩余覆盖见[宿主修复记录](docs/notes/gate1-host-repair-20260927.md)。
-- AppImage 改用 Ubuntu 22.04／glibc 2.35 构建基线，并随包提供所需 C++ 运行库，修复较旧受支持发行版上的启动依赖问题。打包时检查 ABI 和加载路径，这些检查不代表全游戏兼容性。
-- Linux 打包流程只编译一次，并从 AppImage 的 `usr` 树复用生成 stable Flatpak；对应 fixture 已通过。发布包仍只包含 Windows ZIP、Linux AppImage 和 stable Linux Flatpak。
-- 更新器过渡逻辑从普通更新路径中移除 SHA-256、全仓 provenance 和 package audit 门禁，同时保留普通 HTTP／I/O、ZIP CRC、路径保护与回滚。v0.7.9 Windows 过渡包一次性携带旧 SHA map，使已发布的 v0.7.3 更新器能够自动升级；v0.7.9 更新器忽略这些值。Windows main 与 `LoUpdaterTest` 增量构建、默认 updater fixture 和 11 项 archive fixture 已在记录范围内通过；这些检查不代表发布包游戏运行或全游戏验证。
+- 图像设置新增 Windows D3D12 帧生成：关／DLSS／FSR，支持 DLSS 倍数及固定 2× FSR，保存后无需重启即可生效。
+- 修复残留渲染绑定与 Vulkan 帧生成输入处理。
+- 修复 Ubuntu 22.04 AppImage 兼容性，改进 Flatpak 打包。
+- 简化 Windows 更新流程，保留失败回滚。
 
 ## Unreleased / 未发布
 
-This section retains historical development checkpoints and future planning. The
-current v0.7.9 D3D12 FG implementation, menu integration and Linux packaging
-are recorded above; older experimental checkpoints below are not a status
-statement about the current implementation.
-
-本节保留历史开发检查点和后续规划。当前 v0.7.9 的 D3D12 FG 实现、菜单接入和
-Linux 打包已记录在上方；下方较早的实验检查点不代表当前发布路径的状态。
-
-### English
-
-- Planning targets for v0.8.0:
-  - Added D3D12 DLSS Frame Generation and dynamic Multi-Frame Generation (dynamic MFG; target APIs, platforms, or generation multipliers not predetermined) to the v0.8.0 roadmap, alongside existing fixed 2× DLSS FG on Windows Vulkan and independent FSR Frame Generation. Added Linux AArch64, macOS AArch64 (Apple Silicon), experimental Android support, and removal of the legacy PM4 packet translation layer as future roadmap targets for v0.8.0 (Flatpak packaging was delivered early in v0.7.1). All newly incorporated items represent uncompleted roadmap planning rather than current implementation, test verification, user acceptance, or release delivery, nor does targeting Apple Silicon preclude other macOS architectures or promise complete Android support.
-- Frame-generation presentation foundation: PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) was merged into `main` at `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`; the earlier `6cbfea1` revision passed all five checks in CI. The local P3 follow-up adds per-call opaque shared-lease descriptor/framebuffer ownership, an explicit caller requirement to retain textures and Presentation through GPU completion, and lazy optional UI pipeline initialization. The earlier `--separated-ui-only` D3D12/Vulkan `LoPresentationTest` runs passed with exact alpha 0/128/255 pixels and no logged Vulkan validation messages. A new opt-in diagnostic snapshot copies five GPU textures after successful SR scene recording and retains them through the producer fence; `LO_FG_SNAPSHOT_FRAME=N` captures one requested frame and is disabled by default, and the packet reports `UI=Unavailable` without provider or final-resolve association. Clang-cl focused builds and `ctest -R frame_generation_snapshot_(gpu|renderer)` passed 2/2 on RTX 5080 Vulkan with requested synchronization validation and no validation messages logged. A foreground P0 probe produced 33 FG-on intervals across 48 frames but exited 1 with SDK validation errors and a failed aggregate cleanup check; no external-display evidence exists. This remains bounded evidence and does not establish production producer ownership, final-present/UI handoff, provider or full-game FG acceptance; Gate 1 remains unpassed.
-- Historical Windows Vulkan game FG checkpoint (before the current v0.7.9 D3D12 release path): added the build-gated Streamline runtime/dispatch, DLSS FG input constants and finite-projection depth conversion, renderer composite handoff, post-present fence checks, and window handshake behind `LO_ENABLE_STREAMLINE_FG=ON` with runtime opt-in `LO_DLSS_FG=1`. The default remained off and final backbuffer/UI separation was not accepted. These bounded results do not establish physical 120 FPS, complete image-quality coverage, provider readiness, UI separation, or user acceptance. See [the historical v0.8.0 game FG integration note](docs/notes/v0.8.0-fg-game-integration-20260927.md).
-
-### 简体中文
-
-- v0.8.0 规划目标更新：
-  - 将 D3D12 DLSS 插帧（D3D12 DLSS FG）与动态多帧生成（动态 MFG，目标 API、平台或生成倍率不作预先设定）纳入本期 v0.8.0 路线图规划，并保留现有 Windows Vulkan 下固定 2× DLSS FG 与独立 FSR 插帧规划目标；新增 Linux AArch64、macOS AArch64（Apple Silicon）、实验性 Android 支持以及移除既有 PM4 数据包转换层作为未来规划目标（Flatpak 打包已提前于 v0.7.1 交付）。所有新纳入项目均为未完成规划，不宣称已有实现、测试验证、用户验收或发布交付，明确 Apple Silicon 目标亦不排除后续支持其他 macOS 架构的可能性，且不对 Android 承诺完整支持。
-- 插帧呈现底座：PR [#69](https://github.com/freefrank/LostOdysseyRecomp/pull/69) 已合并至 `main`，merge commit 为 `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`；早期版本 `6cbfea1` 的 5 个 CI 检查均已通过。P3 增加每次 UI 合成的独立资源租约和可选 UI pipeline 延迟初始化，要求资源保留到 GPU 完成。此前 RTX 5080 D3D12／Vulkan 的 `--separated-ui-only` 测试通过，alpha 0/128/255 像素精确，Vulkan 未记录验证错误。新增默认关闭的诊断快照：`LO_FG_SNAPSHOT_FRAME=N` 在指定真实帧的 SR 场景记录成功后复制五类 GPU 纹理，并保留到 producer fence 完成；状态为 `UI=Unavailable`，尚未关联最终呈现帧或 provider。Clang-cl 定向构建和两项快照 GPU／renderer 测试通过；RTX 5080 Vulkan 请求同步验证后未记录验证错误。P0 前台探针在 48 帧中产生 33 个 FG-on 区间，但因 SDK 验证错误及清理汇总失败退出 1，尚无外部显示证据。最终帧关联、真实 UI 分离及 provider 接线仍待完成，Gate 1 仍未通过。
-- 历史 Windows Vulkan 游戏插帧检查点（早于当前 v0.7.9 D3D12 发布路径）：曾在 `LO_ENABLE_STREAMLINE_FG=ON` 与 `LO_DLSS_FG=1` opt-in 下接入 Streamline。该历史结果不代表 physical 120 FPS、完整画质覆盖、provider readiness、UI 分离或用户验收。详见[历史 v0.8.0 游戏 FG 接入记录](docs/notes/v0.8.0-fg-game-integration-20260927.md)。
+- Removed the one-time legacy updater manifest option after the v0.7.9 transition release.
+- v0.7.9 过渡版本发布后，移除一次性的旧更新器清单打包选项。
 
 ## v0.7.3 — 2026-09-27
 
 ### English
 
-- Issue #70 DX12/Vulkan groundwork adds DX12 graphics/compute native root signature and root descriptor table de-duplication with lifecycle invalidation, plus opt-in `LO_RENDER_TIMING` counters and `Diagnostic`/`Lightweight` capture modes. Runtime, NGX/FSR, AF, root-binding, local DX12/Vulkan substitute-scene, and patch-application checks passed within their documented bounds; no optimization A/B, stable 60 FPS, player acceptance, or Issue #70 resolution is claimed. See the [Issue #70 note](docs/notes/issue-70-dx12-vulkan-optimization.md).
-- Delivery automation: Release packaging workflow permits uploading missing assets to existing public releases without clobbering existing files, with PowerShell failure checking (commit `0d92b2b` on `main`). GitHub Release v0.7.3 was published at 2026-09-27T18:01:05Z from tag commit `fd139e3c0407309de0cd3d4e5724c59d4363e4ab`; its three public assets are the Windows ZIP, Linux AppImage, and stable Linux Flatpak, each returning HTTP 200. Release CI [36335854660](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36335854660) passed; checksum/source records remain internal CI or local evidence, with no runtime archive or standalone checksum/source attachment.
+- Reduced redundant D3D12 graphics and compute bindings.
+- Added optional rendering diagnostics and improved release uploads.
 
 ### 简体中文
 
-- Issue #70 DX12/Vulkan 优化基础：新增 DX12 graphics/compute 原生 root signature 与 root descriptor table 去重及生命周期失效，并提供可选的 `LO_RENDER_TIMING` 计数与 `Diagnostic`/`Lightweight` 采集模式。runtime、NGX/FSR、AF、root binding、本机 DX12/Vulkan 替代场景及补丁应用检查已在记录范围内通过；不宣称优化前后 A/B、稳定 60 FPS、玩家验收或 Issue #70 已解决。详见[Issue #70 记录](docs/notes/issue-70-dx12-vulkan-optimization.md)。
-- 交付流程自动化：发布工作流支持在不覆盖已有文件的前提下向现有公开 Release 补充缺失资产，并增加 PowerShell 失败检查（`main` 分支提交 `0d92b2b`）。GitHub Release v0.7.3 已于 2026-09-27T18:01:05Z 从 tag commit `fd139e3c0407309de0cd3d4e5724c59d4363e4ab` 发布；公开资产仅为 Windows ZIP、Linux AppImage 和 stable Linux Flatpak，三者均返回 HTTP 200。Release CI [36335854660](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36335854660) 已通过；checksum／来源记录保留为 CI 或本地内部证据，不包含 runtime archive 或独立 checksum/source 附件。
+- 减少 D3D12 图形与计算中的重复绑定。
+- 新增可选渲染诊断，改进发布上传流程。
 
 ## v0.7.2 — 2026-09-27
 
 ### English
 
-- DLAA sizing correction: successful NGX sizing validates nonzero ordered `min / optimal / max` extents and uses the output extent when it is within range, avoiding false `SizingError` results. `LoNativeDlaaTest` passed 1,380 CPU contract checks across the logged resolutions, fallback recovery, range rejection and ordinary SR extent preservation; standalone SDK 310.9.1 clang-cl compilation also passed.
-- Windows D3D12 SR: added local DLSS SR/DLAA NGX and FSR backend routes using offline DXIL inputs. Fixture readback, hybrid motion checks and corrected motion shader coverage passed. Bounded RTX 5080 Uhra camera-only runs with object motion disabled passed for DLSS Quality, FSR Quality, DLAA and FSR Native AA; camera/depth reconstruction supplies the limited motion fallback when native object motion is unavailable. Broader scenes, image quality and player acceptance remain open.
-- Published at [GitHub Release v0.7.2](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2) on 2026-09-27T08:59:13Z from merge commit `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`. Release CI [36305268629](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36305268629) passed; all ten assets were uploaded with matching GitHub SHA-256 and size records. Windows ZIP/source and manifest checks, AppImage sidecar checks, and Flatpak CI passed. Experimental Frame Generation remains build-gated/default-off and belongs to the v0.8.0 development plan; it is not an enabled v0.7.2 release feature.
+- Added experimental DLSS/DLAA and FSR upscaling on Windows D3D12.
+- Fixed incorrect DLAA resolution errors.
 
 ### 简体中文
 
-- DLAA 尺寸修正：成功的 NGX 尺寸查询检查 `min / optimal / max` 均为非零且顺序有效，并在输出尺寸落在范围内时使用输出尺寸，避免错误的 `SizingError`。`LoNativeDlaaTest` 已通过 1,380 项 CPU contract checks，覆盖记录的分辨率、fallback 恢复、范围拒绝和普通 SR 尺寸保持；SDK 310.9.1 的 clang-cl 单独编译也已通过。
-- Windows D3D12 超分：新增使用离线 DXIL 输入的本地 DLSS SR/DLAA NGX 与 FSR backend。GPU fixture 读回、hybrid motion 检查和修正后的 motion shader 覆盖均已通过。RTX 5080 Uhra 相机专用运行在关闭物体运动时通过 DLSS Quality、FSR Quality、DLAA 与 FSR Native AA；原生物体运动不可用时可使用有限的相机／深度重建。更广场景、画质和玩家验收仍待完成。
-- v0.7.2 已于 2026-09-27T08:59:13Z 发布到 [GitHub Release](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2)，来源为 merge commit `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`。Release CI [36305268629](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36305268629) 已通过；10 个资产均已上传，GitHub SHA-256 与大小记录一致。Windows ZIP／来源和清单核验、AppImage sidecar 核验及 Flatpak CI 均已通过。实验性插帧仍受构建开关控制且默认关闭，属于 v0.8.0 开发规划，不是 v0.7.2 已启用的发布功能。
+- Windows D3D12 新增实验性 DLSS／DLAA 与 FSR 超分支持。
+- 修复 DLAA 错误报告分辨率异常的问题。
 
 ## v0.7.1 — 2026-09-26
 
 ### English
 
-- In-game disc and DLC re-import: Gameplay settings adds "Import discs & DLC", confirming a restart with `--install` after waiting for the existing guest process to exit (Windows and Linux). The installer review allows selecting specific discs or DLCs to re-import, replacing only selected items while preserving unselected content, staging all files before final publish, and rolling back on failure or cancellation. Game paths update on commit callback without changing defaults on DLC-only imports or missing Disc 1; protects source media, saves, profiles, and cache.
-- Flatpak packaging and runtime support: Added official Linux Flatpak bundle generation (`LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`) and runtime archive (`LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz`), targeting the `org.freedesktop.Platform 26.08` runtime and SDK with Clang/LLVM 22. Incorporates an upstream SDL 2.30.12 PipeWire audio compatibility patch (`6be87ceb33a9aad3bf5204bb13b3a5e8b498fd26`) with PipeWire enabled, bundles DLSS and FSR runtime assets and licenses, and strictly excludes private disc assets and source code from the exported package. Real-device installation and launch verified on target hardware with user acceptance ("验证通过").
+- Added official standalone Linux Flatpak packages and improved PipeWire audio compatibility.
+- Added in-game disc/DLC re-import with item selection and failure rollback.
 
 ### 简体中文
 
-- 游戏内光盘与 DLC 重新导入：游戏玩法（Gameplay）设置新增“导入光盘与 DLC”（Import discs & DLC），确认后等待旧游戏进程退出并带 `--install` 重启（支持 Windows 与 Linux）。安装器 Review 界面支持选择特定光盘或 DLC 进行增量重导，仅替换所选项并保留未选内容，全量暂存完毕后统一发布，失败或取消时自动回退。提交回调中更新游戏路径，仅导 DLC 或缺少 Disc 1 时不修改默认启动路径；保护源介质、存档、配置文件与缓存。
-- Flatpak 打包与运行支持：新增官方 Linux Flatpak 独立 bundle（`LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`）与运行环境归档（`LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz`），基于 Freedesktop SDK/Platform 26.08 与 Clang/LLVM 22。整合 SDL 2.30.12 上游 PipeWire 兼容补丁（`6be87ceb33a9aad3bf5204bb13b3a5e8b498fd26`）并启用 PipeWire，打包 DLSS 与 FSR 独立运行依赖及许可，严格排除私有光盘数据与源代码。实机安装与启动已获用户验收（“验证通过”）。
+- 新增官方 Linux Flatpak 独立安装包，改善 PipeWire 音频兼容性。
+- 支持从游戏内重新导入指定光盘／DLC，并在失败时回滚。
 
 ## v0.7.0 — 2026-09-26
 
 ### English
 
-- PlayStation controller prompts: SDL tracks the most recently active controller and switches Xbox/PlayStation glyphs in the host UI and supported guest menu textures. The bounded controller and scene review was accepted by the user; this does not claim universal hardware or full-game coverage.
-- DLSS/DLAA fallback: unavailable or failure-disabled frame plans substitute SMAA for saved TAA while preserving Off/FXAA/SMAA settings. Focused CPU recovery and routing checks passed.
-- Upscaling acceptance: Native Vulkan DLSS Super Resolution / DLAA and FSR 3.1.4 P2 multi-platform visual and runtime validation for the v0.7.0 scope passed user acceptance within the documented test coverage. Frame Generation and macOS remain planned for v0.8.0.
-- Mod API: merged PR #68 adds the v1 image mod ZIP/`LOTEX1` packer, native menu atlas/font page replacement, the C++ Mod API, and Python/CI coverage. General guest texture, TTF, model, and movie replacement are not included; native visual and Mod Organizer 2/USVFS acceptance remains pending.
+- Added automatic PlayStation controller prompts in supported menus.
+- Improved Vulkan DLSS/DLAA and FSR upscaling, with SMAA fallback when DLSS/DLAA is unavailable.
+- Added the C++ Mod API and native menu image/font-page replacement tools.
 
 ### 简体中文
 
-- PlayStation 手柄按键提示：SDL 跟踪最近活动的控制器，在宿主界面和已支持的客端菜单纹理中切换 Xbox／PlayStation 提示。限定范围的手柄与场景复核已获用户验收，不外推至所有硬件或全游戏。
-- DLSS/DLAA 回退：不可用或因失败被禁用的帧计划使用 SMAA 替代已保存的 TAA，同时保留 Off/FXAA/SMAA 设置。定向 CPU 恢复与路由检查已通过。
-- 超分验收：v0.7.0 范围内的原生 Vulkan DLSS 超分辨率／DLAA 与 FSR 3.1.4 P2 多平台画质及运行验证已在既有测试覆盖内通过用户验收。插帧和 macOS 仍规划在 v0.8.0。
-- Mod API：PR #68 新增 v1 图像 Mod ZIP／`LOTEX1` 打包器、原生菜单图集与字体页面替换、C++ Mod API 以及 Python／CI 覆盖。客端通用纹理、TTF、模型和影片替换不在本版本范围内；原生画面与 Mod Organizer 2／USVFS 验收仍待完成。
+- 支持在适用菜单中自动切换 PlayStation 手柄提示。
+- 改进 Vulkan DLSS／DLAA 与 FSR 超分，DLSS／DLAA 不可用时回退至 SMAA。
+- 新增 C++ Mod API，以及原生菜单图像／字体页面替换工具。
 
 ## v0.6.20 — 2026-09-25
 
