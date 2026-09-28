@@ -1,28 +1,42 @@
-name: Native FPS development checkpoint
+name: Apply native high-refresh game support
 on:
   push:
     branches: [feature/native-90-120fps]
-    paths: [.github/workflows/native-fps-dev.yml]
+    paths:
+      - .github/workflows/native-fps-dev.yml
+      - tools/patches/native-fps-development.patch.gz
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: native-fps-development
+  cancel-in-progress: false
 jobs:
-  source:
-    if: github.repository == 'freefrank/LostOdysseyRecomp'
+  apply:
+    if: github.repository == 'freefrank/LostOdysseyRecomp' && github.ref == 'refs/heads/feature/native-90-120fps'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Export tracked source only
+      - name: Apply reviewed source patch and run focused CPU checks
+        shell: bash
         run: |
-          git archive --format=tar.gz HEAD -o native-fps-source.tar.gz
-          git rev-parse HEAD > SOURCE_REF.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-fps-source
-          path: |
-            native-fps-source.tar.gz
-            SOURCE_REF.txt
-          retention-days: 1
-          compression-level: 0
+          set -euo pipefail
+          patch="$RUNNER_TEMP/native-fps.patch"
+          gzip -dc tools/patches/native-fps-development.patch.gz > "$patch"
+          echo "b10db73bf65e6a7acec96d9a420e189b94bc13def234e18bc075a724b3c1f517  $patch" | sha256sum -c -
+          git apply --index --check "$patch"
+          git apply --index "$patch"
+          git diff --cached --check
+          g++ -std=c++20 -Wall -Wextra -Werror -ILostOdysseyRecomp tools/tests/frame_pacer_test.cpp -o "$RUNNER_TEMP/lo-frame-pacer-test"
+          "$RUNNER_TEMP/lo-frame-pacer-test"
+          git diff --cached --stat
+          echo 'CPU_CONTRACT_ONLY: no full game build, GPU run, gameplay speed or native FPS acceptance.'
+      - name: Commit source to the isolated feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(fps): extend native game-frame path to 90 and 120 FPS'
+          git push origin HEAD:refs/heads/feature/native-90-120fps
+          git rev-parse HEAD
