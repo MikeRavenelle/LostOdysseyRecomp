@@ -8,40 +8,22 @@ permissions:
 jobs:
   source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Collect public source for isolated development
+      - name: Export tracked public source only
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p staging/repo staging/deps
-          git archive HEAD | tar -x -C staging/repo
-          git submodule update --init --depth 1 thirdparty/plume tools/XenosRecomp tools/XenonRecomp thirdparty/unordered_dense thirdparty/SDL
-          for dir in thirdparty/plume tools/XenosRecomp tools/XenonRecomp; do
-            git -C "$dir" submodule update --init --recursive --depth 1
-          done
-          for dir in thirdparty/plume tools/XenosRecomp tools/XenonRecomp thirdparty/unordered_dense thirdparty/SDL; do
-            tar --exclude='.git' -cf - "$dir" | tar -xf - -C staging/repo
-          done
-          git clone --depth 1 --branch v2.14.1 --filter=blob:none --sparse https://github.com/NVIDIA-RTX/Streamline.git /tmp/fg-streamline
-          git -C /tmp/fg-streamline sparse-checkout set include docs
-          mkdir -p staging/deps/streamline
-          cp -r /tmp/fg-streamline/include /tmp/fg-streamline/docs staging/deps/streamline/
-          git clone --depth 1 --branch v1.1.4 --filter=blob:none --sparse https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git /tmp/fg-fidelityfx
-          git -C /tmp/fg-fidelityfx sparse-checkout set ffx-api/include
-          mkdir -p staging/deps/fidelityfx
-          cp -r /tmp/fg-fidelityfx/ffx-api staging/deps/fidelityfx/
-          printf 'repo=%s\nstreamline=%s\nfidelityfx=%s\n' "$(git rev-parse HEAD)" "$(git -C /tmp/fg-streamline rev-parse HEAD)" "$(git -C /tmp/fg-fidelityfx rev-parse HEAD)" > staging/SOURCE_REFS.txt
-          # Tracked public source and public dependency files only. No .git,
-          # credentials, game assets, saves, user settings, or runtime caches.
-          test -z "$(find staging -name .git -print -quit)"
-          tar -czf fg-source.tar.gz -C staging .
+          git archive --format=tar.gz HEAD -o fg-source-current.tar.gz
+          git rev-parse HEAD > SOURCE_REF.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: fg-reusable-public-source
-          path: fg-source.tar.gz
+          name: fg-current-public-source
+          path: |
+            fg-source-current.tar.gz
+            SOURCE_REF.txt
           retention-days: 1
           compression-level: 0
