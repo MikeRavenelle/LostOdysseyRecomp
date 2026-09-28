@@ -1355,8 +1355,6 @@ PPC_FUNC(sub_822F19B0)
         graphics.uiLanguage = previousDisplay.uiLanguage;
         graphics.gameLanguage = previousDisplay.gameLanguage;
         graphics.automaticUpdates = previousDisplay.automaticUpdates;
-        graphics.frameGenerationMode = framegen::Mode::Fixed;
-        graphics.frameGenerationTargetFps = 0;
         if (graphics.frameGenerationProvider == framegen::Provider::Fsr)
             graphics.frameGenerationMultiplier = 2;
         if (!SaveConfig(graphics))

@@ -151,18 +151,32 @@ int main(int argc, char** argv) {
     settings::edit.upscaler=Upscaler::Off;settings::row=int(GraphicsRow::AntiAliasing);tick(2);
     Check(settings::row==int(GraphicsRow::AnisotropicFiltering),"navigation skips hidden provider rows to AF");
     tick(1);Check(settings::row==int(GraphicsRow::AntiAliasing),"reverse navigation skips hidden rows");
+    // A VRR-only save must keep a Dynamic MFG preference read from settings.ini.
+    settings::savedConfig=settings::edit;
+    settings::savedConfig.frameGenerationProvider=framegen::Provider::Dlss;
+    settings::savedConfig.frameGenerationMode=framegen::Mode::Dynamic;
+    settings::savedConfig.frameGenerationMultiplier=4;
+    settings::savedConfig.frameGenerationTargetFps=144;
+    settings::edit=settings::savedConfig;
     settings::row=int(GraphicsRow::VariableRefreshRate);settings::edit.variableRefreshRate=false;
     const auto beforeVrr=settings::GetConfig();
+    auto fgPreferenceRetained=[&]{const auto saved=settings::GetConfig();return
+        saved.frameGenerationProvider==beforeVrr.frameGenerationProvider &&
+        saved.frameGenerationMode==beforeVrr.frameGenerationMode &&
+        saved.frameGenerationMultiplier==beforeVrr.frameGenerationMultiplier &&
+        saved.frameGenerationTargetFps==beforeVrr.frameGenerationTargetFps;};
     tick(8);Check(settings::edit.variableRefreshRate,"VRR toggles on");
     Check(settings::GetConfig()==beforeVrr,"unsaved VRR does not change runtime settings");
     Check(settings::snapshot.rows[int(GraphicsRow::VariableRefreshRate)].value==L"On","VRR preference published");
     Check(!settings::restart::Required(beforeVrr,settings::edit),"VRR does not require restart");
     settings::row=int(GraphicsRow::Save);tick(0x1000);
     Check(settings::GetConfig().variableRefreshRate,"Save applies VRR preference");
+    Check(fgPreferenceRetained(),"VRR-on Save preserves Dynamic MFG preference");
     settings::row=int(GraphicsRow::VariableRefreshRate);tick(4);
     Check(!settings::edit.variableRefreshRate,"VRR toggles off");
     settings::row=int(GraphicsRow::Save);tick(0x1000);
     Check(!settings::GetConfig().variableRefreshRate,"Save restores ordinary pacing");
+    Check(fgPreferenceRetained(),"VRR-off Save preserves Dynamic MFG preference");
     // AF changes only after Save, does not require a restart, and survives all levels.
     settings::row=int(GraphicsRow::AnisotropicFiltering);settings::edit.anisotropicFiltering=0;
     const auto afSaved=settings::GetConfig();
