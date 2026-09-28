@@ -59,10 +59,13 @@ The embedded installer UI font is a packed Unifont subset from the pinned SDL so
 original Lost Odyssey font and does not claim full Unicode coverage or game-style visual fidelity.
 
 Discs are copied to `game/disc1` through `game/disc4` by default. You can select an external
-game destination; the executable reads `game-path.txt` beside the executable. For direct startup,
-an explicit `--game` directory has priority. Otherwise a valid non-empty `game-path.txt` locates
-the configured game; an empty or missing file defaults to `game` relative to the executable and
-can discover adjacent or parent `game` resources. An invalid non-empty configuration or explicit path is
+game destination. In portable mode, the executable reads `game-path.txt` beside itself; an empty
+or missing file prefers `game` beside the executable and retains a parent `../game` location as a
+compatibility fallback. In non-portable Linux mode, the path file is under
+`XDG_CONFIG_HOME/lost-odyssey-recomp` (normally `~/.config/lost-odyssey-recomp`), and the default
+game data is under `XDG_DATA_HOME/lost-odyssey-recomp/game` (normally
+`~/.local/share/lost-odyssey-recomp/game`). Flatpak defaults to `/var/data/game`. For direct startup, an
+explicit `--game` directory has priority. An invalid non-empty configuration or explicit path is
 reported and does not silently select an older installation.
 The original game's disc request automatically selects the
 corresponding imported `discN` directory. No manual disc-selection button is required. Keep all
@@ -136,7 +139,7 @@ Linux runs through Vulkan only. Direct3D 12 is Windows-only and is unavailable o
 
 ### First-run configuration
 
-The embedded Files/Folder importer has native source handling and cross-platform POSIX lock compatibility, but the interactive graphical window remains Windows-only in current builds. On Linux, tell the game where your files are located using the `--game` command-line argument, or by creating a `game-path.txt` file containing the folder path right beside the executable.
+The embedded Files/Folder importer has native source handling and cross-platform POSIX lock compatibility, but the interactive graphical window remains Windows-only in current builds. On Linux, tell the game where your files are located using the `--game` command-line argument. For a portable ELF, you can instead create `game-path.txt` beside the executable; non-portable mode reads its path file from `XDG_CONFIG_HOME/lost-odyssey-recomp` and defaults to `XDG_DATA_HOME/lost-odyssey-recomp/game`.
 
 ### Launching the game
 
@@ -156,7 +159,7 @@ If you are running in WSL and accessing your existing Windows game dump:
 ./LostOdysseyRecomp --game /mnt/d/Mihoyo/LostOdysseyRecomp-windows-x64/game
 ```
 
-You can also place a `game-path.txt` file next to the binary with your game path, or place an extracted disc folder at `game` adjacent to the executable, then launch:
+In portable mode, you can also place a `game-path.txt` file next to the binary with your game path, or place an extracted disc folder at `game` adjacent to the executable, then launch:
 
 ```bash
 ./LostOdysseyRecomp
