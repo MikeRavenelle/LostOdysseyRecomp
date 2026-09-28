@@ -152,8 +152,9 @@ private:
         std::copy(f.camera.up.begin(),f.camera.up.end(),camera.cameraUp);
         std::copy(f.camera.forward.begin(),f.camera.forward.end(),camera.cameraForward);
         p.header.pNext=&camera.header;
-        if (!Check(dispatch_(&fgContext_,&p.header),"FSR FG prepare",reason)) return false;
-        return Configure(true,reason);
+        // FidelityFX 1.1.4 configures this frame's ID before preparing its inputs.
+        if (!Configure(true,reason)) return false;
+        return Check(dispatch_(&fgContext_,&p.header),"FSR FG prepare",reason);
     }
     bool DisableNative(std::string& reason) override { return Configure(false,reason); }
     bool WaitNative(std::string& reason) override {

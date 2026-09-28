@@ -2,7 +2,13 @@
 
 #include "streamline_runtime.h"
 #include "dlss_fg_runtime_policy.h"
+#if defined(FRAMEGEN_WITH_DLSS)
+// The pinned SDK header defines externally linked functions and globals.
+// The linked D3D12 adapter supplies that implementation when both paths exist.
+namespace sl::security { bool verifyEmbeddedSignature(const wchar_t* path); }
+#else
 #include <sl_security.h>
+#endif
 #include <atomic>
 #include <cstdio>
 #include <type_traits>

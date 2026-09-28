@@ -3674,7 +3674,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     return false;
                 }
 #if defined(LO_GPU_PLUME)
-                const bool orderedPresentQueue = vulkan && queue && queue == video::GetQueue() &&
+                const bool orderedPresentQueue = queue && queue == video::GetQueue() &&
                     device == video::GetDevice();
                 if (Gpu().fgInputSnapshot) {
                     Gpu().fgInputSnapshot->producerSerial = submissionSerial;

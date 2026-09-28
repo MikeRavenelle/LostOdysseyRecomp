@@ -84,7 +84,7 @@ void D3D12Bridge::PrepareAfterHostDrain(const CompositeHandoff& handoff,
     recording_ = &commands; attempted_ = false;
     auto* converted = depth_->Record(&commands, in.depth, mapping);
     if (!converted) { reason = "depth conversion unavailable"; reject(); return; }
-    commands.barriers(plume::RenderBarrierStage::ALL,
+    static_cast<plume::RenderCommandList&>(commands).barriers(plume::RenderBarrierStage::ALL,
         plume::RenderTextureBarrier(in.motion.texture, plume::RenderTextureLayout::SHADER_READ));
     auto* depth = static_cast<plume::D3D12Texture*>(converted);
     auto* motion = static_cast<plume::D3D12Texture*>(in.motion.texture);
@@ -129,8 +129,8 @@ void D3D12Bridge::Presented(bool accepted) {
     std::string reason; const bool ok = session_->Presented(accepted, reason); Require(ok, reason);
     const auto& s = session_->Statistics();
     if (previousFrame_ && previousFrame_ % 120 == 0)
-        LOG_INFO("D3D12 FG: source_frame={} active={} accepted={} scope=sdk_not_physical_display", previousFrame_, session_->Active(), accepted);
-    (void)s;
+        LOG_INFO("D3D12 FG: source_frame={} active={} accepted={} generated_intervals={} actual_presents={} scope=sdk_not_physical_display",
+            previousFrame_, session_->Active(), accepted, s.generatedIntervals, s.actualPresents);
 }
 void D3D12Bridge::CancelUnsubmitted(plume::RenderCommandList* list) {
     if (!session_ || !recording_ || recording_ != list) return;
