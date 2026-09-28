@@ -16,6 +16,10 @@ static inline const wchar_t *Translate(uint32_t language, const wchar_t *en, con
         const wchar_t *key, *japanese, *korean, *simplified;
     };
     static constexpr Entry entries[] = {
+        {L"VRR-friendly pacing. Enable adaptive sync in your display/driver. Actual VRR is not detected.",
+         L"VRR向けフレーム制御。モニターとドライバーで可変リフレッシュを有効にしてください。動作状態は検出できません。",
+         L"VRR용 프레임 제어. 모니터와 드라이버에서 가변 주사율을 켜세요. 실제 VRR 작동 여부는 감지하지 않습니다.",
+         L"VRR友好限帧；请在显示器和驱动中启用自适应同步。无法检测实际VRR状态。"},
         {L"Frame generation", L"フレーム生成", L"프레임 생성", L"帧生成"},
         {L"Applying FG settings…", L"フレーム生成設定を適用中…", L"프레임 생성 설정 적용 중…", L"正在应用帧生成设置……"},
         {L" FG ready. Generation depends on the current scene.",

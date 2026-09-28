@@ -36,10 +36,13 @@ private:
 // frame deadline instead of an integer number of guest vblanks (90 cannot be
 // represented that way). Zero is the existing LO_FPS uncapped diagnostic.
 // Do not scale the PPC timebase, engine delta, audio or virtual vblank clocks.
-constexpr uint32_t MapPresentInterval(uint32_t value, uint32_t caller, uint32_t fps)
+constexpr uint32_t MapPresentInterval(uint32_t value, uint32_t caller, uint32_t fps, bool vrrRequested = false)
 {
     if (caller != 0x827B4A4C || (value & 0xFF00u) != 0x200u)
         return value;
+    // VRR owns its deadline even below 60; integer guest vblanks would quantize
+    // a 57 FPS ceiling. Other callers/intervals and every clock are unchanged.
+    if (vrrRequested) return value & ~0xFF00u;
     if (fps == frame_rate::kGuestRefreshHz)
         return (value & ~0xFF00u) | 0x100u;
     if (frame_rate::NeedsImmediate(fps))

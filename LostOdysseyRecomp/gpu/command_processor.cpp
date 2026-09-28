@@ -790,7 +790,7 @@ namespace gpu
             renderer::PreparePresent(frontbuffer);
             renderer::Flush();
             const auto timingPace = std::chrono::steady_clock::now();
-            const auto fpsCap = GetFrameRateTarget();
+            const auto fpsCap = video::GetFramePacingTarget(GetFrameRateTarget());
             const bool timingEnabled = frame_timing::Enabled();
             frame_timing::PacingSample pacing;
             {

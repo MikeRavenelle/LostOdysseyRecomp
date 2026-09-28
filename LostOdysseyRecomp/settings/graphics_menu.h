@@ -38,5 +38,6 @@ static_assert(int(GraphicsRow::DlssQuality) + 1 == int(GraphicsRow::FsrSharpness
 static_assert(int(GraphicsRow::FsrSharpness) + 1 == int(GraphicsRow::AnisotropicFiltering));
 static_assert(int(GraphicsRow::FrameRate) + 1 == int(GraphicsRow::FrameGeneration));
 static_assert(int(GraphicsRow::FrameGeneration) + 1 == int(GraphicsRow::FrameGenerationMultiplier));
+static_assert(int(GraphicsRow::FrameGenerationMultiplier) + 1 == int(GraphicsRow::VariableRefreshRate));
 static_assert(int(GraphicsRow::Save) + 1 == int(GraphicsRow::Count));
 }

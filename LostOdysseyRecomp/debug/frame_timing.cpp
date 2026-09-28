@@ -2,6 +2,7 @@
 #include "frame_timing.h"
 #include <gpu/command_processor.h>
 #include <gpu/frame_pacer.h>
+#include <settings/config.h>
 #include <gpu/render_timing.h>
 #include <os/logger.h>
 #include <chrono>
@@ -133,7 +134,7 @@ PPC_FUNC(sub_827B6AD8)
     }();
     // Native 90/120 use the same real-time engine path as 30/60. Only the
     // identified game's present interval changes; no clock or delta scaling.
-    const auto mapped = mapInterval ? gpu::MapPresentInterval(requested, uint32_t(ctx.lr), gpu::GetFrameRateTarget()) : requested;
+    const auto mapped = mapInterval ? gpu::MapPresentInterval(requested, uint32_t(ctx.lr), gpu::GetFrameRateTarget(), settings::GetConfig().variableRefreshRate) : requested;
     if (mapped != requested) ctx.r7.u64 = (ctx.r7.u64 & 0xFFFFFFFF00000000ull) | mapped;
     if (uint32_t(ctx.lr) == 0x827B4A4C) frame_timing::GuestInterval(requested, ctx.r7.u32);
     __imp__sub_827B6AD8(ctx, base);

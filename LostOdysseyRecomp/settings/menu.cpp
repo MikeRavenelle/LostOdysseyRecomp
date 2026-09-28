@@ -507,6 +507,8 @@ void Publish(uint8_t *base, uint32_t config)
         }
         placeGraphics(GraphicsRow::FrameRate, makeChoices(L"Frame rate", L"影格率",
                    std::move(frameRates), gpu::frame_rate::MenuIndex(edit.frameRate)));
+        placeGraphics(GraphicsRow::VariableRefreshRate, makeChoices(L"FreeSync / G-SYNC Compatible",
+            L"FreeSync / G-SYNC Compatible", onOff(), edit.variableRefreshRate ? 0 : 1));
         std::vector<std::wstring> providers;
         uint32_t selected = 0;
         for (auto provider : FgProviders()) {
@@ -622,6 +624,10 @@ void Publish(uint8_t *base, uint32_t config)
                      L"90/120 FPS 渲染真實遊戲影格，無需額外開關。請確認遊戲速度、音訊與戰鬥時序。")
                 : Tr(L"Native game-frame target, independent of frame generation. Applies after saving.",
                      L"原生遊戲影格率，獨立於影格生成。儲存後套用。");
+            break;
+        case GraphicsRow::VariableRefreshRate:
+            next.help = Tr(L"VRR-friendly pacing. Enable adaptive sync in your display/driver. Actual VRR is not detected.",
+                           L"VRR 友善限幀；請在螢幕與驅動程式啟用自適應同步。無法偵測實際 VRR 狀態。");
             break;
         case GraphicsRow::FrameGeneration:
         case GraphicsRow::FrameGenerationMultiplier:
@@ -1265,6 +1271,9 @@ PPC_FUNC(sub_822F19B0)
                 edit.frameRate = gpu::frame_rate::FromMenuIndex(cycle(index, gpu::frame_rate::kCount));
                 break;
             }
+            case GraphicsRow::VariableRefreshRate:
+                edit.variableRefreshRate = !edit.variableRefreshRate;
+                break;
             case GraphicsRow::FrameGeneration:
             {
                 const auto providers = FgProviders();

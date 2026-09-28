@@ -128,6 +128,8 @@ Config Read()
             value.frameGenerationMultiplier = number;
         else if (key == "frame_generation_target_fps")
             value.frameGenerationTargetFps = number;
+        else if (key == "variable_refresh_rate")
+            value.variableRefreshRate = number == 1;
         else if (key == "frame_rate")
             value.frameRate = number;
         else if (key == "fxaa")
@@ -219,6 +221,7 @@ static bool WriteConfig(const Config &value)
            << "\nupscaler=" << uint32_t(value.upscaler) << "\ndlss_quality=" << uint32_t(value.dlssQuality)
            << "\nfsr_quality=" << uint32_t(value.fsrQuality)
            << "\nfsr_sharpness=" << value.fsrSharpnessPercent
+           << "\nvariable_refresh_rate=" << (value.variableRefreshRate ? 1 : 0)
            << "\nframe_generation_provider=" << uint32_t(value.frameGenerationProvider)
            << "\nframe_generation_mode=" << uint32_t(value.frameGenerationMode)
            << "\nframe_generation_multiplier=" << value.frameGenerationMultiplier

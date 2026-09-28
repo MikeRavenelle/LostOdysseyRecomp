@@ -4,6 +4,8 @@
 
 ## 时序与呈现
 
+以下表格描述VRR Off时的原有路径；新增独立VRR开关、显示刷新率限帧和FG预算见[FreeSync / G-SYNC Compatible接入](vrr-freesync-gsync-compatible.md)。
+
 | 原生目标 | 已识别游戏Present调用的interval | 宿主目标周期 | 宿主VSync策略 |
 |---|---|---|---|
 | 30 FPS | 保留2 | 33.333 ms | 保留该交换链原有策略 |

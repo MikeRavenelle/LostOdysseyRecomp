@@ -33,6 +33,9 @@
 #endif
 #include "command_processor.h"
 #include "frame_rate.h"
+#include "vrr_policy.h"
+#include "frame_pacer.h"
+#include "deadline_wait.h"
 #include "frame_plan.h"
 #include <settings/config.h>
 #include <settings/menu.h>
@@ -97,6 +100,8 @@ namespace gpu::video
 
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
         SDL_Window* g_window = nullptr;
+        std::atomic<uint32_t> g_displayRefreshHz{0}; // Window thread -> presentation thread.
+        std::chrono::steady_clock::time_point g_nextRefreshPoll{};
         std::atomic<bool> g_exitRequested{false};
         bool g_videoSubsystemOwned = false;
         constexpr auto kCursorIdleTimeout = std::chrono::milliseconds(2000);
@@ -121,6 +126,8 @@ namespace gpu::video
                 g_cursorHidden = false;
             }
             if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
+            g_displayRefreshHz = 0;
+            g_nextRefreshPoll = {};
             if (g_videoSubsystemOwned) {
                 SDL_QuitSubSystem(SDL_INIT_VIDEO);
                 g_videoSubsystemOwned = false;
@@ -1435,7 +1442,7 @@ namespace gpu::video
             if (!g_vulkan) {
                 const auto fg = frame_generation::ResolveD3D12Selection(settings::GetConfig(), std::getenv("LO_FG_PROVIDER"),
                     std::getenv("LO_FG_MODE"), std::getenv("LO_FG_MULTIPLIER"),
-                    std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
+                    std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"), g_displayRefreshHz.load(std::memory_order_relaxed));
                 if (fg.error) LOG_ERROR("D3D12 FG: {}", fg.error);
                 if (fg.Enabled()) {
                     auto bridge = std::make_unique<frame_generation::D3D12Bridge>();
@@ -1444,8 +1451,11 @@ namespace gpu::video
                         ? (fsrPath && *fsrPath ? std::filesystem::path(fsrPath) : DlssRuntimePath() / "amd_fidelityfx_dx12.dll")
                         : DlssRuntimePath();
                     std::string reason;
-                    if (bridge->Initialize(*static_cast<plume::D3D12Device*>(g_device.get()), fg.config, runtime, reason))
+                    if (bridge->Initialize(*static_cast<plume::D3D12Device*>(g_device.get()), fg.config, runtime, reason)) {
                         g_d3dFg = std::move(bridge);
+                        std::lock_guard lock(g_fgSettingsMutex);
+                        g_fgAppliedConfig = fg.config; // Exact request used by Initialize, not a later monitor sample.
+                    }
                     else LOG_ERROR("D3D12 FG: unavailable; ordinary presentation retained: {}", reason);
                 }
             }
@@ -1526,9 +1536,9 @@ namespace gpu::video
             if (*selection.selected == backend::Backend::D3D12) {
                 const auto requestedFg = frame_generation::ResolveD3D12Selection(settings::GetConfig(),
                     std::getenv("LO_FG_PROVIDER"), std::getenv("LO_FG_MODE"),
-                    std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
+                    std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"), g_displayRefreshHz.load(std::memory_order_relaxed));
                 std::lock_guard lock(g_fgSettingsMutex);
-                g_fgAppliedConfig = g_d3dFg ? requestedFg.config : framegen::Config{};
+                if (!g_d3dFg) g_fgAppliedConfig = {};
                 if (requestedFg.Enabled() && !g_d3dFg) g_fgFailedRequest = requestedFg.config;
             }
 #endif
@@ -1578,6 +1588,49 @@ namespace gpu::video
 #endif
         return false;
     }
+    uint32_t GetFramePacingTarget(uint32_t nativeTarget, bool hostOverlay)
+    {
+        const bool requested = settings::GetConfig().variableRefreshRate;
+        const auto refresh = g_displayRefreshHz.load(std::memory_order_relaxed);
+        uint32_t multiplier = 1;
+        float dynamicTarget = 0;
+        bool dynamic = false;
+#if defined(LO_GPU_PLUME) && defined(LO_ENABLE_D3D12_FG) && defined(_WIN32)
+        if (requested && !hostOverlay && g_d3dFg) {
+            std::lock_guard lock(g_fgSettingsMutex);
+            const auto caps = g_d3dFg->Supported();
+            if (!g_fgFailedRequest && caps.available && framegen::Select(g_fgAppliedConfig, caps).Enabled()) {
+                dynamic = g_fgAppliedConfig.mode == framegen::Mode::Dynamic;
+                dynamicTarget = g_fgAppliedConfig.targetFrameRate;
+                if (!dynamic) multiplier = g_fgAppliedConfig.generatedFrames + 1;
+            }
+        }
+#endif
+#if defined(LO_GPU_PLUME) && defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        // The existing Vulkan session is fixed 2x. Availability is a last-frame
+        // runtime observation, not evidence that the monitor is using VRR.
+        if (requested && !hostOverlay && g_fgSession && g_fgSession->Available()) multiplier = 2;
+#endif
+        const auto paced = dynamic ? vrr::DynamicPacingTarget(nativeTarget, requested, refresh, dynamicTarget)
+            : vrr::PacingTarget(nativeTarget, requested, refresh, multiplier);
+        if (!hostOverlay) {
+            // Bounded change-only diagnostics. Keep the stored game target intact.
+            static uint64_t previousKey = ~uint64_t(0);
+            static auto nextReport = std::chrono::steady_clock::time_point{};
+            const uint64_t key = uint64_t(requested) | (uint64_t(refresh) << 1) |
+                (uint64_t(nativeTarget) << 12) | (uint64_t(paced) << 23) |
+                (uint64_t(multiplier) << 34) | (uint64_t(dynamic) << 39);
+            const auto now = std::chrono::steady_clock::now();
+            if (key != previousKey && now >= nextReport) {
+                previousKey = key;
+                nextReport = now + std::chrono::seconds(1);
+                LOG_INFO("VRR pacing: requested={} refresh_hz={} native_target={} host_cap={} fg_multiplier={} dynamic={} hardware_vrr=unverified",
+                    requested, refresh, nativeTarget, paced, multiplier, dynamic);
+            }
+        }
+        return paced;
+    }
+
     FrameGenerationStatus GetFrameGenerationStatus() {
         FrameGenerationStatus status;
         status.environmentOverride = std::getenv("LO_FG_PROVIDER") || std::getenv("LO_FG_MODE") ||
@@ -1585,7 +1638,7 @@ namespace gpu::video
 #if defined(LO_ENABLE_D3D12_FG) && defined(_WIN32) && defined(LO_GPU_PLUME) && !defined(LO_VIDEO_SUBMISSION_UNIT)
         const auto request = frame_generation::ResolveD3D12Selection(settings::GetConfig(),
             std::getenv("LO_FG_PROVIDER"), std::getenv("LO_FG_MODE"),
-            std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
+            std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"), g_displayRefreshHz.load(std::memory_order_relaxed));
         status.requested = request.config.provider;
         status.requestedMultiplier = request.config.generatedFrames + 1;
         {
@@ -1719,12 +1772,40 @@ namespace gpu::video
     }
 #endif
 
+    void PollDisplayRefresh()
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now < g_nextRefreshPoll) return;
+        g_nextRefreshPoll = now + std::chrono::milliseconds(500);
+        uint32_t refresh = 0;
+#ifdef _WIN32
+        // DXGI exclusive fullscreen can change the mode outside SDL's cache.
+        // Query the actual monitor containing this window, not the primary one.
+        MONITORINFOEXW monitor{};
+        monitor.cbSize = sizeof(monitor);
+        DEVMODEW mode{};
+        mode.dmSize = sizeof(mode);
+        if (g_nativeWindow && GetMonitorInfoW(MonitorFromWindow(g_nativeWindow, MONITOR_DEFAULTTONEAREST),
+                reinterpret_cast<MONITORINFO*>(&monitor)) &&
+            EnumDisplaySettingsW(monitor.szDevice, ENUM_CURRENT_SETTINGS, &mode))
+            refresh = mode.dmDisplayFrequency;
+#else
+        const int display = SDL_GetWindowDisplayIndex(g_window);
+        SDL_DisplayMode mode{};
+        if (display >= 0 && SDL_GetCurrentDisplayMode(display, &mode) == 0 && mode.refresh_rate > 0)
+            refresh = uint32_t(mode.refresh_rate);
+#endif
+        if (!vrr::OutputLimit(refresh)) refresh = 0; // Unknown, not an invented 60 Hz.
+        g_displayRefreshHz.store(refresh, std::memory_order_relaxed);
+    }
+
     void PumpWindowEvents()
     {
         if (ExitRequested() || !g_window) return;
         // Service close even during an outstanding FG window handshake. The
         // regular event loop below cannot run while that handshake is pending.
         SDL_PumpEvents();
+        PollDisplayRefresh();
         SDL_Event closeEvent{};
         if (SDL_PeepEvents(&closeEvent, 1, SDL_GETEVENT, SDL_QUIT, SDL_QUIT) > 0) {
             RequestExit();
@@ -1854,6 +1935,7 @@ namespace gpu::video
             g_displaySize.store(uint64_t(config.width)<<32|config.height);
             g_displayMode.store(int(mode));
             state.applied=config; state.initialized=true;
+            g_nextRefreshPoll = {}; // Re-query after a mode transition on the next window pump.
             g_windowResizeRequested = true;
             g_displayChanges.WindowComplete(ticket, result == 0);
 #if defined(_WIN32) && (defined(LO_ENABLE_STREAMLINE_FG) || defined(LO_ENABLE_D3D12_FG))
@@ -1873,6 +1955,11 @@ namespace gpu::video
         SDL_Event event;
         while (SDL_PollEvent(&event))
         {
+            if (event.type == SDL_DISPLAYEVENT ||
+                (event.type == SDL_WINDOWEVENT &&
+                 (event.window.event == SDL_WINDOWEVENT_MOVED || event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+                  event.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED || event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)))
+                g_nextRefreshPoll = {};
             const bool pointerActivity =
                 event.type == SDL_MOUSEMOTION ||
                 event.type == SDL_MOUSEBUTTONDOWN ||
@@ -2000,7 +2087,7 @@ namespace gpu::video
         if (g_fgWindowChange.load() != 0) return true;
         const auto request = frame_generation::ResolveD3D12Selection(settings::GetConfig(),
             std::getenv("LO_FG_PROVIDER"), std::getenv("LO_FG_MODE"),
-            std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"));
+            std::getenv("LO_FG_MULTIPLIER"), std::getenv("LO_FG_TARGET_FPS"), std::getenv("LO_DLSS_FG"), g_displayRefreshHz.load(std::memory_order_relaxed));
         const framegen::Config desired = request.Enabled() ? request.config : framegen::Config{};
         framegen::Config applied;
         {
@@ -2144,8 +2231,8 @@ namespace gpu::video
         // Retain the existing Vulkan DLSS-G requirement at every native cap.
         forceImmediate = bool(g_fgSession);
 #endif
-        const bool nativeVsync = frame_rate::HostVsyncEnabled(nativeTarget,
-            nativePolicy.nativeVsyncBaseline, forceImmediate);
+        const bool nativeVsync = vrr::HostVsyncEnabled(nativeTarget,
+            nativePolicy.nativeVsyncBaseline, forceImmediate, settings::GetConfig().variableRefreshRate);
         if (nativeVsync != nativePolicy.nativeVsyncRequested) {
             // Plume marks Vulkan's swapchain for resize; the existing transaction
             // below quiesces FG, cancels leases and waits before replacing images.
@@ -2647,6 +2734,11 @@ namespace gpu::video
         if (!PreparePresentation(displayTicket, menuWidth, menuHeight))
             return;
         renderer::SetOutputSize(menuWidth, menuHeight);
+        if (settings::GetConfig().variableRefreshRate) {
+            static FramePacer overlayPacer;
+            static DeadlineWait overlayWait;
+            overlayWait.Until(overlayPacer.Schedule(std::chrono::steady_clock::now(), GetFramePacingTarget(60, true)));
+        }
 
         const bool hasSettings = settings::DrawMenu(g_menuPixels, g_menuRevision, menuWidth, menuHeight);
         const bool hasDebug = debug_menu::IsOverlayVisible();

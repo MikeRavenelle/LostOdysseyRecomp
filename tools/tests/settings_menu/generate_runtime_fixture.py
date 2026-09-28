@@ -28,6 +28,8 @@ PREAMBLE = r'''
 #include <settings/language_selection.h>
 #include <gpu/frame_plan.h>
 #include <gpu/frame_rate.h>
+#include <gpu/frame_generation_settings.h>
+#include <gpu/video.h>
 #include <gpu/display_change.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -68,7 +70,8 @@ void TraceConfig(uint8_t*,uint32_t,const char*){}
 namespace menu_assets { std::shared_ptr<const Assets> Cached(const std::filesystem::path&,uint32_t) noexcept {return {};} }
 }
 namespace gpu::video {
-void* GetDevice(){return reinterpret_cast<void*>(1);}
+plume::RenderDevice* GetDevice(){return reinterpret_cast<plume::RenderDevice*>(1);}
+FrameGenerationStatus GetFrameGenerationStatus(){return {};}
 std::optional<gpu::backend::Backend> SelectedBackend(){return gpu::backend::Backend::Vulkan;}
 DisplayChangeResult QueryDisplayChange(uint64_t){return DisplayChangeResult::Applied;}
 uint64_t BeginDisplayChange(const settings::Config&){return 1;}
@@ -148,6 +151,18 @@ int main(int argc, char** argv) {
     settings::edit.upscaler=Upscaler::Off;settings::row=int(GraphicsRow::AntiAliasing);tick(2);
     Check(settings::row==int(GraphicsRow::AnisotropicFiltering),"navigation skips hidden provider rows to AF");
     tick(1);Check(settings::row==int(GraphicsRow::AntiAliasing),"reverse navigation skips hidden rows");
+    settings::row=int(GraphicsRow::VariableRefreshRate);settings::edit.variableRefreshRate=false;
+    const auto beforeVrr=settings::GetConfig();
+    tick(8);Check(settings::edit.variableRefreshRate,"VRR toggles on");
+    Check(settings::GetConfig()==beforeVrr,"unsaved VRR does not change runtime settings");
+    Check(settings::snapshot.rows[int(GraphicsRow::VariableRefreshRate)].value==L"On","VRR preference published");
+    Check(!settings::restart::Required(beforeVrr,settings::edit),"VRR does not require restart");
+    settings::row=int(GraphicsRow::Save);tick(0x1000);
+    Check(settings::GetConfig().variableRefreshRate,"Save applies VRR preference");
+    settings::row=int(GraphicsRow::VariableRefreshRate);tick(4);
+    Check(!settings::edit.variableRefreshRate,"VRR toggles off");
+    settings::row=int(GraphicsRow::Save);tick(0x1000);
+    Check(!settings::GetConfig().variableRefreshRate,"Save restores ordinary pacing");
     // AF changes only after Save, does not require a restart, and survives all levels.
     settings::row=int(GraphicsRow::AnisotropicFiltering);settings::edit.anisotropicFiltering=0;
     const auto afSaved=settings::GetConfig();

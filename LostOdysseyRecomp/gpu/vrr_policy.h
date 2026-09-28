@@ -36,4 +36,12 @@ inline float DynamicTarget(float requestedTarget, bool requested, uint32_t refre
         return requestedTarget;
     return requestedTarget == 0 ? float(limit) : std::min(requestedTarget, float(limit));
 }
+inline uint32_t DynamicPacingTarget(uint32_t nativeFps, bool requested,
+    uint32_t refreshHz, float requestedTarget)
+{
+    const auto paced = PacingTarget(nativeFps, requested, refreshHz);
+    const auto target = DynamicTarget(requestedTarget, requested, refreshHz);
+    if (!requested || !nativeFps || !std::isfinite(target) || target <= 0) return paced;
+    return std::min(paced, uint32_t(std::clamp(target, 1.0f, 1000.0f)));
+}
 }
