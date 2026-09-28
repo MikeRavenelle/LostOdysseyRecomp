@@ -114,7 +114,7 @@ public:
         sdkInitialized_=true; errorsSeen_=creationErrors.load();
         if (!Check(setDevice(device),"slSetD3DDevice",reason)) return false;
         auto luid=device->GetAdapterLuid(); sl::AdapterInfo adapter{};
-        adapter.deviceLUID=&luid; adapter.deviceLUIDSizeInBytes=sizeof(luid);
+        adapter.deviceLUID=reinterpret_cast<uint8_t*>(&luid); adapter.deviceLUIDSizeInBytes=sizeof(luid);
         if (!Check(supported(sl::kFeatureDLSS_G,adapter),"DLSS FG adapter support",reason)) return false;
         void* proxy=device;
         if (!Check(upgrade(&proxy),"upgrade D3D12 device",reason) || proxy==device) return false;

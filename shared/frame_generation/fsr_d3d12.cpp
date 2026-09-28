@@ -62,7 +62,10 @@ class FsrSession final : public D3D12Session {
         c.frameGenerationCallback=Generate; c.frameGenerationCallbackUserContext=this;
         // Use the SDK's ordinary composited-backbuffer presentation. HUDless/UI
         // is optional; no duplicate host Present or SR SDK context is involved.
-        c.generationRect={0,0,contextWidth_,contextHeight_}; c.frameID=frame_;
+        if (contextWidth_>uint32_t(INT32_MAX) || contextHeight_>uint32_t(INT32_MAX)) {
+            reason="FSR FG rectangle exceeds signed SDK range"; return false;
+        }
+        c.generationRect={0,0,static_cast<int32_t>(contextWidth_),static_cast<int32_t>(contextHeight_)}; c.frameID=frame_;
         return Check(configure_(&fgContext_,&c.header),enabled ? "FSR FG enable" : "FSR FG off",reason);
     }
     bool EnsureContext(const D3D12Frame& f,std::string& reason) {
