@@ -13,6 +13,7 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 - Added a targeted TAA jitter mapping for the reported sky-flicker path: VS `bda41a11626a545c` and PS `a9e9542e2c60029a` now use Slot 7 with the existing scene anchor. The conservative motion fallback remains in place; physical-display and broader gameplay acceptance are pending.
 - Removed the one-time legacy updater manifest option after the v0.7.9 transition release.
 - Portable installs now prefer the `game` directory beside the executable and retain the parent `../game` location as a compatibility fallback.
+- Added native 90/120 FPS graphics targets and FreeSync / G-SYNC Compatible VRR output pacing. DLSS FG to FSR FG switching is blocked within the current Streamline/NGX session and requires a restart; the runtime and hardware validation remains bounded.
 
 ### 简体中文
 
@@ -21,6 +22,7 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 - 针对反馈的天空闪烁路径新增限定范围的 TAA 抖动映射：VS `bda41a11626a545c` 与 PS `a9e9542e2c60029a` 使用现有场景锚点映射至 Slot 7，并保留保守的运动回退；实体显示与更广游戏流程验收仍待完成。
 - v0.7.9 过渡版本发布后，移除一次性的旧更新器清单打包选项。
 - 便携式安装现在优先使用可执行文件旁的 `game` 目录，并保留上级 `../game` 作为兼容性后备路径。
+- 新增原生 90／120 FPS 图形目标和 FreeSync／G-SYNC Compatible VRR 输出节奏控制。当前 Streamline／NGX 会话中禁止将 DLSS FG 切换为 FSR FG，必须重启；运行时与硬件验证仍限于已记录范围。
 
 ## [v0.7.10 — 2026-09-28](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.10)
 

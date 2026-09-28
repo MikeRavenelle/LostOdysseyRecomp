@@ -46,7 +46,10 @@ inline std::atomic<State> state{State::Idle};
 
 inline bool Required(const Config &before, const Config &after)
 {
-    return before.gameLanguage != after.gameLanguage || before.graphicsBackend != after.graphicsBackend;
+    return before.gameLanguage != after.gameLanguage || before.graphicsBackend != after.graphicsBackend ||
+           (before.graphicsBackend == GraphicsBackend::D3D12 &&
+            before.frameGenerationProvider == framegen::Provider::Dlss &&
+            after.frameGenerationProvider == framegen::Provider::Fsr);
 }
 
 inline void Request() { state.store(State::Requested); }

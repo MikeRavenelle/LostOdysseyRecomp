@@ -4,6 +4,7 @@
 #include "menu_assets.h"
 #include "config.h"
 #include "graphics_menu.h"
+#include <gpu/frame_rate.h>
 #include "restart.h"
 #include "translations.h"
 #include <gpu/video.h>
@@ -45,6 +46,7 @@ bool displayRollback = false, rollbackSaveFailed = false;
 bool collectionPrompt = false;
 int collectionChoice = 1;
 bool restartPrompt = false, savedRestartPrompt = false, restartSaveFailed = false;
+bool restartForFgProvider = false;
 int restartChoice = 0;
 bool mainMenuPrompt = false;
 int mainMenuChoice = 1;
@@ -347,6 +349,10 @@ std::vector<framegen::Provider> FgProviders()
 std::wstring FgNotice()
 {
     const auto running = gpu::video::GetFrameGenerationStatus();
+    if (running.sessionProvider == framegen::Provider::Dlss &&
+        running.requested == framegen::Provider::Fsr)
+        return Tr(L"FSR FG requires a restart after DLSS FG. Frame generation is off until then.",
+                  L"從 DLSS 影格生成切換到 FSR 影格生成需要重新啟動；在此之前影格生成會關閉。");
     std::wstring text;
     using gpu::video::FrameGenerationPhase;
     switch (running.phase) {
@@ -500,10 +506,16 @@ void Publish(uint8_t *base, uint32_t config)
                    std::min(edit.scalingQuality, 1u)));
         placeGraphics(GraphicsRow::RgbRange, makeChoices(L"RGB Range", L"RGB 範圍",
                    {Tr(L"Off", L"關"), Tr(L"Expanded", L"擴展")}, edit.expandRgbRange ? 1 : 0));
+        std::vector<std::wstring> frameRates;
+        for (const auto fps : gpu::frame_rate::kNativeRates) {
+            auto label = std::to_wstring(fps) + L" FPS";
+            if (fps > 30) label += Tr(L" (experimental)", L"（實驗性）");
+            frameRates.push_back(std::move(label));
+        }
         placeGraphics(GraphicsRow::FrameRate, makeChoices(L"Frame rate", L"影格率",
-                   {L"30 FPS", std::wstring(L"60 FPS") + Tr(L" (experimental)", L"（實驗性）"),
-                    std::wstring(L"120 FPS") + Tr(L" (experimental)", L"（實驗性）")},
-                   edit.frameRate == 120 ? 2 : edit.frameRate == 60 ? 1 : 0));
+                   std::move(frameRates), gpu::frame_rate::MenuIndex(edit.frameRate)));
+        placeGraphics(GraphicsRow::VariableRefreshRate, makeChoices(L"FreeSync / G-SYNC Compatible",
+            L"FreeSync / G-SYNC Compatible", onOff(), edit.variableRefreshRate ? 0 : 1));
         std::vector<std::wstring> providers;
         uint32_t selected = 0;
         for (auto provider : FgProviders()) {
@@ -618,11 +630,15 @@ void Publish(uint8_t *base, uint32_t config)
                            L"僅將遊戲畫面從 RGB 16–235 擴展到 0–255。儲存後立即套用。");
             break;
         case GraphicsRow::FrameRate:
-            next.help = edit.frameRate == 120
-                ? Tr(L"120 FPS is experimental and requires LO_EXPERIMENTAL_120; otherwise runs at 60 FPS.",
-                     L"120 FPS 為實驗性功能，需啟用 LO_EXPERIMENTAL_120，否則以 60 FPS 執行。")
-                : Tr(L"60/120 FPS are experimental. Verify game speed, audio and battle timing.",
-                     L"60/120 FPS 為實驗性功能，請確認遊戲速度、音訊與戰鬥時序。");
+            next.help = edit.frameRate > 60
+                ? Tr(L"90/120 FPS render real game frames. No extra flag is needed. Verify speed, audio and battle timing.",
+                     L"90/120 FPS 渲染真實遊戲影格，無需額外開關。請確認遊戲速度、音訊與戰鬥時序。")
+                : Tr(L"Native game-frame target, independent of frame generation. Applies after saving.",
+                     L"原生遊戲影格率，獨立於影格生成。儲存後套用。");
+            break;
+        case GraphicsRow::VariableRefreshRate:
+            next.help = Tr(L"VRR-friendly pacing. Enable adaptive sync in your display/driver. Actual VRR is not detected.",
+                           L"VRR 友善限幀；請在螢幕與驅動程式啟用自適應同步。無法偵測實際 VRR 狀態。");
             break;
         case GraphicsRow::FrameGeneration:
         case GraphicsRow::FrameGenerationMultiplier:
@@ -654,6 +670,9 @@ void Publish(uint8_t *base, uint32_t config)
         next.dialogMessage = restartSaveFailed
             ? Tr(L"Settings could not be saved. Check settings.ini permissions, then retry or cancel.",
                  L"無法儲存設定。請檢查 settings.ini 權限後重試或取消。")
+            : savedRestartPrompt && restartForFgProvider
+                ? Tr(L"Switching from DLSS FG to FSR FG requires a restart. Settings saved. Restart now?",
+                     L"從 DLSS 影格生成切換到 FSR 影格生成需要重新啟動。設定已儲存，現在重新啟動嗎？")
             : savedRestartPrompt ? Tr(L"Settings saved. Restart now?", L"設定已儲存。立即重新啟動嗎？")
             : Tr(L"Save these settings and restart now?", L"儲存這些設定並立即重新啟動嗎？");
         next.dialogChoices = {Tr(L"Restart now", L"立即重新啟動"), Tr(L"Later", L"稍後"), Tr(L"Cancel", L"取消")};
@@ -915,6 +934,7 @@ PPC_FUNC(sub_822F19B0)
         restartPrompt = false;
         savedRestartPrompt = false;
         restartSaveFailed = false;
+        restartForFgProvider = false;
         mainMenuPrompt = false;
         importPrompt = false;
         importLaunchPending = false;
@@ -1011,6 +1031,7 @@ PPC_FUNC(sub_822F19B0)
                 restartPrompt = false;
                 savedRestartPrompt = false;
                 restartSaveFailed = false;
+                restartForFgProvider = false;
 #ifdef _WIN32
                 status = restartChoice == 0
                     ? Tr(L"Saved. Preparing a safe restart…", L"已儲存，正在準備安全重新啟動……")
@@ -1024,6 +1045,7 @@ PPC_FUNC(sub_822F19B0)
             {
                 restartPrompt = false;
                 restartSaveFailed = false;
+                restartForFgProvider = false;
                 status = Tr(L"Changes requiring restart were cancelled.", L"已取消需要重新啟動的變更。");
             }
             else if (SaveConfig(restartAfter))
@@ -1031,6 +1053,7 @@ PPC_FUNC(sub_822F19B0)
                 edit = restartAfter;
                 restartPrompt = false;
                 restartSaveFailed = false;
+                restartForFgProvider = false;
 #ifdef _WIN32
                 status = restartChoice == 0
                     ? Tr(L"Saved. Preparing a safe restart…", L"已儲存，正在準備安全重新啟動……")
@@ -1088,7 +1111,12 @@ PPC_FUNC(sub_822F19B0)
     }
     auto graphicsSaved = [&] {
         status = Tr(L"Display settings saved.", L"顯示設定已儲存。");
-        if (restart::Required(previousDisplay, edit))
+        const auto running = gpu::video::GetFrameGenerationStatus();
+        restartForFgProvider = edit.graphicsBackend == GraphicsBackend::D3D12 &&
+            edit.frameGenerationProvider == framegen::Provider::Fsr &&
+            (previousDisplay.frameGenerationProvider == framegen::Provider::Dlss ||
+             running.sessionProvider == framegen::Provider::Dlss);
+        if (restart::Required(previousDisplay, edit) || restartForFgProvider)
         {
             restartPrompt = savedRestartPrompt = true;
             restartSaveFailed = false;
@@ -1265,11 +1293,13 @@ PPC_FUNC(sub_822F19B0)
                 break;
             case GraphicsRow::FrameRate:
             {
-                constexpr uint32_t rates[] = {30, 60, 120};
-                const uint32_t index = edit.frameRate == 120 ? 2u : edit.frameRate == 60 ? 1u : 0u;
-                edit.frameRate = rates[cycle(index, 3)];
+                const auto index = gpu::frame_rate::MenuIndex(edit.frameRate);
+                edit.frameRate = gpu::frame_rate::FromMenuIndex(cycle(index, gpu::frame_rate::kCount));
                 break;
             }
+            case GraphicsRow::VariableRefreshRate:
+                edit.variableRefreshRate = !edit.variableRefreshRate;
+                break;
             case GraphicsRow::FrameGeneration:
             {
                 const auto providers = FgProviders();
@@ -1342,8 +1372,6 @@ PPC_FUNC(sub_822F19B0)
         graphics.uiLanguage = previousDisplay.uiLanguage;
         graphics.gameLanguage = previousDisplay.gameLanguage;
         graphics.automaticUpdates = previousDisplay.automaticUpdates;
-        graphics.frameGenerationMode = framegen::Mode::Fixed;
-        graphics.frameGenerationTargetFps = 0;
         if (graphics.frameGenerationProvider == framegen::Provider::Fsr)
             graphics.frameGenerationMultiplier = 2;
         if (!SaveConfig(graphics))
@@ -1379,6 +1407,7 @@ PPC_FUNC(sub_822F19B0)
             restartPrompt = true;
             savedRestartPrompt = false;
             restartSaveFailed = false;
+            restartForFgProvider = false;
             restartChoice = 0;
             restartAfter = languages;
         }

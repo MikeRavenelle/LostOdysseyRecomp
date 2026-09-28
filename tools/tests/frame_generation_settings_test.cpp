@@ -40,5 +40,27 @@ int main() {
 #else
     Check(!gpu::frame_generation::D3D12CompiledProvider(framegen::Provider::Dlss), "non-Windows has no D3D12 FG");
 #endif
-    std::puts("PASS frame-generation settings selection");
+    saved.variableRefreshRate = true;
+    saved.frameGenerationTargetFps = 0;
+    selected = gpu::frame_generation::ResolveD3D12Selection(saved,nullptr,nullptr,nullptr,nullptr,nullptr,144);
+#ifdef _WIN32
+    Check(selected.Enabled() && selected.config.targetFrameRate == 141,
+        "VRR bounds automatic dynamic SDK target below display refresh");
+    selected = gpu::frame_generation::ResolveD3D12Selection(saved,nullptr,nullptr,nullptr,"100",nullptr,144);
+    Check(selected.config.targetFrameRate == 100, "lower explicit dynamic target is preserved");
+    selected = gpu::frame_generation::ResolveD3D12Selection(saved,nullptr,nullptr,nullptr,"240",nullptr,144);
+    Check(selected.config.targetFrameRate == 141, "higher explicit dynamic target gets VRR headroom");
+    selected = gpu::frame_generation::ResolveD3D12Selection(saved,nullptr,nullptr,nullptr,nullptr,nullptr,0);
+    Check(selected.config.targetFrameRate == 0, "unknown display leaves SDK automatic target intact");
+#else
+    Check(!selected.Enabled(), "VRR never enables an uncompiled provider");
+#endif
+    selected = gpu::frame_generation::ResolveD3D12Selection(saved,nullptr,nullptr,nullptr,"-1",nullptr,144);
+    Check(!selected.Enabled() && selected.error, "VRR cannot sanitize invalid SDK input into success");
+    Check(saved.frameGenerationTargetFps == 0 && saved.frameGenerationMultiplier == 4,
+        "effective VRR target never overwrites saved FG settings");
+    saved.variableRefreshRate = false;
+    selected = gpu::frame_generation::ResolveD3D12Selection(saved,nullptr,nullptr,nullptr,nullptr,nullptr,144);
+    Check(selected.config.targetFrameRate == 0, "VRR off restores SDK automatic target");
+    std::puts("PASS frame-generation settings selection including VRR");
 }

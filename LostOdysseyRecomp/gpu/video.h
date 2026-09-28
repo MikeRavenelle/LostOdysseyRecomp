@@ -68,11 +68,18 @@ namespace gpu::video
     // configuration is blocked, so the next valid configuration can recover.
     bool FrameGenerationInputCaptureEnabled();
     bool FrameGenerationAvailable();
+    // GPU owner only. Keeps the configured native/guest target independent of
+    // the display/FG-adjusted host deadline. No SDL calls on the render thread.
+    uint32_t GetFramePacingTarget(uint32_t nativeTarget, bool hostOverlay = false);
+    struct DynamicFgOutputPacing { uint32_t outputFps = 0; uint64_t actualPresents = 0; };
+    // GPU owner only. Cumulative SDK presents are observations, not physical scanout.
+    DynamicFgOutputPacing GetDynamicFgOutputPacing(uint32_t nativeTarget);
     enum class FrameGenerationPhase : uint8_t { Off, Pending, Ready, Unavailable };
     struct FrameGenerationStatus {
         FrameGenerationPhase phase = FrameGenerationPhase::Off;
         framegen::Provider requested = framegen::Provider::Off;
         framegen::Provider applied = framegen::Provider::Off;
+        framegen::Provider sessionProvider = framegen::Provider::Off;
         uint32_t requestedMultiplier = 2;
         uint32_t appliedMultiplier = 2;
         bool environmentOverride = false;

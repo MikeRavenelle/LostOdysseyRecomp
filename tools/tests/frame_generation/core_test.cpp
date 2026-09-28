@@ -73,11 +73,15 @@ int main() {
     history.Accepted(UINT64_MAX,key);
     CHECK(history.NeedsReset(0,key,false));
     PresentStatistics stats;
+    stats.RawPresent(true); CHECK(stats.actualPresents==1); CHECK(!stats.contiguous);
+    stats.RawPresent(false); CHECK(stats.actualPresents==1);
     stats.Observe(true,true,true,2); CHECK(stats.generatedIntervals==0);
     stats.Observe(true,true,true,2); CHECK(stats.generatedIntervals==1);
     stats.Observe(false,true,true,0); stats.Observe(true,true,true,4);
-    CHECK(stats.generatedIntervals==1); CHECK(stats.actualPresents==8);
+    CHECK(stats.generatedIntervals==1); CHECK(stats.actualPresents==9);
     stats.Observe(true,true,true,3); CHECK(stats.generatedIntervals==2);
     stats.Observe(true,false,true,3); CHECK(stats.generatedIntervals==2);
+    stats.RawPresent(true); CHECK(stats.actualPresents==13);
+    stats.Observe(true,true,true,2); CHECK(stats.generatedIntervals==2);
     std::printf("PASS %u reusable FG core checks\n",checks);
 }

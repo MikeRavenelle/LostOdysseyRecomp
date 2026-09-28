@@ -46,11 +46,12 @@ protected:
     HistoryKey key_{};
     std::optional<HistoryKey> blocked_;
     uint64_t sourceFrame_=0, fenceValue_=0;
-    bool active_=false, prepared_=false, initialized_=false, closed_=false;
+    bool active_=false, prepared_=false, initialized_=false, closed_=false, nativeFeatureReleased_=false;
     virtual bool PrepareNative(const D3D12Frame&,ID3D12GraphicsCommandList*,bool,std::string&)=0;
     virtual bool DisableNative(std::string&)=0;
     virtual bool WaitNative(std::string&) { return true; }
     virtual bool PresentedNative(bool,std::string&)=0;
+    virtual bool ReleaseNativeFeature(std::string&) { return true; }
     virtual bool ShutdownNative(std::string&)=0;
     bool InitializeBase(ID3D12Device*,IDXGIFactory4*,const Config&,std::string&);
     bool WaitFence(std::string&);
@@ -73,6 +74,7 @@ public:
     bool Drain(std::string&);
     bool Quiesce(std::string&);
     bool Reconfigure(const Config&,std::string&); // Same provider and swapchain, after checked drain.
+    bool ReleaseFeatureAfterGpuDrain(std::string&); // FG feature before shared NGX SR session shutdown.
     bool Shutdown(std::string&);
     bool Active() const { return active_; }
     bool Pending() const { return lease_.Pending(); }

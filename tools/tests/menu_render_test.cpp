@@ -32,7 +32,7 @@ int main(int argc, char **argv)
         {L"抗锯齿", L"TAA（实验性）", true, {L"关", L"FXAA", L"SMAA", L"TAA（实验性）"}, 3},
         {L"缩放质量", L"高", true, {L"标准", L"高"}, 1},
         {L"帧率", L"60 FPS（实验性）", true,
-         {L"30 FPS", L"60 FPS（实验性）", L"120 FPS（实验性）"}, 1},
+         {L"30 FPS", L"60 FPS（实验性）", L"90 FPS（实验性）", L"120 FPS（实验性）"}, 1},
         {L"亮度校准", L"打开", true, {L"打开"}, 0},
         {L"保存图形设置", L"保存", true, {L"保存"}, 0}};
     snapshot.help = L"LB / RB：分类    方向键：选择 / 调整    A：确认    B：返回";
