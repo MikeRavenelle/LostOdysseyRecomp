@@ -12,6 +12,8 @@ if(FRAMEGEN_WITH_DLSS OR FRAMEGEN_WITH_FSR)
     message(FATAL_ERROR "These SDK adapters currently target Windows D3D12; the core is portable")
   endif()
   add_library(framegen_d3d12 STATIC d3d12.cpp)
+  # Pinned SL 2.14.1 has a broken C++23 to_underlying alias in its public header.
+  set_target_properties(framegen_d3d12 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
   target_link_libraries(framegen_d3d12 PUBLIC framegen_core d3d12 dxgi)
   target_compile_definitions(framegen_d3d12 PUBLIC NOMINMAX)
   if(FRAMEGEN_WITH_DLSS)

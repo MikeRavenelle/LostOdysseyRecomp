@@ -692,6 +692,7 @@ namespace gpu::renderer
             uint64_t motionFinishSuppressed = 0;
             bool temporalInputProbe = false;
             bool dlssSrRequested = false;
+            bool nativeFgInputs = false;
             uint64_t dlssDisableReportedEpoch = ~0ull;
             struct DlssFrameFeedback {
                 bool submitted = false;
@@ -2808,15 +2809,18 @@ namespace gpu::renderer
                 Gpu().retiredTextures.push_back(std::move(fallback));
                 promotion.srApplied = true;
                 RecordFgUiScene(*color);
-                const bool diagnosticSnapshot = !fgSnapshotAttempted && fgSnapshotRequestedFrame == frame;
+                const bool diagnosticSnapshot = vulkan && !fgSnapshotAttempted && fgSnapshotRequestedFrame == frame;
                 const bool compositeSnapshot = fgCompositeEnabled && fgCompositeAttemptedFrame != frame &&
                     dlss_fg::CompositePlanSupported(activePlan);
-                if (vulkan && (diagnosticSnapshot || compositeSnapshot)) {
+                if (diagnosticSnapshot || compositeSnapshot) {
                     if (diagnosticSnapshot) fgSnapshotAttempted = true;
                     if (compositeSnapshot) fgCompositeAttemptedFrame = frame;
-                    // The input is a real Vulkan texture here. Its storage
-                    // format must not be inferred from the color transfer curve.
-                    const auto sourceFormat = static_cast<VulkanTexture*>(promotion.inputs.color.texture)->desc.format;
+                    // Read native storage format, never infer it from transfer.
+                    auto sourceFormat = RenderFormat::UNKNOWN;
+                    if (vulkan) sourceFormat = static_cast<VulkanTexture*>(promotion.inputs.color.texture)->desc.format;
+#ifdef _WIN32
+                    else sourceFormat = static_cast<D3D12Texture*>(promotion.inputs.color.texture)->desc.format;
+#endif
                     auto snapshot = frame_generation::RecordProducerSnapshot(device, commandList,
                         promotion.inputs, sourceFormat, promotion.scratch->texture.get(),
                         promotion.scratch->format, {activePlan.output.width, activePlan.output.height},
@@ -5934,15 +5938,17 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     temporalStableGrid = started.stableGrid;
                     temporalInputProbe = started.inputProbe;
                     dlssSrRequested = started.dlssSr;
+                    nativeFgInputs = !vulkan && fgCompositeEnabled && !resolveReadback &&
+                        frame_generation::NativeCompositePlan(activePlan) && !started.experiment && !started.inputProbe;
                     if (started.rejectDlss)
                         DisableDlssRequest(frame_plan::FailureReason::InvalidInput);
                     activeSpatialAA = route.spatialAA&&!resolveReadback;
-                    const bool temporalActive = temporal::TemporalConsumerActive(temporalExperiment, temporalInputProbe, dlssSrRequested);
+                    const bool temporalActive = temporal::TemporalConsumerActive(temporalExperiment, temporalInputProbe, dlssSrRequested, nativeFgInputs);
                     if(temporalActive&&!temporalHistory&&!temporalInitFailed) {
                         temporalHistory=std::make_unique<temporal::HistoryOwner>();
                         if(!temporalHistory->Init(device,sparseCollector)) {temporalHistory.reset();temporalInitFailed=true;LOG_ERROR("renderer: TAA initialization failed; SMAA fallback");}
                     }
-                    if(!temporalHistory) { temporalExperiment=false; temporalInputProbe=false; dlssSrRequested=false; }
+                    if(!temporalHistory) { temporalExperiment=false; temporalInputProbe=false; dlssSrRequested=false; nativeFgInputs=false; }
                     if (temporalExperiment && taaDiagnosticHDR == 1 && !hdrTemporalHistory && !hdrTemporalInitFailed) {
                         hdrTemporalHistory = std::make_unique<temporal::HistoryOwner>();
                         if (!hdrTemporalHistory->Init(device, {}, true)) {
@@ -5951,7 +5957,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         }
                     }
                 }
-                const bool temporalActive = temporal::TemporalConsumerActive(temporalExperiment, temporalInputProbe, dlssSrRequested);
+                const bool temporalActive = temporal::TemporalConsumerActive(temporalExperiment, temporalInputProbe, dlssSrRequested, nativeFgInputs);
                 const bool trackTemporalScene = !debugCaptureDir.empty() || temporalActive || activeSpatialAA;
                 if (trackTemporalScene && temporalScene.Frame() != frame) {
                     const auto now = std::chrono::steady_clock::now();
@@ -6024,6 +6030,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 taaInit.AddTo(tTaa);
                 std::optional<temporal::SceneResolve> temporalSceneCopy;
                 std::optional<temporal::TemporalFrameInputs> dlssSceneCopyInputs;
+                std::optional<temporal::TemporalFrameInputs> nativeFgSceneCopyInputs;
                 std::shared_ptr<fsr_alpha::MaskLease> selectedFsrMaskLease;
                 bool sceneAARecorded=false,temporalAARecorded=false,hdrTonemapRecorded=false;
                 std::optional<temporal::SceneAnchor> temporalDrawAnchor;
@@ -6622,7 +6629,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                            rasterViewport.width==temporalScene.Anchor().viewport.width && rasterViewport.height==temporalScene.Anchor().viewport.height) {
                             render_batch::CpuTimer<> taaResolve(cpuTimingEnabled);
                             temporalScene.ObserveColor(*temporalSceneCopy);
-                            if ((temporalInputProbe || dlssSrRequested) && temporalHistory && temporalScene.Ready() &&
+                            if ((temporalInputProbe || dlssSrRequested || nativeFgInputs) && temporalHistory && temporalScene.Ready() &&
                                 tex->format==RenderFormat::R8G8B8A8_UNORM) {
                                 Transition(*tex,RenderTextureLayout::COPY_SOURCE,RenderBarrierStage::COPY);
                                 FinishMotion(temporalHistory.get());
@@ -6714,13 +6721,14 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                         srTimeReset ? temporal::TemporalResetReason::FrameDiscontinuity : temporal::TemporalResetReason::None,
                                         // Camera/depth reconstruction is independent of optional
                                         // object replay, including replay allocation failures.
-                                        dlssSrRequested && temporal::SrHybridMotionEnabled())) {
+                                        dlssSrRequested && temporal::SrHybridMotionEnabled(), nativeFgInputs)) {
                                     const bool frameOnly = temporal::ClassifySrCaptureFailure(temporalHistory->LastInputCaptureFailure()) ==
                                         temporal::SrSceneInputFailure::FrameFallback;
-                                    logDlssInputFailure("capture_color_inputs", frameOnly ? "frame_fallback" : "request_failure");
-                                    if (frameOnly)
-                                        NoteDlssFrameFallback(frame_plan::DlssEffectReason::NoEligibleScene);
-                                    else DisableDlssRequest(frame_plan::FailureReason::InvalidInput);
+                                    if (!nativeFgInputs) {
+                                        logDlssInputFailure("capture_color_inputs", frameOnly ? "frame_fallback" : "request_failure");
+                                        if (frameOnly) NoteDlssFrameFallback(frame_plan::DlssEffectReason::NoEligibleScene);
+                                        else DisableDlssRequest(frame_plan::FailureReason::InvalidInput);
+                                    }
                                 } else {
                                     auto inputs = temporalHistory->CurrentInputs();
                                     inputs.frameTimeDeltaMilliseconds = srFrameDeltaMilliseconds;
@@ -6731,7 +6739,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                     if (motionOptions.log && inputs.motionState == temporal::MotionState::Hybrid && frame % 120 == 0)
                                         LOG_INFO("SR hybrid MV: frame={} geometry_view_ready={} reset={} input={}x{} confidence_mask=1",
                                             frame, motionView.ready, inputs.resetHistory, inputs.plan.width, inputs.plan.height);
-                                    const auto selected = SelectDlssSceneCopyInputs(inputs);
+                                    if (nativeFgInputs && inputs.CompleteForFrameGeneration() &&
+                                        qualifiedEncoding == temporal::ColorEncoding::Sdr)
+                                        nativeFgSceneCopyInputs = inputs;
+                                    const auto selected = nativeFgInputs ? DlssSceneInputSelection{} : SelectDlssSceneCopyInputs(inputs);
                                     if (selected.kind == DlssSceneInputSelection::Kind::Pending) {
                                         static uint64_t loggedPendingSignature = 0;
                                         if (loggedPendingSignature != activePlan.requestSignature) {
@@ -8517,6 +8528,23 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         jitterLogSlot >= 0 ? bits(vsConstants + jitterLogSlot * 4, 16) : "",
                         bits(guestShadow.data(), shadowPair ? 16 : 0), shadowPair ? bits(psConstants + 2 * 4, 16) : "");
                 }
+                if (nativeFgInputs && nativeFgSceneCopyInputs && fullSceneCopy && !depth &&
+                    fgCompositeAttemptedFrame != frame && rasterViewport.width >= activePlan.width &&
+                    rasterViewport.height >= activePlan.height) {
+                    fgCompositeAttemptedFrame = frame;
+                    // The real scene-copy draw has been recorded. Retain only
+                    // depth/motion; the selected final resolve supplies color.
+                    const auto& input = *nativeFgSceneCopyInputs;
+                    auto snapshot = frame_generation::RecordProducerSnapshot(device, commandList, input,
+                        RenderFormat::R8G8B8A8_UNORM, input.color.texture, RenderFormat::R8G8B8A8_UNORM,
+                        {input.color.width, input.color.height}, frame_generation::SnapshotPurpose::CompositedBackbuffer);
+                    if (snapshot) {
+                        snapshot->lineageOwner = fgHandoffPool.Owner();
+                        snapshot->resolveSourceAllocation = color->allocationSerial;
+                        snapshot->resolveSourceGeneration = color->fgWriteGeneration;
+                        Gpu().fgInputSnapshot = snapshot; fgInputSnapshot = std::move(snapshot);
+                    }
+                }
                 if(temporalSceneCopy)temporalSubmittedFrame=frame;
                 if(hdrTonemapRecorded)hdrTonemapApplied=true;
                 if(fullSceneCopy)color->aaProvenance.Invalidate(frame,color->allocationSerial,
@@ -9043,7 +9071,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     !fgInputSnapshot->inputs.cameraValid ||
                     !std::isfinite(fgInputSnapshot->inputs.frameTimeDeltaMilliseconds) ||
                     fgInputSnapshot->inputs.frameTimeDeltaMilliseconds <= 0.0f ||
-                    !dlss_fg::CompositePlanSupported(rs.sourcePlan) ||
+                    !frame_generation::CompositePlanSupported(rs.sourcePlan) ||
                     fgInputSnapshot->inputs.renderFrameId != frame ||
                     fgInputSnapshot->inputs.temporalEpoch != temporalEpoch ||
                     fgInputSnapshot->inputs.plan != rs.sourcePlan ||
@@ -9190,7 +9218,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             bool AcquireFgCompositeForPresent(uint32_t address, frame_generation::CompositeHandoff& out)
             {
                 out = {};
-                if (!fgCompositeEnabled || listOpen || !vulkan ||
+                if (!fgCompositeEnabled || listOpen ||
                     queue != video::GetQueue() || device != video::GetDevice() ||
                     PlanSuppressed() || video::GpuWorkStopped()) return false;
                 auto* rs = NewestResolved(address & 0x1FFFFFFF);
@@ -9299,10 +9327,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 if (taa_collection::Enabled())
                     rs.tex->bindingProducer.Copy(depth.bindingProducer, taa_collection::ConsentEpoch(), frame,
                         x0 == 0 && y0 == 0 && w == texW && h == texH);
-                if (!debugCaptureDir.empty() || temporalExperiment || temporalInputProbe || dlssSrRequested || activeSpatialAA) {
+                if (!debugCaptureDir.empty() || temporalExperiment || temporalInputProbe || dlssSrRequested || nativeFgInputs || activeSpatialAA) {
                     temporalScene.ObserveDepth(depth.allocationSerial, {frame, rs.writeOrdinal, destBase, destFormat,
                         texW, texH, x0 == 0 && y0 == 0 && w == texW && h == texH});
-                    if((temporalExperiment || temporalInputProbe || dlssSrRequested) && temporalHistory && temporalScene.Depth().ordinal==rs.writeOrdinal) {
+                    if((temporalExperiment || temporalInputProbe || dlssSrRequested || nativeFgInputs) && temporalHistory && temporalScene.Depth().ordinal==rs.writeOrdinal) {
                         Transition(*rs.tex,RenderTextureLayout::COPY_SOURCE,RenderBarrierStage::COPY);
                         temporalHistory->CaptureDepth(commandList,rs.tex->texture.get(),temporalScene);
                         if (taaDiagnosticHDR == 1 && hdrTemporalHistory)
@@ -10223,7 +10251,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 const auto temporalEnd = temporal::EvaluateTemporalFrameEnd(*owner, now, r.frame,
                     r.temporalExperiment, r.temporalInputProbe, r.dlssSrRequested,
                     r.temporalScene.Frame() == r.frame && r.temporalScene.Ready(),
-                    r.temporalSubmittedFrame == r.frame, r.temporalFrameTime, r.temporalGapResetFrame);
+                    r.temporalSubmittedFrame == r.frame, r.temporalFrameTime, r.temporalGapResetFrame, r.nativeFgInputs);
                 if (temporalEnd.engaged) {
                 if (r.evaluatePage && r.evaluatePage->frame == r.frame)
                     r.evaluatePage->resetAtFrameEnd = temporalEnd.reset;

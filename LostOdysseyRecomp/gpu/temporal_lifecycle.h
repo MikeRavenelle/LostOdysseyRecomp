@@ -9,8 +9,8 @@ namespace gpu::temporal {
 // input probe, and native DLSS SR — including DLAA, which uses the same SR
 // route — all count. Frame start, the pre-draw gap check, and frame end must
 // share it. Checking only the experiment and probe flags drops ordinary SR.
-inline constexpr bool TemporalConsumerActive(bool experiment, bool inputProbe, bool dlssSr) noexcept {
-    return experiment || inputProbe || dlssSr;
+inline constexpr bool TemporalConsumerActive(bool experiment, bool inputProbe, bool dlssSr, bool frameGenerationInputs = false) noexcept {
+    return experiment || inputProbe || dlssSr || frameGenerationInputs;
 }
 
 inline constexpr std::chrono::milliseconds TemporalHistoryGapLimit{250};
@@ -119,9 +119,9 @@ template <class History>
 TemporalFrameEndDecision EvaluateTemporalFrameEnd(const History& history,
     std::chrono::steady_clock::time_point now, uint64_t frame,
     bool experiment, bool inputProbe, bool dlssSr, bool sceneReady, bool submittedThisFrame,
-    std::chrono::steady_clock::time_point frameTime, uint64_t gapResetFrame) {
+    std::chrono::steady_clock::time_point frameTime, uint64_t gapResetFrame, bool frameGenerationInputs = false) {
     TemporalFrameEndDecision decision;
-    decision.engaged = TemporalConsumerActive(experiment, inputProbe, dlssSr);
+    decision.engaged = TemporalConsumerActive(experiment, inputProbe, dlssSr, frameGenerationInputs);
     if (!decision.engaged) return decision;
     decision.gap = TemporalHistoryIntervalExceeded(now, frameTime);
     const bool historyReady = experiment ? history.Completed() : history.InputsComplete();

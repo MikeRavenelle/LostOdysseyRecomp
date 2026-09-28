@@ -107,7 +107,7 @@ plume::RenderTexture* DepthRemapper::Record(plume::RenderCommandList* commands,
     if (!mapped) { available_=std::move(next); return nullptr; }
     const Constants constants{mapping.scale,mapping.bias,source.x,source.y};
     std::memcpy(mapped,&constants,sizeof(constants)); next->constants->unmap();
-    next->set->setBuffer(1,next->constants.get(),sizeof(constants));
+    next->set->setBuffer(1,next->constants.get(),256); // D3D12 CBV size must be 256-byte aligned.
     next->set->setTexture(0,source.texture,plume::RenderTextureLayout::SHADER_READ);
     // From here command recording can reference the batch even if it fails.
     active_=std::move(next);
