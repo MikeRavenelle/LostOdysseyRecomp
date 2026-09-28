@@ -96,6 +96,16 @@ int wmain(int argc, wchar_t** argv)
     Check(settings::Read().saveAnywhere, "ordinary save retains debug-only preference");
     Check(settings::SaveDebugLanguage(1) && settings::Read().saveAnywhere,
         "debug language save retains save-anywhere preference");
+    for (const auto fps : gpu::frame_rate::kNativeRates)
+    {
+        auto native = settings::GetConfig();
+        native.frameRate = fps;
+        Check(settings::SaveConfig(native), "save native frame-rate preset");
+        Check(settings::GetConfig().frameRate == fps && settings::Read().frameRate == fps,
+            "native frame rate survives runtime validation and INI readback");
+        Check(Contents().find("frame_rate=" + std::to_string(fps) + "\n") != std::string::npos,
+            "native frame rate is persisted as FPS, not menu index");
+    }
     settings::Config fg = settings::GetConfig();
     fg.frameGenerationProvider = framegen::Provider::Dlss;
     fg.frameGenerationMode = framegen::Mode::Dynamic;

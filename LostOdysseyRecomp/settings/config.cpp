@@ -1,4 +1,5 @@
 #include "config.h"
+#include <gpu/frame_rate.h>
 #include <filesystem>
 #include <fstream>
 #include <os/logger.h>
@@ -39,7 +40,7 @@ Config Validate(Config value)
     }
     if (value.antialiasing > 3) value.antialiasing = 0;
     value.fxaa = value.antialiasing == 1;
-    if (value.frameRate != 30 && value.frameRate != 60 && value.frameRate != 120) value.frameRate = 30;
+    value.frameRate = gpu::frame_rate::Normalize(value.frameRate);
     if (value.debugLanguage > 1) value.debugLanguage = 0;
     if (value.uiLanguage > 4)
         value.uiLanguage = 0;
@@ -129,6 +130,8 @@ Config Read()
             value.frameGenerationMultiplier = number;
         else if (key == "frame_generation_target_fps")
             value.frameGenerationTargetFps = number;
+        else if (key == "variable_refresh_rate")
+            value.variableRefreshRate = number == 1;
         else if (key == "frame_rate")
             value.frameRate = number;
         else if (key == "fxaa")
@@ -221,6 +224,7 @@ static bool WriteConfig(const Config &value)
            << "\nupscaler=" << uint32_t(value.upscaler) << "\ndlss_quality=" << uint32_t(value.dlssQuality)
            << "\nfsr_quality=" << uint32_t(value.fsrQuality)
            << "\nfsr_sharpness=" << value.fsrSharpnessPercent
+           << "\nvariable_refresh_rate=" << (value.variableRefreshRate ? 1 : 0)
            << "\nframe_generation_provider=" << uint32_t(value.frameGenerationProvider)
            << "\nframe_generation_mode=" << uint32_t(value.frameGenerationMode)
            << "\nframe_generation_multiplier=" << value.frameGenerationMultiplier

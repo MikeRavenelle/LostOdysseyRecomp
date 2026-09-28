@@ -88,6 +88,20 @@ index 2cdcf18..0a2805e 100644
              }
          }
 
+@@ -1392,7 +1402,12 @@ namespace plume {
+         // If using present wait, we prefer using a SyncInterval of 0 even when Vsync is enabled. Tearing won't happen if DXGI_PRESENT_ALLOW_TEARING is not specified.
+         const bool tearingAllowed = (swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0U;
+         UINT syncInterval = (vsyncEnabled && !desc.enablePresentWait) ? 1 : 0;
+-        UINT flags = (!vsyncEnabled && tearingAllowed) ? DXGI_PRESENT_ALLOW_TEARING : 0;
++        // DXGI forbids ALLOW_TEARING in exclusive fullscreen. Query the actual
++        // swapchain state (Alt+Enter/driver transitions may bypass the UI).
++        BOOL exclusive = TRUE;
++        const bool windowed = !vsyncEnabled && tearingAllowed &&
++            SUCCEEDED(d3d->GetFullscreenState(&exclusive, nullptr)) && !exclusive;
++        UINT flags = windowed ? DXGI_PRESENT_ALLOW_TEARING : 0;
+         HRESULT res = d3d->Present(syncInterval, flags);
+         return SUCCEEDED(res);
+     }
 @@ -1406,21 +1416,27 @@ namespace plume {
      }
  

@@ -76,6 +76,13 @@ int main()
     after = before;
     after.gameLanguage = 2;
     Require(settings::restart::Required(before, after), "game language change did not require restart");
+    before.graphicsBackend = settings::GraphicsBackend::D3D12;
+    before.frameGenerationProvider = framegen::Provider::Dlss;
+    after = before;
+    after.frameGenerationProvider = framegen::Provider::Fsr;
+    Require(settings::restart::Required(before, after), "DLSS FG to FSR FG requires restart");
+    before.frameGenerationProvider = framegen::Provider::Off;
+    Require(!settings::restart::Required(before, after), "FG Off to FSR retains live switching");
     settings::restart::RequestInstall();
     Require(settings::restart::Requested() && settings::restart::InstallRequested() &&
             settings::restart::LaunchArguments(true).find(L"--install") != std::wstring::npos,

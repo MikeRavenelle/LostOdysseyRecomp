@@ -56,7 +56,7 @@ bool D3D12Bridge::Initialize(plume::D3D12Device& device, const framegen::Config&
 }
 void D3D12Bridge::PrepareAfterHostDrain(const CompositeHandoff& handoff,
     plume::D3D12SwapChain& swap, plume::D3D12CommandList& commands, uint64_t epoch) {
-    if (!session_) return;
+    if (!Enabled()) return;
     std::string reason;
     Require(!recording_, "prepare overlaps previous command recording");
     const bool drained = session_->Drain(reason); Require(drained, reason);
@@ -111,22 +111,22 @@ void D3D12Bridge::PrepareAfterHostDrain(const CompositeHandoff& handoff,
     previousVP_ = in.cameraViewProjection; previousRaster_ = in.cameraRaster; previousPlan_ = in.plan;
 }
 void D3D12Bridge::SubmitStart() {
-    if (!session_) return;
+    if (!Enabled()) return;
     if (recording_) attempted_ = true;
     std::string reason; const bool ok = session_->SubmitStart(reason); Require(ok, reason);
 }
 void D3D12Bridge::HostSubmitted(bool success, uint64_t serial) {
-    if (!session_) return;
+    if (!Enabled()) return;
     if (recording_) Require(success && serial && attempted_, "host submission failed");
     std::string reason; const bool ok = session_->Submitted(success, serial, reason); Require(ok, reason);
     recording_ = nullptr; attempted_ = false;
 }
 void D3D12Bridge::PresentStart() {
-    if (!session_) return;
+    if (!Enabled()) return;
     std::string reason; const bool ok = session_->PresentStart(reason); Require(ok, reason);
 }
 void D3D12Bridge::Presented(bool accepted) {
-    if (!session_) return;
+    if (!Enabled()) return;
     std::string reason; const bool ok = session_->Presented(accepted, reason); Require(ok, reason);
     const auto& s = session_->Statistics();
     if (previousFrame_ && previousFrame_ % 120 == 0)
@@ -165,6 +165,16 @@ void D3D12Bridge::Quiesce() {
     std::string reason; const bool ok = session_->Quiesce(reason); Require(ok, reason);
     depth_->ReleaseAfterInputDrain(); previousFrame_ = previousEpoch_ = 0;
 }
+void D3D12Bridge::Suspend() {
+    if (!Enabled()) return;
+    Quiesce();
+    suspended_ = true;
+}
+void D3D12Bridge::ReleaseFeatureAfterGpuDrain() {
+    if (!session_) return;
+    std::string reason;
+    const bool released = session_->ReleaseFeatureAfterGpuDrain(reason); Require(released, reason);
+}
 bool D3D12Bridge::Reconfigure(const framegen::Config& config, std::string& reason) {
     if (!session_ || config.provider != config_.provider) {
         reason = "FG reconfiguration requires an existing provider"; return false;
@@ -173,7 +183,7 @@ bool D3D12Bridge::Reconfigure(const framegen::Config& config, std::string& reaso
     // ordinary presentation against those resources.
     const bool configured = session_->Reconfigure(config, reason);
     Require(configured, reason);
-    config_ = config; previousFrame_ = previousEpoch_ = 0;
+    config_ = config; suspended_ = false; previousFrame_ = previousEpoch_ = 0;
     return true;
 }
 void D3D12Bridge::Shutdown() {

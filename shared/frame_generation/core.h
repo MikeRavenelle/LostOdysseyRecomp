@@ -123,6 +123,10 @@ public:
 struct PresentStatistics {
     uint64_t actualPresents = 0, generatedIntervals = 0;
     bool contiguous = false;
+    void RawPresent(bool accepted) {
+        if (accepted) ++actualPresents;
+        contiguous = false;
+    }
     void Observe(bool queried, bool accepted, bool active, uint32_t delta) {
         if (queried && accepted) actualPresents += delta;
         if (contiguous && queried && accepted && active && delta > 1) ++generatedIntervals;

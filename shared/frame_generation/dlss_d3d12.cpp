@@ -156,6 +156,13 @@ public:
         return Mark(sl::PCLMarker::eRenderSubmitEnd,reason) && Mark(sl::PCLMarker::ePresentStart,reason);
     }
 private:
+    bool ReleaseNativeFeature(std::string& reason) override {
+        if (sdkInitialized_ && used_) {
+            if (!free_ || !Check(free_(sl::kFeatureDLSS_G,viewport_),"SL free FG",reason)) return false;
+            used_=false;
+        }
+        return true;
+    }
     bool PrepareNative(const D3D12Frame& f,ID3D12GraphicsCommandList*,bool reset,std::string& reason) override {
         if (!swapchain_) { reason="DLSS FG swapchain not created"; return false; }
         if (creationErrors.load()!=errorsSeen_) { errorsSeen_=creationErrors.load(); reason="DLSS FG asynchronous feature creation failed"; return false; }
@@ -199,10 +206,12 @@ private:
             if (!Check(tags_(*token_,viewport_,tags,4,nullptr),"SL revoke tags",reason)) return false;
         }
         options_.mode=sl::DLSSGMode::eOff;
-        return Check(setOptions_(viewport_,options_),"DLSS FG off",reason);
+        if (!Check(setOptions_(viewport_,options_),"DLSS FG off",reason)) return false;
+        token_=nullptr;
+        return true;
     }
     bool PresentedNative(bool accepted,std::string& reason) override {
-        if (!token_) { statistics_.contiguous=false; return true; }
+        if (!token_) { statistics_.RawPresent(accepted); return true; }
         if (!Mark(sl::PCLMarker::ePresentEnd,reason)) return false;
         sl::DLSSGState s{};
         const bool queried=Check(getState_(viewport_,s,nullptr),"DLSS FG present state",reason);
@@ -217,8 +226,7 @@ private:
         token_=nullptr; return true;
     }
     bool ShutdownNative(std::string& reason) override {
-        if (sdkInitialized_ && used_ && (!free_ || !Check(free_(sl::kFeatureDLSS_G,viewport_),"SL free FG",reason))) return false;
-        used_=false; swapchain_.Reset();
+        swapchain_.Reset();
         // Proxies contain vtables from the interposer and must die before unload.
         proxyFactory_.Reset(); proxyDevice_.Reset();
         if (sdkInitialized_ && !Check(shutdown_(),"slShutdown",reason)) return false;

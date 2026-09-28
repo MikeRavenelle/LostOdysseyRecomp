@@ -1,5 +1,6 @@
 #pragma once
 #include "../settings/config.h"
+#include "vrr_policy.h"
 #include "../../shared/frame_generation/environment.h"
 #include <string>
 
@@ -21,7 +22,7 @@ inline constexpr bool D3D12CompiledProvider(framegen::Provider provider) {
 // defaults. Individual LO_FG_* switches otherwise override persisted values.
 inline framegen::EnvironmentSelection ResolveD3D12Selection(const settings::Config& saved,
     const char* provider, const char* mode, const char* multiplier,
-    const char* targetFps, const char* legacyDlss) {
+    const char* targetFps, const char* legacyDlss, uint32_t refreshHz = 0) {
     const bool providerOverride = provider || legacyDlss;
     const char* savedProvider = saved.frameGenerationProvider == framegen::Provider::Dlss ? "dlss" :
         saved.frameGenerationProvider == framegen::Provider::Fsr ? "fsr" : "off";
@@ -34,6 +35,9 @@ inline framegen::EnvironmentSelection ResolveD3D12Selection(const settings::Conf
         targetFps ? targetFps : (providerOverride ? nullptr : savedTargetFps.c_str()), legacyDlss);
     if (selection.Enabled() && !D3D12CompiledProvider(selection.config.provider))
         selection.error = "selected D3D12 FG provider was not compiled";
+    if (selection.Enabled() && selection.config.mode == framegen::Mode::Dynamic)
+        selection.config.targetFrameRate = vrr::DynamicTarget(selection.config.targetFrameRate,
+            saved.variableRefreshRate, refreshHz);
     return selection;
 }
 } // namespace gpu::frame_generation
