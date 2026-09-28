@@ -1,0 +1,28 @@
+name: Native FPS development checkpoint
+on:
+  push:
+    branches: [feature/native-90-120fps]
+    paths: [.github/workflows/native-fps-dev.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    if: github.repository == 'freefrank/LostOdysseyRecomp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Export tracked source only
+        run: |
+          git archive --format=tar.gz HEAD -o native-fps-source.tar.gz
+          git rev-parse HEAD > SOURCE_REF.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-fps-source
+          path: |
+            native-fps-source.tar.gz
+            SOURCE_REF.txt
+          retention-days: 1
+          compression-level: 0
