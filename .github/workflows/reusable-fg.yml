@@ -20,3 +20,35 @@ jobs:
       - run: cmake -S tools/tests/frame_generation -B out/fg-core
       - run: cmake --build out/fg-core --config Release
       - run: ctest --test-dir out/fg-core -C Release --output-on-failure
+  native:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        provider: [DLSS, FSR, BOTH]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: NVIDIA-RTX/Streamline
+          ref: 2122257e0fce486f91b385aa63b9a09b0a34b363
+          path: out/deps/streamline
+          sparse-checkout: include
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
+          ref: c6efa6bf7f2027b3ec94f28578bb5965eabb9e55
+          path: out/deps/fidelityfx
+          sparse-checkout: ffx-api/include
+          persist-credentials: false
+      - name: Configure independent SDK adapters
+        shell: pwsh
+        run: |
+          $dlss = '${{ matrix.provider }}' -ne 'FSR'
+          $fsr = '${{ matrix.provider }}' -ne 'DLSS'
+          cmake -S tools/tests/frame_generation -B out/fg-native -A x64 -DFRAMEGEN_WITH_DLSS=$dlss -DFRAMEGEN_WITH_FSR=$fsr -DFRAMEGEN_STREAMLINE_INCLUDE="$pwd/out/deps/streamline/include" -DFRAMEGEN_FIDELITYFX_INCLUDE="$pwd/out/deps/fidelityfx/ffx-api/include"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: cmake --build out/fg-native --config Release --parallel 2
+      - run: ctest --test-dir out/fg-native -C Release --output-on-failure
