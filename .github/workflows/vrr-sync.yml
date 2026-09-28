@@ -1,39 +1,70 @@
-name: Inspect VRR branch integration
+name: Sync VRR branch with reviewed main
 on:
   push:
     branches: [feature/native-90-120fps]
     paths: [.github/workflows/vrr-sync.yml]
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: native-vrr-main-sync
+  cancel-in-progress: false
 jobs:
-  inspect:
-    if: github.repository == 'freefrank/LostOdysseyRecomp'
+  integrate:
+    if: github.repository == 'freefrank/LostOdysseyRecomp' && github.ref == 'refs/heads/feature/native-90-120fps'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false
-      - name: Inspect merge without committing
+      - name: Merge pinned main and retain RGB range plus VRR controls
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           status=0
-          git merge --no-commit --no-ff b0f8230ba33685fdb6aa9f8e940344c9755cb464 > "$RUNNER_TEMP/merge.log" 2>&1 || status=$?
-          cat "$RUNNER_TEMP/merge.log"
-          test "$status" -le 1
-          git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
-          cat "$RUNNER_TEMP/conflicts.txt"
-          git diff HEAD --name-only -z > "$RUNNER_TEMP/files.list"
-          tar --null -T "$RUNNER_TEMP/files.list" -czf "$RUNNER_TEMP/merged-files.tar.gz"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vrr-main-integration
-          path: |
-            ${{ runner.temp }}/merged-files.tar.gz
-            ${{ runner.temp }}/merge.log
-            ${{ runner.temp }}/conflicts.txt
-          retention-days: 1
+          git merge --no-commit --no-ff b0f8230ba33685fdb6aa9f8e940344c9755cb464 || status=$?
+          test "$status" -eq 1
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          expected = {'LostOdysseyRecomp/settings/menu.h', 'LostOdysseyRecomp/settings/menu.cpp'}
+          actual = set(subprocess.check_output(['git','diff','--name-only','--diff-filter=U'], text=True).splitlines())
+          assert actual == expected, actual
+          p = Path('LostOdysseyRecomp/settings/menu.h')
+          s = p.read_text()
+          pattern = r'<<<<<<< HEAD\n.*?>>>>>>> b0f8230ba33685fdb6aa9f8e940344c9755cb464\n    Brightness = 13,\n    Save = 14,\n    Count = 15,'
+          replacement = '\n'.join(['    RgbRange = 9,', '    FrameRate = 10,', '    FrameGeneration = 11,', '    FrameGenerationMultiplier = 12,', '    VariableRefreshRate = 13,', '    Brightness = 14,', '    Save = 15,', '    Count = 16,'])
+          s, n = re.subn(pattern, replacement, s, flags=re.S)
+          assert n == 1
+          p.write_text(s)
+          p = Path('LostOdysseyRecomp/settings/menu.cpp')
+          s = p.read_text()
+          pattern = r'<<<<<<< HEAD\n(.*?)=======\n(.*?)>>>>>>> b0f8230ba33685fdb6aa9f8e940344c9755cb464\n'
+          s, n = re.subn(pattern, lambda m: m[2] + m[1], s, flags=re.S)
+          assert n == 1 and 'placeGraphics(GraphicsRow::RgbRange' in s and 'frameRates.push_back' in s
+          assert '<<<<<<< HEAD' not in s
+          p.write_text(s)
+          PY
+          git add LostOdysseyRecomp/settings/menu.h LostOdysseyRecomp/settings/menu.cpp
+          git diff --cached --check
+      - name: Recheck CPU policies and combined menu
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S tools/tests/vrr -B "$RUNNER_TEMP/vrr-check"
+          cmake --build "$RUNNER_TEMP/vrr-check" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/vrr-check" --output-on-failure
+          cmake -S tools/tests/settings_menu -B "$RUNNER_TEMP/menu-check"
+          cmake --build "$RUNNER_TEMP/menu-check" --target LoSettingsInteraction --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/menu-check" --output-on-failure -R '^settings_interaction$'
+          echo 'CPU_AND_MENU_ONLY: no full game build or hardware VRR test'
+      - name: Commit and push merge to feature branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --cached --stat
+          git commit -m 'Merge main into native FPS/VRR branch and preserve RGB range controls'
+          git push origin HEAD:refs/heads/feature/native-90-120fps
+          git rev-parse HEAD
