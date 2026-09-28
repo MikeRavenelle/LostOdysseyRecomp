@@ -1,0 +1,39 @@
+name: Inspect VRR branch integration
+on:
+  push:
+    branches: [feature/native-90-120fps]
+    paths: [.github/workflows/vrr-sync.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.repository == 'freefrank/LostOdysseyRecomp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Inspect merge without committing
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          status=0
+          git merge --no-commit --no-ff b0f8230ba33685fdb6aa9f8e940344c9755cb464 > "$RUNNER_TEMP/merge.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/merge.log"
+          test "$status" -le 1
+          git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
+          cat "$RUNNER_TEMP/conflicts.txt"
+          git diff HEAD --name-only -z > "$RUNNER_TEMP/files.list"
+          tar --null -T "$RUNNER_TEMP/files.list" -czf "$RUNNER_TEMP/merged-files.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vrr-main-integration
+          path: |
+            ${{ runner.temp }}/merged-files.tar.gz
+            ${{ runner.temp }}/merge.log
+            ${{ runner.temp }}/conflicts.txt
+          retention-days: 1
