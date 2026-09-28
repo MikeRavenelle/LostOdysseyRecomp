@@ -128,6 +128,9 @@ def main():
 
         print(f"Fetching {REMOTE} main branch...")
         git("init", "--quiet")
+        # The private repository also holds many feedback records. Only the
+        # shader bundle is needed here; avoid materializing unrelated files.
+        git("sparse-checkout", "set", "--cone", "shaders")
         git("remote", "add", "origin", REMOTE)
 
         for attempt in range(3):

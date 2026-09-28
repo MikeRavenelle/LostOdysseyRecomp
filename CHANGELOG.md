@@ -9,16 +9,16 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 ### English
 
 - Added Windows D3D12 frame generation in Graphics: Off/DLSS/FSR, DLSS multipliers and fixed 2× FSR. Save to apply without restarting.
+- Added refreshed portable Vulkan shaders and a separate DX12 shader pack for `shaders/`.
 - Fixed stale rendering bindings and Vulkan frame-generation input handling.
-- Fixed AppImage compatibility with Ubuntu 22.04 and improved Flatpak packaging.
-- Simplified Windows updates while preserving rollback on failure.
+- Fixed AppImage compatibility with Ubuntu 22.04, improved Flatpak packaging and simplified Windows updates while preserving rollback on failure.
 
 ### 简体中文
 
 - 图像设置新增 Windows D3D12 帧生成：关／DLSS／FSR，支持 DLSS 倍数及固定 2× FSR，保存后无需重启即可生效。
+- 更新便携式 Vulkan shader，并提供放入 `shaders/` 的独立 DX12 shader pack。
 - 修复残留渲染绑定与 Vulkan 帧生成输入处理。
-- 修复 Ubuntu 22.04 AppImage 兼容性，改进 Flatpak 打包。
-- 简化 Windows 更新流程，保留失败回滚。
+- 修复 Ubuntu 22.04 AppImage 兼容性，改进 Flatpak 打包并简化 Windows 更新流程，保留失败回滚。
 
 ## Unreleased / 未发布
 
