@@ -10,6 +10,7 @@
 - [x] **v0.7.1 已发布：**源码提交 `c585ef820cb72993ad87a90a1a03c1c648fb654c`，打标 `v0.7.1`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1)（2026-09-26T21:51:24Z），Release CI [36274702691](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36274702691)。包含 Gameplay → 导入光盘与 DLC、安全重启至导入器、选择性替换与失败回滚。公开产物已核实 SHA256：Windows 包 `LostOdysseyRecomp-windows-x64-v0.7.1.zip`（243,762,106 字节，SHA256 `e53753a71b06ab39c41a3a5b327a8477523db4b006543c54e70834b183c5291f`），Linux AppImage `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage`（251,038,200 字节，SHA256 `878d04f9a530771fc2ba752842c1c9b5ba1cfc3fea63555a401dd53b46dd6e65`），正式独立 Flatpak `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`（265,618,800 字节，SHA256 `2efe0a4ba556037f9118894b36cba4b7667132b708c9ec3ea325db9c16f71775`，stable 分支），以及 Flathub 输入 runtime `LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz`（SHA256 `661838345ca5e1590dce99e35a9dba2bc1138d073c1c76d947aec34ea4db931f`）。Flatpak 经验证获 psvita 用户验收（严格限制于该验证范围，不推断性能或多场景兼容性）。
 - [x] **v0.7.2 已发布：**merge 源码 `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`，打标 `v0.7.2`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2)（2026-09-27T08:59:13Z），Release CI [36305268629](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36305268629)。新增有界的 Windows D3D12 DLSS/FSR SR、DLAA 尺寸修正，以及原生物体运动不可用时的相机／深度 hybrid motion。10 个资产均与 GitHub SHA-256 和大小记录一致；Windows ZIP、AppImage sidecar 和 Flatpak CI 核验通过。更广场景、画质、性能和其他 GPU 覆盖不在本次发布证据范围内。
 - [x] **v0.7.9 已发布：**打标 `v0.7.9`，tag commit 为 `99fdcfa232e4deff2a80989d217524e7eb4bb365`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9)（2026-09-28T05:03:17Z），Release CI [36378342125](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36378342125)。新增 Windows D3D12 图像页 FG 分区，支持关／DLSS／FSR 和同进程即时生效，并加入 Ubuntu 22.04 AppImage 基线及 AppDir 复用 Flatpak。公开发布仅包含 Windows ZIP、Linux AppImage 和 stable Flatpak；更广游戏、跨 GPU、画质及物理显示验证仍待完成。
+- [x] **PR #80 已合并，尚未发布：**合并提交 [`e79a793`](https://github.com/freefrank/LostOdysseyRecomp/commit/e79a793530412633bc57b6fbd9b43097023deb3c) 新增原生 90／120 FPS 目标和 FreeSync／G-SYNC Compatible VRR 输出节奏控制。PR 最终 8 项 CI 检查全部通过；本地 Windows Clang、帧节奏、可复用 FG、菜单流程和重启检查也已通过。同场景用户证据确认输出节奏低于 144，且 G-SYNC／刷新率发生变化。FG Off→On 后正常运行超过 20 秒，但正常退出曾发生 NGX 访问冲突；两阶段清理修复已通过构建，尚未重新进行前台验证。FG 画面边缘问题在 VRR On／Off 下相近，重启后的 FSR 启动未测试，更广游戏、退出生命周期和发布验收仍待完成。
 
 ## 已完成功能与已核对跟踪项
 
@@ -45,7 +46,7 @@
 4. [~] **独立 FSR 插帧后续：**独立 D3D12 FSR FG provider 已随 v0.7.9 交付；更广硬件、场景、节奏和画质验证仍待完成。
 5. [~] **D3D12 DLSS 插帧后续：**D3D12 DLSS FG 和图像菜单即时切换已随 v0.7.9 交付；更广验证和 failure injection 覆盖仍待完成。
 6. [~] **动态 MFG 后续：**D3D12 adapter 已包含受能力限制的诊断动态 MFG 路径，游戏内菜单仍只提供固定模式。更广 API、平台、倍率和硬件验证仍待完成。
-7. [ ] **可选原生 120 FPS：**游戏独立帧呈现，不是生成帧；需验证节奏、Ring、音频与过场，默认保留 60 FPS。
+7. [~] **原生 90／120 FPS 与 VRR：**原生游戏呈现和 FreeSync／G-SYNC Compatible 输出节奏已在 PR #80 合并，但尚未发布。同场景输出节奏和硬件指示器变化已有有界用户证据；Ring、音频、过场、更广游戏、退出生命周期、FG 画质和发布验证仍待完成，默认保留 60 FPS。
 8. [ ] **移除 PM4 转换器：**替代架构可行性提前调查，执行排在插帧与呈现工作之后。
 9. [ ] **Linux AArch64：**平台交付目标，尚不宣称官方包或实机验收。
 10. [ ] **macOS AArch64／Apple Silicon：**图形后端与依赖可行性提前调查，平台交付目标。
