@@ -1,4 +1,5 @@
 #include "config.h"
+#include <gpu/frame_rate.h>
 #include <filesystem>
 #include <fstream>
 #include <os/logger.h>
@@ -39,7 +40,7 @@ Config Validate(Config value)
     }
     if (value.antialiasing > 3) value.antialiasing = 0;
     value.fxaa = value.antialiasing == 1;
-    if (value.frameRate != 30 && value.frameRate != 60 && value.frameRate != 120) value.frameRate = 30;
+    value.frameRate = gpu::frame_rate::Normalize(value.frameRate);
     if (value.debugLanguage > 1) value.debugLanguage = 0;
     if (value.uiLanguage > 4)
         value.uiLanguage = 0;

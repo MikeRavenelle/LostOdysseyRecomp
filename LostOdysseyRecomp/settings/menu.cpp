@@ -4,6 +4,7 @@
 #include "menu_assets.h"
 #include "config.h"
 #include "graphics_menu.h"
+#include <gpu/frame_rate.h>
 #include "restart.h"
 #include "translations.h"
 #include <gpu/video.h>
@@ -498,10 +499,14 @@ void Publish(uint8_t *base, uint32_t config)
         placeGraphics(GraphicsRow::ScalingQuality, makeChoices(L"Scaling filter", L"縮放濾鏡",
                    {Tr(L"Standard", L"標準"), Tr(L"High", L"高")},
                    std::min(edit.scalingQuality, 1u)));
+        std::vector<std::wstring> frameRates;
+        for (const auto fps : gpu::frame_rate::kNativeRates) {
+            auto label = std::to_wstring(fps) + L" FPS";
+            if (fps > 30) label += Tr(L" (experimental)", L"（實驗性）");
+            frameRates.push_back(std::move(label));
+        }
         placeGraphics(GraphicsRow::FrameRate, makeChoices(L"Frame rate", L"影格率",
-                   {L"30 FPS", std::wstring(L"60 FPS") + Tr(L" (experimental)", L"（實驗性）"),
-                    std::wstring(L"120 FPS") + Tr(L" (experimental)", L"（實驗性）")},
-                   edit.frameRate == 120 ? 2 : edit.frameRate == 60 ? 1 : 0));
+                   std::move(frameRates), gpu::frame_rate::MenuIndex(edit.frameRate)));
         std::vector<std::wstring> providers;
         uint32_t selected = 0;
         for (auto provider : FgProviders()) {
@@ -612,11 +617,11 @@ void Publish(uint8_t *base, uint32_t config)
                            L"控制啟用縮放時的取樣濾鏡。");
             break;
         case GraphicsRow::FrameRate:
-            next.help = edit.frameRate == 120
-                ? Tr(L"120 FPS is experimental and requires LO_EXPERIMENTAL_120; otherwise runs at 60 FPS.",
-                     L"120 FPS 為實驗性功能，需啟用 LO_EXPERIMENTAL_120，否則以 60 FPS 執行。")
-                : Tr(L"60/120 FPS are experimental. Verify game speed, audio and battle timing.",
-                     L"60/120 FPS 為實驗性功能，請確認遊戲速度、音訊與戰鬥時序。");
+            next.help = edit.frameRate > 60
+                ? Tr(L"90/120 FPS render real game frames. No extra flag is needed. Verify speed, audio and battle timing.",
+                     L"90/120 FPS 渲染真實遊戲影格，無需額外開關。請確認遊戲速度、音訊與戰鬥時序。")
+                : Tr(L"Native game-frame target, independent of frame generation. Applies after saving.",
+                     L"原生遊戲影格率，獨立於影格生成。儲存後套用。");
             break;
         case GraphicsRow::FrameGeneration:
         case GraphicsRow::FrameGenerationMultiplier:
@@ -1256,9 +1261,8 @@ PPC_FUNC(sub_822F19B0)
                 break;
             case GraphicsRow::FrameRate:
             {
-                constexpr uint32_t rates[] = {30, 60, 120};
-                const uint32_t index = edit.frameRate == 120 ? 2u : edit.frameRate == 60 ? 1u : 0u;
-                edit.frameRate = rates[cycle(index, 3)];
+                const auto index = gpu::frame_rate::MenuIndex(edit.frameRate);
+                edit.frameRate = gpu::frame_rate::FromMenuIndex(cycle(index, gpu::frame_rate::kCount));
                 break;
             }
             case GraphicsRow::FrameGeneration:

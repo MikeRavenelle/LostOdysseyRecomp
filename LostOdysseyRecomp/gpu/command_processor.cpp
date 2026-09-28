@@ -28,11 +28,14 @@ void DumpGuestThreadStates();
 
 namespace gpu
 {
-    static std::atomic<uint32_t> g_frameRateTarget{30};
+    static std::atomic<uint32_t> g_frameRateTarget{frame_rate::kDefault};
     bool SetFrameRateTarget(uint32_t fps)
     {
-        if (fps != 30 && fps != 60 && fps != 120) return false;
-        g_frameRateTarget.store(fps, std::memory_order_relaxed);
+        if (!frame_rate::Supported(fps)) return false;
+        const auto previous = g_frameRateTarget.exchange(fps, std::memory_order_relaxed);
+        if (previous != fps)
+            LOG_INFO("native frame rate changed: requested={} effective={} source=guest_swap (FG is independent)",
+                fps, GetFrameRateTarget());
         return true;
     }
     uint32_t GetFrameRateTarget()
@@ -547,7 +550,7 @@ namespace gpu
         {
             // Drop overdue wall-clock deadlines rather than deliver a burst
             // of synthetic catch-up interrupts after a host scheduling stall.
-            std::this_thread::sleep_until(pacer.Schedule(std::chrono::steady_clock::now(), 60));
+            std::this_thread::sleep_until(pacer.Schedule(std::chrono::steady_clock::now(), frame_rate::kGuestRefreshHz));
             ++m_counter;
 
             // Watchdog: no swap for 5 seconds -> dump what every guest thread waits on.

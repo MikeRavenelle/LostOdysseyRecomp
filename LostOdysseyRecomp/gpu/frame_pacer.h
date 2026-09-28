@@ -1,4 +1,5 @@
 #pragma once
+#include "frame_rate.h"
 #include <chrono>
 #include <cstdint>
 
@@ -31,11 +32,18 @@ private:
 
 // Only the known interval-2 path is changed. Preserve immediate, interval-1,
 // interval-3, flags and every caller other than the identified present site.
-constexpr uint32_t MapPresentInterval(uint32_t value, uint32_t caller,
-    uint32_t fps, bool experimental120)
+// The virtual display stays at 60 Hz. Above 60 FPS, wait on the host's native
+// frame deadline instead of an integer number of guest vblanks (90 cannot be
+// represented that way). Zero is the existing LO_FPS uncapped diagnostic.
+// Do not scale the PPC timebase, engine delta, audio or virtual vblank clocks.
+constexpr uint32_t MapPresentInterval(uint32_t value, uint32_t caller, uint32_t fps)
 {
-    if (caller != 0x827B4A4C || (value & 0xFF00u) != 0x200u || fps < 60)
+    if (caller != 0x827B4A4C || (value & 0xFF00u) != 0x200u)
         return value;
-    return (value & ~0xFF00u) | ((fps == 120 && experimental120) ? 0u : 0x100u);
+    if (fps == frame_rate::kGuestRefreshHz)
+        return (value & ~0xFF00u) | 0x100u;
+    if (frame_rate::NeedsImmediate(fps))
+        return value & ~0xFF00u;
+    return value;
 }
 }

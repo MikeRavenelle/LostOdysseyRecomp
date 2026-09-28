@@ -32,6 +32,7 @@
 #endif
 #endif
 #include "command_processor.h"
+#include "frame_rate.h"
 #include "frame_plan.h"
 #include <settings/config.h>
 #include <settings/menu.h>
@@ -333,6 +334,11 @@ namespace gpu::video
         }
         struct PresentationDisplayState {
             uint64_t resizedTicket = 0;
+            // Reset with swapchain ownership, not on ordinary resize. Preserve
+            // the backend/SDK's original low-rate policy when leaving high FPS.
+            bool nativeVsyncInitialized = false;
+            bool nativeVsyncBaseline = true, nativeVsyncRequested = true;
+            bool nativeVsyncReportPending = false;
 #ifdef _WIN32
             int appliedMode = -1;
             uint64_t appliedSize = 0, appliedTicket = 0;
@@ -1235,6 +1241,7 @@ namespace gpu::video
         if (g_initAttempted)
             return g_available;
         g_initAttempted = true;
+        gpu::SetFrameRateTarget(settings::GetConfig().frameRate);
 
         if (getenv("LO_HEADLESS"))
         {
@@ -2118,9 +2125,36 @@ namespace gpu::video
 #endif
         if (!g_available || !g_swapChain || GpuWorkStopped())
             return false;
+        // Shared by real game frames and paused host overlays. Saving a new
+        // cap applies here before any swapchain acquire, even while paused.
+        gpu::SetFrameRateTarget(settings::GetConfig().frameRate);
 #if defined(_WIN32) && defined(LO_ENABLE_D3D12_FG)
         if (!ReconcileD3D12FrameGeneration()) return false;
 #endif
+        const auto nativeTarget = gpu::GetFrameRateTarget();
+        auto& nativePolicy = g_presentationDisplay;
+        if (!nativePolicy.nativeVsyncInitialized) {
+            nativePolicy.nativeVsyncBaseline = g_swapChain->isVsyncEnabled();
+            nativePolicy.nativeVsyncRequested = nativePolicy.nativeVsyncBaseline;
+            nativePolicy.nativeVsyncInitialized = true;
+            nativePolicy.nativeVsyncReportPending = true;
+        }
+        bool forceImmediate = false;
+#if defined(LO_ENABLE_STREAMLINE_FG) && defined(_WIN32)
+        // Retain the existing Vulkan DLSS-G requirement at every native cap.
+        forceImmediate = bool(g_fgSession);
+#endif
+        const bool nativeVsync = frame_rate::HostVsyncEnabled(nativeTarget,
+            nativePolicy.nativeVsyncBaseline, forceImmediate);
+        if (nativeVsync != nativePolicy.nativeVsyncRequested) {
+            // Plume marks Vulkan's swapchain for resize; the existing transaction
+            // below quiesces FG, cancels leases and waits before replacing images.
+            // Cache the request, not isVsyncEnabled(), to avoid per-frame retries
+            // when the WSI cannot supply immediate presentation.
+            g_swapChain->setVsyncEnabled(nativeVsync);
+            nativePolicy.nativeVsyncRequested = nativeVsync;
+            nativePolicy.nativeVsyncReportPending = true;
+        }
         displayTicket = g_displayChanges.PresentationTicket();
         if (g_windowResizeRequested.exchange(false)) g_forceSwapResize = true;
         if (displayTicket && displayTicket != g_presentationDisplay.resizedTicket) {
@@ -2191,6 +2225,18 @@ namespace gpu::video
         }
         if (g_swapChain->isEmpty())
             return false;
+        if (nativePolicy.nativeVsyncReportPending) {
+            const bool reportedVsync = g_swapChain->isVsyncEnabled();
+            LOG_INFO("native presentation: target={} requested_vsync={} reported_vsync={} guest_refresh={} clocks=unchanged",
+                nativeTarget, nativePolicy.nativeVsyncRequested, reportedVsync, frame_rate::kGuestRefreshHz);
+            if (!nativePolicy.nativeVsyncRequested && reportedVsync) {
+                LOG_WARNING("native presentation: immediate mode unavailable; display synchronization may limit native FPS");
+                // Accept the backend's fallback instead of leaving a mismatched
+                // required/created mode that could rebuild on every frame.
+                g_swapChain->setVsyncEnabled(reportedVsync);
+            }
+            nativePolicy.nativeVsyncReportPending = false;
+        }
         width = g_swapChain->getWidth();
         height = g_swapChain->getHeight();
         return width != 0 && height != 0;
@@ -2354,7 +2400,6 @@ namespace gpu::video
         ServicePendingDlssSizing();
         renderer::SetOutputSize(menuWidth, menuHeight);
         const auto presentationConfig = settings::GetConfig();
-        gpu::SetFrameRateTarget(presentationConfig.frameRate);
         const PresentationOptions presentationOptions{
             presentationConfig.antialiasing == 3 ? Antialiasing::SMAA : static_cast<Antialiasing>(presentationConfig.antialiasing),
             presentationConfig.scalingQuality ? ScalingFilter::Bicubic : ScalingFilter::Bilinear};

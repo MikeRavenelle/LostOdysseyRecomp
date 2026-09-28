@@ -27,6 +27,7 @@ PREAMBLE = r'''
 #include <settings/restart.h>
 #include <settings/language_selection.h>
 #include <gpu/frame_plan.h>
+#include <gpu/frame_rate.h>
 #include <gpu/display_change.h>
 #ifdef _WIN32
 #include <windows.h>
