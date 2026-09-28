@@ -24,7 +24,7 @@ jobs:
           patch=gzip.decompress(base64.b64decode(data,validate=True))
           assert hashlib.sha256(patch).hexdigest()=='7965ffd405b5051b8e038c65b00cda9aca3eec38360a60106653df0d21581348', 'transport mismatch'
           # Zero-context patches require the exact reviewed base blobs.
-          for block in patch.decode().split('diff --git ')[1:]:
+          for block in re.split(r'^diff --git ',patch.decode(),flags=re.M)[1:]:
               path=block.splitlines()[0].split(' b/',1)[1]
               old=re.search(r'^index ([0-9a-f]{40})\.\.',block,re.M).group(1)
               if old!='0'*40:
