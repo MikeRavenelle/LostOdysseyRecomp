@@ -4,7 +4,7 @@ Base: `menu@257f3866e9f9f5d3e65550c86dce453290cf7ee4`.
 This change follows reblue's build/distribution separation; it does not copy its
 renderer or change Lost Odyssey's shader translation semantics.
 
-## Current v0.7.10 follow-up (publication pending)
+## Current v0.7.10 release
 
 The current shader-pack follow-up adds backend-specific selection and a DX12
 `.lospd` format alongside the existing Vulkan `.lospv` path. The new Vulkan
@@ -14,11 +14,11 @@ candidates. The new DX pack contains 28,546 records and is 80,222,382 bytes;
 `LoShaderPackTool verify` passed for it. The CPU contract passed 74 checks and
 the development game build passed.
 
-These packs are validated reissue artifacts awaiting asset upload. A Windows D3D12
+These packs are published with v0.7.10. A Windows D3D12
 `--prepare-shaders-only` run selected the DX12 backend and loaded the default-path
 DX pack, reporting `28546 records`, `25057 unique binaries` and `80222382 file
-bytes`; guest startup was intentionally skipped. No standalone DX asset is
-published yet. The runtime-hit check used `--prepare-shaders-only` and did not
+bytes`; guest startup was intentionally skipped. The standalone DX asset is
+published separately. The runtime-hit check used `--prepare-shaders-only` and did not
 start the guest or validate GPU draws, image quality or full-game coverage.
 
 ## v0.6.15 release

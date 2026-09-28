@@ -23,7 +23,7 @@ Optional diagnostics are off by default and can be disabled in Settings. See [Pr
 
 | Version | Highlights |
 | :--- | :--- |
-| v0.7.10 | Refreshed bundled Vulkan shaders (+19 captured records) and a separate DX12 shader pack under `shaders/`. |
+| [v0.7.10](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.10) | Refreshed bundled Vulkan shaders (+19 captured records) and a separate DX12 shader pack under `shaders/`. |
 | [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 frame generation (Off/DLSS/FSR), applied on Save without restarting; Ubuntu 22.04 AppImage compatibility and updater improvements. |
 | [v0.7.3](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3) | D3D12 binding de-duplication and opt-in rendering diagnostics. |
 | [v0.7.2](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2) | D3D12 DLSS/FSR super-resolution routes and DLAA sizing correction. |

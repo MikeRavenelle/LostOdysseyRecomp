@@ -23,7 +23,7 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 
 | 版本 | 主要更新 |
 | :--- | :--- |
-| v0.7.10 | 更新内置 Vulkan shader（增加 19 条捕获记录），并提供放在 `shaders/` 下的独立 DX12 shader pack。 |
+| [v0.7.10](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.10) | 更新内置 Vulkan shader（增加 19 条捕获记录），并提供放在 `shaders/` 下的独立 DX12 shader pack。 |
 | [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 帧生成（关／DLSS／FSR），保存后无需重启；修复 Ubuntu 22.04 AppImage 兼容性和更新器问题。 |
 | [v0.7.3](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3) | 减少 D3D12 重复绑定，新增可选渲染诊断。 |
 | [v0.7.2](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2) | D3D12 DLSS／FSR 超分路径和 DLAA 尺寸修正。 |

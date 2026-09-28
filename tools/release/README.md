@@ -27,16 +27,17 @@ longer generates this compatibility SHA map; ordinary packages may retain
 `files` as path-to-size metadata, but it is not used for integrity
 authentication.
 
-For the v0.7.9 base public release, publish the Windows ZIP, Linux AppImage,
-and stable Linux Flatpak bundle. Optional portable shader assets may be
-published separately when their runtime and packaging checks are complete. Do
+For the v0.7.9 prerelease, the original Windows ZIP, Linux AppImage,
+and stable Linux Flatpak bundle remain available. Optional portable shader
+assets belong to later releases. Do
 not publish the Flatpak runtime archive, `release-source.json`, or standalone
 checksum/source-list assets; checksum and source records remain CI or local
 internal validation artifacts.
 
-For v0.7.10, bundle the refreshed Vulkan pack in the Windows ZIP. Publish the
-DX12 `.lospd` pack as a separate fourth GitHub asset after its pack and runtime
-checks pass. Users place it at `shaders/portable_dx12.lospd` beside the runtime.
+For v0.7.10, bundle the refreshed Vulkan pack in the Windows ZIP and Linux
+packages. The DX12 `.lospd` pack is published as a separate fourth GitHub
+asset. Users place it at
+`shaders/portable_dx12.lospd` beside the runtime.
 
 Release workflow design: the Linux job compiles once, creates a persistent
 AppImage AppDir, and exports the stable Flatpak by reusing that AppDir's
