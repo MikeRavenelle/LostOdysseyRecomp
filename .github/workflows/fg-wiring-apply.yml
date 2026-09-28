@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - name: Apply exact reviewed source, remove transport, commit and push
+      - name: Commit source only without changing workflow files
         shell: bash
         run: |
           set -euo pipefail
@@ -23,18 +23,18 @@ jobs:
           data=''.join(Path(f'.github/fg-wiring.part{i}').read_text().strip() for i in range(3))
           patch=gzip.decompress(base64.b64decode(data,validate=True))
           assert hashlib.sha256(patch).hexdigest()=='7965ffd405b5051b8e038c65b00cda9aca3eec38360a60106653df0d21581348', 'transport mismatch'
-          # Zero-context patches require the exact reviewed base blobs.
           for block in re.split(r'^diff --git ',patch.decode(),flags=re.M)[1:]:
               path=block.splitlines()[0].split(' b/',1)[1]
               old=re.search(r'^index ([0-9a-f]{40})\.\.',block,re.M).group(1)
               if old!='0'*40:
                   actual=subprocess.check_output(['git','rev-parse','HEAD:'+path],text=True).strip()
                   assert actual==old, f'base changed: {path}'
-          subprocess.run(['git','apply','--check','--index','--unidiff-zero','--whitespace=nowarn'],input=patch,check=True)
-          subprocess.run(['git','apply','--index','--unidiff-zero','--whitespace=nowarn'],input=patch,check=True)
+          args=['git','apply','--index','--unidiff-zero','--whitespace=nowarn','--exclude=.github/workflows/fg-game-integration.yml']
+          subprocess.run(args+['--check'],input=patch,check=True)
+          subprocess.run(args,input=patch,check=True)
           PY
           git diff --cached --check -- . ':!tools/patches/plume-lostodyssey.patch'
-          git rm .github/fg-wiring.part0 .github/fg-wiring.part1 .github/fg-wiring.part2 .github/workflows/fg-wiring-apply.yml
+          git rm .github/fg-wiring.part0 .github/fg-wiring.part1 .github/fg-wiring.part2
           git config user.name 'dotSlash'
           git config user.email 'freefrank21@gmail.com'
           git commit -m 'feat(fg): wire reusable providers into D3D12 game presentation'
