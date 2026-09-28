@@ -10,6 +10,7 @@
 namespace debug_menu::fast_forward {
 inline constexpr unsigned Rates[] = {2, 3, 4, 6, 8};
 inline constexpr uint64_t InputLeaseNs = 250000000;
+enum class Mode { Hold, Toggle };
 inline uint64_t NowNs() {
     return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -35,16 +36,18 @@ struct Clock {
         return value;
     }
 };
-struct Status { bool enabled = false, active = false; unsigned multiplier = 2; };
+struct Status { bool enabled = false, active = false; unsigned multiplier = 2; Mode mode = Mode::Hold; };
 struct Control {
     Clock clock;
     bool enabled = false, armed = false, held = false;
     unsigned multiplier = 2;
+    Mode mode = Mode::Hold;
     void Stop(uint64_t now) {
         clock.Read(now); clock.rate = 1; clock.lease = now;
         held = armed = false;
     }
     void Enable(bool value, uint64_t now) { Stop(now); enabled = value; }
+    void SetMode(Mode value, uint64_t now) { Stop(now); mode = value; }
     void SetRate(unsigned value, uint64_t now) {
         if (std::find(std::begin(Rates), std::end(Rates), value) == std::end(Rates)) return;
         clock.Read(now); multiplier = value;
@@ -58,15 +61,21 @@ struct Control {
         if (!allowed || clock.paused || !enabled) { Stop(now); return; }
         // Require a release after focus/menu/enable changes. Hysteresis prevents
         // trigger noise; LT+RT remains available to the retail editor.
-        if (lt <= 32) { held = false; armed = true; }
-        else if (lt >= 64 && armed) held = true;
+        if (lt <= 32) {
+            if (mode == Mode::Hold) held = false;
+            armed = true;
+        } else if (lt >= 64 && armed) {
+            if (mode == Mode::Hold) held = true;
+            else if (rt <= 32) held = !held;
+            armed = false;
+        }
         clock.rate = held && rt <= 32 ? multiplier : 1;
         clock.lease = now > std::numeric_limits<uint64_t>::max() - InputLeaseNs
             ? std::numeric_limits<uint64_t>::max() : now + InputLeaseNs;
     }
     Status Get(uint64_t now) {
         clock.Read(now);
-        return {enabled, clock.rate > 1 && !clock.paused, multiplier};
+        return {enabled, clock.rate > 1 && !clock.paused, multiplier, mode};
     }
 };
 inline std::mutex mutex;
@@ -74,6 +83,7 @@ inline Control control;
 inline uint64_t GameTimeNs() { std::lock_guard lock(mutex); return control.clock.Read(NowNs()); }
 inline Status GetStatus() { std::lock_guard lock(mutex); return control.Get(NowNs()); }
 inline void Enable(bool enabled) { std::lock_guard lock(mutex); control.Enable(enabled, NowNs()); }
+inline void SetMode(Mode mode) { std::lock_guard lock(mutex); control.SetMode(mode, NowNs()); }
 inline void SetRate(unsigned rate) { std::lock_guard lock(mutex); control.SetRate(rate, NowNs()); }
 inline void SetPaused(bool paused) { std::lock_guard lock(mutex); control.Pause(paused, NowNs()); }
 inline void Release() { std::lock_guard lock(mutex); control.Stop(NowNs()); }

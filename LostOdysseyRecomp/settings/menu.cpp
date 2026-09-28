@@ -498,6 +498,8 @@ void Publish(uint8_t *base, uint32_t config)
         placeGraphics(GraphicsRow::ScalingQuality, makeChoices(L"Scaling filter", L"縮放濾鏡",
                    {Tr(L"Standard", L"標準"), Tr(L"High", L"高")},
                    std::min(edit.scalingQuality, 1u)));
+        placeGraphics(GraphicsRow::RgbRange, makeChoices(L"RGB Range", L"RGB 範圍",
+                   {Tr(L"Off", L"關"), Tr(L"Expanded", L"擴展")}, edit.expandRgbRange ? 1 : 0));
         placeGraphics(GraphicsRow::FrameRate, makeChoices(L"Frame rate", L"影格率",
                    {L"30 FPS", std::wstring(L"60 FPS") + Tr(L" (experimental)", L"（實驗性）"),
                     std::wstring(L"120 FPS") + Tr(L" (experimental)", L"（實驗性）")},
@@ -610,6 +612,10 @@ void Publish(uint8_t *base, uint32_t config)
         case GraphicsRow::ScalingQuality:
             next.help = Tr(L"Controls filtering when upscaling is active.",
                            L"控制啟用縮放時的取樣濾鏡。");
+            break;
+        case GraphicsRow::RgbRange:
+            next.help = Tr(L"Expands only the game image from RGB 16–235 to 0–255. Applies immediately after saving.",
+                           L"僅將遊戲畫面從 RGB 16–235 擴展到 0–255。儲存後立即套用。");
             break;
         case GraphicsRow::FrameRate:
             next.help = edit.frameRate == 120
@@ -1254,6 +1260,9 @@ PPC_FUNC(sub_822F19B0)
             case GraphicsRow::ScalingQuality:
                 edit.scalingQuality = cycle(edit.scalingQuality, 2);
                 break;
+            case GraphicsRow::RgbRange:
+                edit.expandRgbRange = !edit.expandRgbRange;
+                break;
             case GraphicsRow::FrameRate:
             {
                 constexpr uint32_t rates[] = {30, 60, 120};
@@ -1381,7 +1390,7 @@ PPC_FUNC(sub_822F19B0)
     {
         // Hand the original calibration screen its own brightness row.
         const uint32_t list = menu + 0x558, table = PPC_LOAD_U32(list + 0x84);
-        // Internal row 11 is screen position; the visible Brightness row is 12.
+        // Retail row 12 opens brightness calibration; replacement menu row ids are independent.
         for (uint32_t i = 0; i < 13; i++)
             if (PPC_LOAD_U32(table + i * 0x30 + 4) == 12)
             {

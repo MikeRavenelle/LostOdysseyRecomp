@@ -69,15 +69,16 @@ Texture2D<float4> frame : register(t0);
 #endif
 SamplerState linearClamp : register(s0);
 #ifdef __spirv__
-struct PresentationParameters { float2 origin; float2 extent; float2 imageSize; uint aa; uint filter; };
+struct PresentationParameters { float2 origin; float2 extent; float2 imageSize; uint aa; uint filter; uint expandRange; };
 [[vk::push_constant]] ConstantBuffer<PresentationParameters> parameters;
 #define origin parameters.origin
 #define extent parameters.extent
 #define imageSize parameters.imageSize
 #define aa parameters.aa
 #define filter parameters.filter
+#define expandRange parameters.expandRange
 #else
-cbuffer Parameters : register(b0) { float2 origin; float2 extent; float2 imageSize; uint aa; uint filter; };
+cbuffer Parameters : register(b0) { float2 origin; float2 extent; float2 imageSize; uint aa; uint filter; uint expandRange; };
 #endif
 float4 vertex(uint id : SV_VertexID) : SV_Position {
     float2 uv = float2((id << 1) & 2, id & 2);
@@ -125,21 +126,25 @@ float3 resample(float2 pixel) {
     return clamp(sum,min(min(a,b),min(c,d)),max(max(a,b),max(c,d)));
 }
 float luma(float3 c) { return dot(c,float3(0.299,0.587,0.114)); }
+float4 finishFrame(float3 color) {
+    if (expandRange != 0) color=saturate((color-16.0/255.0)*(255.0/219.0));
+    return float4(color,1);
+}
 float4 pixel(float4 position : SV_Position) : SV_Target {
     float2 p = (position.xy-origin)/extent*imageSize;
     float3 center = sampleFrame(p);
-    if (!aa) return float4(resample(p),1);
+    if (!aa) return finishFrame(resample(p));
     float nw=luma(sampleFrame(p+float2(-1,-1))), ne=luma(sampleFrame(p+float2(1,-1)));
     float sw=luma(sampleFrame(p+float2(-1,1))), se=luma(sampleFrame(p+float2(1,1)));
     float mid=luma(center), lo=min(mid,min(min(nw,ne),min(sw,se))), hi=max(mid,max(max(nw,ne),max(sw,se)));
-    if (hi-lo < max(0.0312,hi*0.125)) return float4(center,1);
+    if (hi-lo < max(0.0312,hi*0.125)) return finishFrame(center);
     float2 direction=float2(-((nw+ne)-(sw+se)),(nw+sw)-(ne+se));
     float reduce=max((nw+ne+sw+se)*0.03125,0.0078125);
     direction=clamp(direction/(min(abs(direction.x),abs(direction.y))+reduce),-8,8);
     float3 a=0.5*(sampleFrame(p+direction*(-1.0/6.0))+sampleFrame(p+direction*(1.0/6.0)));
     float3 b=a*0.5+0.25*(sampleFrame(p-direction*0.5)+sampleFrame(p+direction*0.5));
     float lb=luma(b);
-    return float4((lb<lo || lb>hi)?a:b,1);
+    return finishFrame((lb<lo || lb>hi)?a:b);
 })";
     auto vs = xenos::CompileCachedHlsl(source, "vertex", "vs_6_0", binaryFormat);
     auto ps = xenos::CompileCachedHlsl(source, "pixel", "ps_6_0", binaryFormat);
@@ -158,7 +163,7 @@ float4 pixel(float4 position : SV_Position) : SV_Target {
     set.end();
     RenderPipelineLayoutBuilder layout;
     layout.begin(false, false);
-    layout.addPushConstant(0, 0, 32, RenderShaderStageFlag::PIXEL);
+    layout.addPushConstant(0, 0, 36, RenderShaderStageFlag::PIXEL);
     layout.addDescriptorSet(set);
     layout.end();
     p.layout = layout.create(device);
@@ -297,9 +302,11 @@ std::shared_ptr<Presentation::UiCompositionLease> Presentation::DrawSeparatedUi(
     return lease;
 }
 void Presentation::DrawComposited(RenderCommandList *commands, RenderTexture *source, RenderTexture *target,
-                                  uint32_t sw, uint32_t sh, uint32_t ow, uint32_t oh, ScalingFilter scalingFilter)
+                                  uint32_t sw, uint32_t sh, uint32_t ow, uint32_t oh, ScalingFilter scalingFilter,
+                                  bool expandRgbRange)
 {
-    Draw(commands, source, target, sw, sh, ow, oh, PresentationOptions{Antialiasing::Off, scalingFilter});
+    Draw(commands, source, target, sw, sh, ow, oh,
+         PresentationOptions{Antialiasing::Off, scalingFilter, expandRgbRange});
 }
 void Presentation::Draw(RenderCommandList *commands, RenderTexture *source, RenderTexture *target, uint32_t sw,
                         uint32_t sh, uint32_t ow, uint32_t oh, bool antialias)
@@ -326,6 +333,7 @@ void Presentation::Draw(RenderCommandList *commands, RenderTexture *source, Rend
     size_t passIndex=0;
     auto render=[&](RenderTexture *input,RenderTexture *output,uint32_t iw,uint32_t ih,
                     uint32_t tw,uint32_t th,float ox,float oy,float ew,float eh,uint32_t aa,uint32_t filter,
+                    uint32_t expandRange,
                     RenderPipeline *pipe) {
         if(passIndex==p.passes.size()) p.passes.emplace_back();
         auto &pass=p.passes[passIndex++];
@@ -352,7 +360,8 @@ void Presentation::Draw(RenderCommandList *commands, RenderTexture *source, Rend
         commands->setFramebuffer(pass.framebuffer.get());commands->clearColor(0,RenderColor(0,0,0,1));
         RenderViewport viewport(ox,oy,ew,eh);RenderRect scissor(0,0,tw,th);
         commands->setViewports(&viewport,1);commands->setScissors(&scissor,1);
-        struct { float x,y,w,h,sw,sh;uint32_t aa,filter; } constants{ox,oy,ew,eh,float(iw),float(ih),aa,filter};
+        struct { float x,y,w,h,sw,sh;uint32_t aa,filter,expandRange; }
+            constants{ox,oy,ew,eh,float(iw),float(ih),aa,filter,expandRange};
         commands->setGraphicsPipelineLayout(p.layout.get());commands->setPipeline(pipe);
         commands->setGraphicsPushConstants(0,&constants);commands->setGraphicsDescriptorSet(pass.descriptors.get(),0);
         commands->drawInstanced(3,1,0,0);
@@ -362,7 +371,7 @@ void Presentation::Draw(RenderCommandList *commands, RenderTexture *source, Rend
     if(options.antialiasing==Antialiasing::SMAA)
         source=p.smaa.Draw(commands,source,sw,sh,p.layout.get(),p.pipeline.get());
     else if(options.antialiasing==Antialiasing::FXAA)
-        source=render(source,nullptr,sw,sh,sw,sh,0,0,float(sw),float(sh),1,0,p.pipeline.get());
+        source=render(source,nullptr,sw,sh,sw,sh,0,0,float(sw),float(sh),1,0,0,p.pipeline.get());
     // Large reductions use full coverage at each stage. No tap count truncation,
     // and no artificial reduced input presented as a game rendering speedup.
     const uint32_t desiredW=std::max(1u,uint32_t(std::ceil(width)));
@@ -371,10 +380,11 @@ void Presentation::Draw(RenderCommandList *commands, RenderTexture *source, Rend
         uint32_t nw=std::min(sw,std::max(desiredW,(sw+3)/4));
         uint32_t nh=std::min(sh,std::max(desiredH,(sh+3)/4));
         if(nw==sw && nh==sh) break;
-        source=render(source,nullptr,sw,sh,nw,nh,0,0,float(nw),float(nh),0,0,p.pipeline.get());
+        source=render(source,nullptr,sw,sh,nw,nh,0,0,float(nw),float(nh),0,0,0,p.pipeline.get());
         sw=nw;sh=nh;
     }
     render(source,target,sw,sh,ow,oh,x,y,width,height,0,uint32_t(options.scalingFilter),
+           options.expandRgbRange ? 1u : 0u,
            toSwapchain ? p.presentPipeline.get() : p.pipeline.get());
     commands->barriers(RenderBarrierStage::COPY,RenderTextureBarrier(original,RenderTextureLayout::COPY_SOURCE));
 }
@@ -408,7 +418,7 @@ std::shared_ptr<Presentation::UiCompositionLease> Presentation::DrawSeparatedUi(
     return {};
 }
 void Presentation::DrawComposited(plume::RenderCommandList *, plume::RenderTexture *, plume::RenderTexture *,
-                                  uint32_t, uint32_t, uint32_t, uint32_t, ScalingFilter)
+                                  uint32_t, uint32_t, uint32_t, uint32_t, ScalingFilter, bool)
 {
 }
 void Presentation::Draw(plume::RenderCommandList *, plume::RenderTexture *, plume::RenderTexture *, uint32_t, uint32_t,

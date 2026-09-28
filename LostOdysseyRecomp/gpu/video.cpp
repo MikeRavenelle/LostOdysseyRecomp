@@ -2357,7 +2357,8 @@ namespace gpu::video
         gpu::SetFrameRateTarget(presentationConfig.frameRate);
         const PresentationOptions presentationOptions{
             presentationConfig.antialiasing == 3 ? Antialiasing::SMAA : static_cast<Antialiasing>(presentationConfig.antialiasing),
-            presentationConfig.scalingQuality ? ScalingFilter::Bicubic : ScalingFilter::Bilinear};
+            presentationConfig.scalingQuality ? ScalingFilter::Bicubic : ScalingFilter::Bilinear,
+            presentationConfig.expandRgbRange};
         // Debug / test trigger: auto-open overlay after N frames if LO_AUTO_OVERLAY is set
         static int s_autoOverlayCountdown = []() {
             const char* env = getenv("LO_AUTO_OVERLAY");
@@ -2501,10 +2502,13 @@ namespace gpu::video
                         renderer::SceneAAApplied(physicalAddress & 0x1FFFFFFF), uint32_t(presentationOptions.antialiasing),
                         uint32_t(presentationOptions.scalingFilter));
                     const PresentationOptions sourceOptions{decision.requestedAA == 3 ? Antialiasing::SMAA :
-                        static_cast<Antialiasing>(decision.requestedAA), decision.scalingQuality ? ScalingFilter::Bicubic : ScalingFilter::Bilinear};
+                        static_cast<Antialiasing>(decision.requestedAA),
+                        decision.scalingQuality ? ScalingFilter::Bicubic : ScalingFilter::Bilinear,
+                        presentationOptions.expandRgbRange};
                     if(decision.bypassAA)
                         g_presentation->DrawComposited(g_commandList.get(),source,backBuffer,sourceWidth,sourceHeight,
-                            g_swapChain->getWidth(),g_swapChain->getHeight(),sourceOptions.scalingFilter);
+                            g_swapChain->getWidth(),g_swapChain->getHeight(),sourceOptions.scalingFilter,
+                            sourceOptions.expandRgbRange);
                     else g_presentation->Draw(g_commandList.get(),source,backBuffer,sourceWidth,sourceHeight,
                         g_swapChain->getWidth(),g_swapChain->getHeight(),sourceOptions);
                 }

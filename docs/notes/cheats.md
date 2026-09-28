@@ -1,15 +1,19 @@
-# Built-in cheats and hold-LT speed control
+# Built-in cheats and LT speed control
 
-Source implementation for issue #25, 2026-09-24. Not a release or whole-game
-acceptance claim. Enter **F1 / LB+RB → Cheats**; LB/RB switches the three main
-tabs. On the Cheats page, select the first row and use Left/Right to change
-category. A/Enter opens paged selectors; Left/Right skips six entries. B/Esc
-backs out of a selector or confirmation before closing F1.
+This note began with the source implementation for issue #25 on 2026-09-24 and
+now covers the later Hold/Toggle speed mode. It does not claim whole-game
+acceptance. Enter **F1 / LB+RB → Cheats**; LB/RB switches the three main tabs.
+On the Cheats page, select the first row and use Left/Right to change category.
+A/Enter opens paged selectors; Left/Right skips six entries. B/Esc backs out of
+a selector or confirmation before closing F1.
 
 ## Controls and supported actions
 
-- Quick tools: independent hold-LT speed toggle, 2/3/4/6/8× rate, memory-edit
-  permission, +100,000 gold, set gold to 9,999,999, heal the current party.
+- Quick tools: independent fast-forward switch, Hold/Toggle speed mode, 2/3/4/6/8×
+  rate, memory-edit permission, +100,000 gold, set gold to 9,999,999, heal the
+  current party. Speed mode defaults to Hold each process. Select **Speed mode**
+  and press Left/Right or A/Enter to change it. Hold accelerates while LT is held;
+  Toggle switches acceleration with each new LT press.
 - Characters: choose one of nine characters, restore out-of-battle HP/MP,
   set EXP progress to 0–99, learn one catalogued skill or the reviewed subset.
   EXP here is the CT's progress field, not a level or total-XP setter.
@@ -114,12 +118,15 @@ epoch or jumps backwards. Render pacing, host UI deadlines and I/O waits keep
 unscaled time; `GetActiveGameTimeMs` remains the pause-aware host helper.
 
 The existing SDL window thread samples already-open controllers. LT has
-press/release hysteresis and requires release after enabling, a menu/focus
-transition or device change. Releasing LT, unplugging, losing focus, minimizing,
-opening F1/settings, or shutdown stops acceleration. LT+RT does not boost, and
-requesting the retail editor suspends speed. A 250 ms input lease also returns
-the clock to 1× if event pumping stalls. No additional thread is created and
-no guest trigger/button state is consumed or modified.
+press/release hysteresis. In Hold mode, releasing LT returns to 1×. In Toggle
+mode, each new LT press switches acceleration on or off; releasing LT alone does
+not stop it. LT+RT does not boost or switch the toggle; RT temporarily suppresses
+an active boost. Enabling speed, changing mode, unplugging, losing focus,
+minimizing, opening F1/settings, pausing or shutdown stops acceleration. After
+these stops, LT must be released before another press can boost. Requesting the
+retail editor suspends speed. A 250 ms input lease also returns the clock to 1×
+if event pumping stalls. No additional thread is created and no guest
+trigger/button state is consumed or modified.
 
 The multiplier controls **guest time**, not guaranteed measured gameplay speed
 in every subsystem. Existing engine clamps, performance and media can limit it.
@@ -147,11 +154,21 @@ overlay-controller extraction fixture also passed after adding the new header
 dependency. This is not a full runtime build, physical controller test, real
 Windows/Linux gameplay test or real save/load acceptance of the PlayData binding.
 
-The new GitHub workflow builds offline core/UI fixtures against the repository's
-actual headers and font data on Windows/Linux. Its outcome must be checked on
-the resulting commit; this document does not claim it has run or passed.
+For the Hold/Toggle change, the Windows MSVC standalone `cheats_core` and
+`cheats_ui` fixtures passed. Their synthetic English and Chinese UI images were
+visually checked. This does not establish in-game controller behavior or
+cross-platform acceptance.
 
-Before release: verify root binding on an isolated save, an individual item and
-character edit, a batch operation, scene/load cancellation, LT 2×/higher/release,
-menu/focus/hotplug, and voice/cutscene behavior. Verify the experimental retail
-editor and equipment separately. Keep issue #25 open until that acceptance.
+For the initial Cheats tab, GitHub Actions
+[run `36064213269`](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36064213269)
+passed Windows and Linux offline fixture jobs on 2026-09-24, using the
+repository's headers and font data. That run predates the Hold/Toggle change
+and does not validate it.
+
+For in-game acceptance, verify root binding on an isolated save, an individual
+item and character edit, a batch operation, scene/load cancellation, LT
+Hold/Toggle at 2×/higher rates, stop/re-arm on menu/focus/hotplug, and
+voice/cutscene behavior. Verify the experimental retail editor and equipment
+separately. [Issue #25](https://github.com/freefrank/LostOdysseyRecomp/issues/25)
+was closed on 2026-09-24 after the initial implementation; that closure does
+not establish in-game acceptance of this later speed-mode change.

@@ -48,6 +48,7 @@ struct Config
     uint32_t antialiasing = 0; // 0 Off, 1 FXAA, 2 SMAA, 3 experimental camera-based TAA.
     uint32_t frameRate = 30;
     uint32_t scalingQuality = 1; // 0 bilinear, 1 bicubic spatial resampling.
+    bool expandRgbRange = false; // Expand game image RGB 16-235 to 0-255 at presentation.
     uint32_t anisotropicFiltering = 0; // 0 Off, otherwise 2/4/8/16x. Applied live by the renderer.
     gpu::upscaling::Upscaler upscaler = gpu::upscaling::Upscaler::Off;
     gpu::upscaling::DlssQuality dlssQuality = gpu::upscaling::DlssQuality::Quality;

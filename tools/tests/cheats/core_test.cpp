@@ -102,10 +102,28 @@ void Speed() {
     Control d;d.Enable(true,0);d.Sample(0,0,true,1);d.Sample(63,0,true,2);Check(d.clock.rate==1);
     d.Sample(64,0,true,3);Check(d.clock.rate==2);d.Sample(40,0,true,4);Check(d.clock.rate==2);
     d.Sample(32,0,true,5);Check(d.clock.rate==1);
+    Control toggle;toggle.Enable(true,0);toggle.SetMode(Mode::Toggle,0);
+    Check(toggle.Get(0).mode==Mode::Toggle);
+    toggle.Sample(255,0,true,1);Check(toggle.clock.rate==1); // require LT release after mode change
+    toggle.Sample(0,0,true,2);toggle.Sample(255,255,true,3);Check(toggle.clock.rate==1);
+    toggle.Sample(255,0,true,4);Check(toggle.clock.rate==1); // LT+RT cannot arm a later boost
+    toggle.Sample(0,0,true,5);toggle.Sample(255,0,true,6);Check(toggle.clock.rate==2);
+    toggle.Sample(255,0,true,7);toggle.Sample(0,0,true,8);Check(toggle.clock.rate==2);
+    toggle.Sample(255,255,true,9);Check(toggle.clock.rate==1);
+    toggle.Sample(0,0,true,10);Check(toggle.clock.rate==2); // RT suppresses without clearing the toggle
+    toggle.Sample(255,0,true,11);Check(toggle.clock.rate==1);
+    toggle.Sample(0,0,true,12);toggle.Sample(255,0,true,13);Check(toggle.clock.rate==2);
+    toggle.Sample(0,0,false,14);Check(toggle.clock.rate==1);
+    toggle.Sample(255,0,true,15);Check(toggle.clock.rate==1); // focus change requires release
+    toggle.Sample(0,0,true,16);toggle.Sample(255,0,true,17);Check(toggle.clock.rate==2);
+    toggle.SetMode(Mode::Hold,18);Check(toggle.clock.rate==1 && toggle.Get(18).mode==Mode::Hold);
+    toggle.Sample(255,0,true,19);Check(toggle.clock.rate==1);
+    toggle.Sample(0,0,true,20);toggle.Sample(255,0,true,21);Check(toggle.clock.rate==2);
+    toggle.Sample(0,0,true,22);Check(toggle.clock.rate==1);
     for(unsigned rate:Rates) {
         Control t;t.Enable(true,0);t.SetRate(rate,0);t.Sample(0,0,true,1);t.Sample(255,0,true,2);
         auto a=t.clock.Read(2);Check(t.clock.Read(1002)-a==1000*rate);
         t.Enable(false,1002);auto b=t.clock.Read(1002);Check(t.clock.Read(2002)-b==1000);
     }
 }
-int main() { Core();Speed();std::printf("PASS: %u core/clock checks; typed writes, no partial invalid writes, scene cancellation, queue concurrency, LT lifecycle\n",checks); }
+int main() { Core();Speed();std::printf("PASS: %u core/clock checks; typed writes, no partial invalid writes, scene cancellation, queue concurrency, LT hold/toggle lifecycle\n",checks); }
