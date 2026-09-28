@@ -23,7 +23,8 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 
 | 版本 | 主要更新 |
 | :--- | :--- |
-| [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 帧生成（关／DLSS／FSR），保存后无需重启；更新 Vulkan shader，并提供放在 `shaders/` 下的独立 DX12 shader pack，同时修复 Ubuntu 22.04 AppImage 兼容性和更新器问题。 |
+| v0.7.10 | 更新内置 Vulkan shader（增加 19 条捕获记录），并提供放在 `shaders/` 下的独立 DX12 shader pack。 |
+| [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 帧生成（关／DLSS／FSR），保存后无需重启；修复 Ubuntu 22.04 AppImage 兼容性和更新器问题。 |
 | [v0.7.3](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3) | 减少 D3D12 重复绑定，新增可选渲染诊断。 |
 | [v0.7.2](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2) | D3D12 DLSS／FSR 超分路径和 DLAA 尺寸修正。 |
 | [v0.7.1](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1) | 独立 Flatpak，以及游戏内光盘／DLC 选择和重新导入。 |
@@ -33,7 +34,7 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 ## 开始游戏
 
 ### Windows
-1. 从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** v0.7.9 Windows 发布包（`LostOdysseyRecomp-windows-x64-v0.7.9.zip`），放在可写入的文件夹中。
+1. 从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** v0.7.10 Windows 发布包（`LostOdysseyRecomp-windows-x64-v0.7.10.zip`），放在可写入的文件夹中。
 2. **运行 `LostOdysseyRecomp.exe` 并按提示导入游戏文件**。支持已提取文件夹、`default.xex`、XDVDFS ISO 或 GOD 容器。
 3. **选择语言和图形设置**，设置与着色器预编译完成后继续进入游戏。
 
@@ -42,16 +43,16 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
   ```bash
   flatpak --system install flathub org.freedesktop.Platform//26.08
   ```
-  从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载 v0.7.9 独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.9.flatpak`）并执行安装：
+  从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载 v0.7.10 独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.10.flatpak`）并执行安装：
   ```bash
-  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.9.flatpak
+  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.10.flatpak
   flatpak run io.github.freefrank.LostOdysseyRecomp
   ```
-- **AppImage**：下载 `LostOdysseyRecomp-linux-x64-v0.7.9.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
+- **AppImage**：下载 `LostOdysseyRecomp-linux-x64-v0.7.10.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
 
 发布包不需要安装 Python 或 Visual Studio。后续启动会复用着色器缓存；更新程序时请保留存档和档案文件夹。
 
-当前分支的更新器会检查 GitHub 最新 Release：数字版本更高时更新，数字版本相同但 `-后缀` 不同时也会触发更新。更新器另外支持从只有 updater 的空目录以及过期或损坏的本地 metadata 恢复。更新成功后，helper 会询问是否启动游戏，默认选择**否**；silent 运行会完成更新但不启动游戏。下载完成后只进行普通 HTTP/I/O 处理、ZIP CRC 解析、路径保护与回滚，不增加 SHA-256 或大小认证。v0.7.9 Windows 过渡包一次性携带旧 SHA map，使已发布的 v0.7.3 更新器能够自动升级；v0.7.9 更新器忽略这些值。
+当前分支的更新器会检查 GitHub 最新 Release：数字版本更高时更新，数字版本相同但 `-后缀` 不同时也会触发更新。更新器另外支持从只有 updater 的空目录以及过期或损坏的本地 metadata 恢复。更新成功后，helper 会询问是否启动游戏，默认选择**否**；silent 运行会完成更新但不启动游戏。下载完成后只进行普通 HTTP/I/O 处理、ZIP CRC 解析、路径保护与回滚，不增加 SHA-256 或大小认证。v0.7.9 Windows 过渡包一次性携带旧 SHA map，使已发布的 v0.7.3 更新器能够自动升级；v0.7.10 忽略这些值。
 
 | 要求 | 支持范围 |
 | :--- | :--- |
@@ -79,11 +80,11 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 | 图形设置 | Auto／手动内部分辨率（配置文件／兼容回退）、含宽屏开关的 16:9 / 21:9 分辨率预设、Off／FXAA／SMAA／实验性 TAA、缩放技术选项（关／DLSS／FSR 3.1，含画质档位）、标准／高质量滤波、30／60 FPS 及输出／显示控制；全屏、跨 DPI 和更广超分场景仍需更多测试 |
 | 帧生成设置 | 图像页内提供关／DLSS／FSR、DLSS 倍数、固定 2× FSR、会话状态及保存后即时生效；已限定验证 D3D12 Uhra 场景 |
 | 设置菜单 | 原版字体、支持长列表滚动的菜单风格；图形设置单击保存并应用，支持按 Start/Enter 聚焦“保存”且不立即保存，需要重启时选择 Now/Later |
-| 着色器预编译 | 内置便携式 Vulkan 着色器包（.lospv）、多线程自适应编译、即时跳过与缓存复用；v0.7.9 独立 DX12 .lospd 资产放入 `shaders/` |
+| 着色器预编译 | 内置便携式 Vulkan 着色器包（.lospv）、多线程自适应编译、即时跳过与缓存复用；v0.7.10 独立 DX12 .lospd 资产放入 `shaders/` |
 | CPU 使用率 | 减少不必要的轮询，复用渲染计算 |
 | 输入与调试 | 手柄和键盘输入；英文／简体中文游戏内浮层调试菜单（F1 或手柄 LB+RB）提供捕获、地图信息与同地图 POI 传送 |
 
-发布包通过 `LostOdysseyRecomp.exe` 的 **Files** 或 **Folder** 导入游戏光盘和受支持的 DLC。自 v0.7.1 起新增 **Gameplay → 导入光盘与 DLC** 入口，可重新打开导入器并替换所选光盘与 DLC。v0.7.9 提供 Windows ZIP、Linux AppImage 与 Linux Flatpak 独立安装包。验证边界见[安装说明](docs/INSTALLING.md#automatic-content-import)、[构建说明](docs/BUILDING.md#packaging-flatpak)和[开发状态](docs/STATUS.md)。
+发布包通过 `LostOdysseyRecomp.exe` 的 **Files** 或 **Folder** 导入游戏光盘和受支持的 DLC。自 v0.7.1 起新增 **Gameplay → 导入光盘与 DLC** 入口，可重新打开导入器并替换所选光盘与 DLC。v0.7.10 提供 Windows ZIP、Linux AppImage 与 Linux Flatpak 独立安装包，并提供放在 `shaders/` 下的独立 DX12 shader 资产。验证边界见[安装说明](docs/INSTALLING.md#automatic-content-import)、[构建说明](docs/BUILDING.md#packaging-flatpak)和[开发状态](docs/STATUS.md)。
 
 验证进展和剩余工作见[公开维护者 Project](https://github.com/users/freefrank/projects/3)。
 

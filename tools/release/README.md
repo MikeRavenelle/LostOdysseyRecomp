@@ -8,7 +8,7 @@ provenance manifest or SHA-256 sidecar.
 
 ```sh
 python tools/release/extract_release_notes.py \
-  --changelog CHANGELOG.md --version v0.7.9 --output /path/to/release-notes.md
+  --changelog CHANGELOG.md --version v0.7.10 --output /path/to/release-notes.md
 ```
 
 The notes extractor reads only the matching changelog entry. ZIP installation
@@ -34,10 +34,9 @@ not publish the Flatpak runtime archive, `release-source.json`, or standalone
 checksum/source-list assets; checksum and source records remain CI or local
 internal validation artifacts.
 
-The Windows ZIP bundles only the refreshed Vulkan pack. The DX12 `.lospd` pack
-is a separate fourth GitHub asset; users place it at
-`shaders/portable_dx12.lospd` beside the runtime. Upload the standalone asset
-separately after its package and runtime checks pass.
+For v0.7.10, bundle the refreshed Vulkan pack in the Windows ZIP. Publish the
+DX12 `.lospd` pack as a separate fourth GitHub asset after its pack and runtime
+checks pass. Users place it at `shaders/portable_dx12.lospd` beside the runtime.
 
 Release workflow design: the Linux job compiles once, creates a persistent
 AppImage AppDir, and exports the stable Flatpak by reusing that AppDir's

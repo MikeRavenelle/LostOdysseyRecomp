@@ -23,7 +23,8 @@ Optional diagnostics are off by default and can be disabled in Settings. See [Pr
 
 | Version | Highlights |
 | :--- | :--- |
-| [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 frame generation (Off/DLSS/FSR), applied on Save without restarting; refreshed Vulkan shaders, plus a standalone DX12 shader pack under `shaders/`, Ubuntu 22.04 AppImage compatibility and updater improvements. |
+| v0.7.10 | Refreshed bundled Vulkan shaders (+19 captured records) and a separate DX12 shader pack under `shaders/`. |
+| [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 frame generation (Off/DLSS/FSR), applied on Save without restarting; Ubuntu 22.04 AppImage compatibility and updater improvements. |
 | [v0.7.3](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3) | D3D12 binding de-duplication and opt-in rendering diagnostics. |
 | [v0.7.2](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2) | D3D12 DLSS/FSR super-resolution routes and DLAA sizing correction. |
 | [v0.7.1](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1) | Standalone Flatpak and in-game disc/DLC selection and re-import. |
@@ -33,7 +34,7 @@ See the [roadmap](docs/ROADMAP.md) for current plans and the [changelog](CHANGEL
 ## Start playing
 
 ### Windows
-1. **Download and extract** the v0.7.9 Windows release ZIP (`LostOdysseyRecomp-windows-x64-v0.7.9.zip`) from the [latest release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) to a writable folder.
+1. **Download and extract** the v0.7.10 Windows release ZIP (`LostOdysseyRecomp-windows-x64-v0.7.10.zip`) from the [latest release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) to a writable folder.
 2. **Run `LostOdysseyRecomp.exe`** and import your game files when prompted. The importer accepts an extracted folder, `default.xex`, an XDVDFS ISO or a GOD container.
 3. **Choose your language and graphics settings.** The game continues after setup and shader preparation.
 
@@ -42,16 +43,16 @@ See the [roadmap](docs/ROADMAP.md) for current plans and the [changelog](CHANGEL
   ```bash
   flatpak --system install flathub org.freedesktop.Platform//26.08
   ```
-  Download the v0.7.9 standalone `.flatpak` bundle (`LostOdysseyRecomp-linux-x64-v0.7.9.flatpak`) and install:
+  Download the v0.7.10 standalone `.flatpak` bundle (`LostOdysseyRecomp-linux-x64-v0.7.10.flatpak`) and install:
   ```bash
-  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.9.flatpak
+  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.10.flatpak
   flatpak run io.github.freefrank.LostOdysseyRecomp
   ```
-- **AppImage**: Download `LostOdysseyRecomp-linux-x64-v0.7.9.AppImage`, make it executable (`chmod +x`), and run directly.
+- **AppImage**: Download `LostOdysseyRecomp-linux-x64-v0.7.10.AppImage`, make it executable (`chmod +x`), and run directly.
 
 No Python or Visual Studio installation is needed for the release package. Later launches reuse the shader cache. Keep your save and profile folders when updating.
 
-The current branch updater checks GitHub's latest Release: a higher numeric version updates, and an equal numeric version with a different `-suffix` also triggers an update. The updater additionally permits recovery from an empty updater-only folder and stale or malformed local metadata. After a successful update, the helper asks whether to launch the game and defaults to **No**; silent runs complete without launching. After the download completes, the updater installs through ordinary HTTP/I/O handling, ZIP CRC parsing, path protection and rollback; it does not add SHA-256 or size authentication. The v0.7.9 Windows transition package carries the legacy SHA map once so an already published v0.7.3 updater can upgrade automatically; the v0.7.9 updater ignores those values.
+The current branch updater checks GitHub's latest Release: a higher numeric version updates, and an equal numeric version with a different `-suffix` also triggers an update. The updater additionally permits recovery from an empty updater-only folder and stale or malformed local metadata. After a successful update, the helper asks whether to launch the game and defaults to **No**; silent runs complete without launching. After the download completes, the updater installs through ordinary HTTP/I/O handling, ZIP CRC parsing, path protection and rollback; it does not add SHA-256 or size authentication. The v0.7.9 Windows transition package carries the legacy SHA map once so an already published v0.7.3 updater can upgrade automatically; v0.7.10 ignores those values.
 
 | Requirement | Supported configuration |
 | :--- | :--- |
@@ -79,11 +80,11 @@ See the [installation guide](docs/INSTALLING.md) for accepted disc versions, fil
 | Graphics settings | Auto/manual internal resolution (config/legacy fallback), 16:9 / 21:9 resolution presets with Widescreen toggle, Off/FXAA/SMAA/experimental TAA, upscaler options (Off/DLSS/FSR 3.1 with quality controls), Standard/High filtering, 30/60 FPS and output/display controls; fullscreen, mixed DPI and broader upscaler scene coverage need more testing |
 | Frame Generation settings | Graphics-page Off/DLSS/FSR controls, DLSS multipliers, fixed 2× FSR, session status and live application after saving; bounded D3D12 Uhra validation |
 | Settings menu | Original game fonts, scrollable overflowing lists and menu styling; one-click Graphics save/apply, Start/Enter focus-jump to Save without saving, and Now/Later restart choices |
-| Shader preparation | Bundled portable Vulkan shader pack (.lospv), memory-adaptive parallel compilation, interactive skip, and cache reuse; the separate DX12 .lospd asset for v0.7.9 belongs under `shaders/` |
+| Shader preparation | Bundled portable Vulkan shader pack (.lospv), memory-adaptive parallel compilation, interactive skip, and cache reuse; the separate v0.7.10 DX12 .lospd asset belongs under `shaders/` |
 | CPU use | Reduced unnecessary polling and reuse of rendering work |
 | Input and debug | Controller and keyboard input; English/Simplified Chinese in-game overlay debug menu (F1 or LB+RB) with capture, map information and same-map POI teleport |
 
-Release packages import game discs and supported DLC with **Files** or **Folder** in `LostOdysseyRecomp.exe`. In v0.7.1, **Gameplay → Import discs & DLC** allows reopening the importer to replace selected discs and DLC. The v0.7.9 release provides Windows ZIP, Linux AppImage, and standalone Linux Flatpak packages. See the [installation guide](docs/INSTALLING.md#automatic-content-import), [build instructions](docs/BUILDING.md#packaging-flatpak), and [development status](docs/STATUS.md) for validation limits.
+Release packages import game discs and supported DLC with **Files** or **Folder** in `LostOdysseyRecomp.exe`. In v0.7.1, **Gameplay → Import discs & DLC** allows reopening the importer to replace selected discs and DLC. The v0.7.10 release provides Windows ZIP, Linux AppImage, and standalone Linux Flatpak packages, with a separate DX12 shader asset under `shaders/`. See the [installation guide](docs/INSTALLING.md#automatic-content-import), [build instructions](docs/BUILDING.md#packaging-flatpak), and [development status](docs/STATUS.md) for validation limits.
 
 Validation progress and remaining work are tracked in the [Maintainer Project](https://github.com/users/freefrank/projects/3).
 

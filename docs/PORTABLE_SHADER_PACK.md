@@ -4,7 +4,7 @@ Base: `menu@257f3866e9f9f5d3e65550c86dce453290cf7ee4`.
 This change follows reblue's build/distribution separation; it does not copy its
 renderer or change Lost Odyssey's shader translation semantics.
 
-## Current v0.7.9 reissue follow-up (publication pending)
+## Current v0.7.10 follow-up (publication pending)
 
 The current shader-pack follow-up adds backend-specific selection and a DX12
 `.lospd` format alongside the existing Vulkan `.lospv` path. The new Vulkan
