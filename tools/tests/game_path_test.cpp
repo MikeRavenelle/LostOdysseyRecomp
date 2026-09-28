@@ -69,14 +69,27 @@ int main()
     fs::create_directories(unrelatedDirectory);
     fs::current_path(unrelatedDirectory);
 
-    // A blank file selects ../game relative to the executable, even when the
+    // A blank file selects ./game relative to the executable, even when the
     // caller's working directory points elsewhere.
+    const auto adjacentGame = fixture.exe / "game";
+    const auto adjacentDisc = adjacentGame / "disc1";
+    fixture.Marker(adjacentDisc);
+    fixture.Config(" \t\r\n");
+    CheckRoot(Resolve(fixture.exe), adjacentDisc, Source::DefaultSearch,
+              "blank game-path.txt did not select ./game/disc1");
+
+    // When both adjacent ./game and parent ../game exist, adjacent ./game takes priority.
     const auto packageGame = fixture.root / "game";
     const auto packageDisc = packageGame / "disc1";
     fixture.Marker(packageDisc);
-    fixture.Config(" \t\r\n");
+    CheckRoot(Resolve(fixture.exe), adjacentDisc, Source::DefaultSearch,
+              "adjacent ./game/disc1 did not have priority over ../game/disc1");
+
+    // Parent ../game is still recognized as a fallback when adjacent ./game is absent.
+    std::error_code error;
+    fs::remove_all(adjacentGame, error);
     CheckRoot(Resolve(fixture.exe), packageDisc, Source::DefaultSearch,
-              "blank game-path.txt did not select ../game/disc1");
+              "fallback parent ../game/disc1 was not recognized");
 
     // A configured direct game directory has priority over defaults.
     const auto direct = fixture.root / "direct-game";
@@ -100,8 +113,7 @@ int main()
     CheckRoot(Resolve(fixture.exe), xexDirectory, Source::ConfiguredFile,
               "configured default.xex was not recognized");
 
-    // Direct EXE-directory startup remains usable when ../game is absent.
-    std::error_code error;
+    // Direct EXE-directory startup remains usable when ./game and ../game are absent.
     fs::remove_all(packageGame, error);
     fixture.Config("\n");
     const auto exeGame = fixture.exe;
@@ -110,21 +122,29 @@ int main()
               "EXE-directory default.xex was not recognized");
     fs::remove(exeGame / "default.xex", error);
 
-    // The legacy nested game layout is a deterministic later fallback.
+    // The nested game layout is recognized.
     const auto nested = fixture.exe / "game" / "disc1";
     fixture.Marker(nested);
     CheckRoot(Resolve(fixture.exe), nested, Source::DefaultSearch,
-              "nested game/disc1 fallback was not recognized");
+              "nested game/disc1 was not recognized");
 
     // With no marker anywhere, the returned path still records the documented
-    // package default so the loader/installer can report the missing resource.
+    // package default ./game so the loader/installer can report the missing resource.
     fs::remove_all(fixture.exe / "game", error);
     fixture.Config("\n");
     const auto noCandidate = Resolve(fixture.exe);
-    Check(noCandidate.root == (fixture.exe / ".." / "game").lexically_normal(),
-          "missing default did not retain ../game");
+    Check(noCandidate.root == (fixture.exe / "game").lexically_normal(),
+          "missing default did not retain ./game");
     Check(noCandidate.source == Source::Fallback && !noCandidate.valid,
           "missing default did not report fallback state");
+
+    // When game-path.txt is missing entirely, fallback path is also ./game.
+    fs::remove(fixture.exe / "game-path.txt", error);
+    const auto noConfigResult = Resolve(fixture.exe);
+    Check(noConfigResult.root == (fixture.exe / "game").lexically_normal(),
+          "missing game-path.txt did not fallback to ./game");
+    Check(noConfigResult.source == Source::Fallback && !noConfigResult.valid,
+          "missing game-path.txt did not report fallback state");
 
     // Unicode configuration is read as UTF-8 and remains independent of cwd.
     const auto unicodeDirectory = fs::path(std::u8string(u8"游戏´′"));

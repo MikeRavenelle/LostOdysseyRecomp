@@ -61,8 +61,8 @@ original Lost Odyssey font and does not claim full Unicode coverage or game-styl
 Discs are copied to `game/disc1` through `game/disc4` by default. You can select an external
 game destination; the executable reads `game-path.txt` beside the executable. For direct startup,
 an explicit `--game` directory has priority. Otherwise a valid non-empty `game-path.txt` locates
-the configured game; an empty or missing file defaults to `../game` relative to the executable and
-can discover the adjacent `game` resources. An invalid non-empty configuration or explicit path is
+the configured game; an empty or missing file defaults to `game` relative to the executable and
+can discover adjacent or parent `game` resources. An invalid non-empty configuration or explicit path is
 reported and does not silently select an older installation.
 The original game's disc request automatically selects the
 corresponding imported `discN` directory. No manual disc-selection button is required. Keep all
