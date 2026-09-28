@@ -24,7 +24,7 @@ sudo install -m 644 "$key" /usr/share/keyrings/lo-llvm.asc
 printf '%s\n' 'deb [arch=amd64 signed-by=/usr/share/keyrings/lo-llvm.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main' |
   sudo tee /etc/apt/sources.list.d/lo-llvm.list >/dev/null
 sudo apt-get update
-sudo apt-get install -y --no-install-recommends clang-18 lld-18 g++-13 binutils libfuse2
+sudo apt-get install -y --no-install-recommends clang-18 clang-tools-18 lld-18 g++-13 binutils libfuse2
 # The preinstalled runner may have several GCC versions. Select the headers
 # explicitly so clang cannot silently switch to a newer, unrelated toolchain.
 gcc_dir=$(dirname "$(g++-13 -print-libgcc-file-name)")
