@@ -35,6 +35,18 @@ depth-borrowing experiment on Metal was.
   every draw. Fixed on Metal by queuing the replay draws and recording them in one
   pass before submits, clears, resolves and MV reads.
 - **Without TAA at 30 FPS** the GPU is about half busy (~220 passes per frame).
+- **Pass merging has little headroom (Numara, 740k passes instrumented):** passes
+  end because the color target changes (39%), a barrier follows (22%), the depth
+  texture changes (21%, mostly depth-only passes switching shadow/depth targets) or
+  both change (17%). Splits that reopen the same targets after a barrier are only
+  2.7%. Keeping depth attached across depth-disabled draws cut GPU time
+  17.68 -> 17.43 ms/frame (~1.4%); reverted. The passes follow the game's own
+  render-target structure.
+- **No first-use stutter on a warm cache:** in three 150 s scenarios the renderer
+  created 0 shaders and 8-12 pipelines (~1 ms total). Every frame over 45 ms has
+  `cp_idle_ms` close to `frame_ms`: the game was loading (disc-4 file open, 1.75 s;
+  travel, 0.7 s) and submitted nothing. The startup prebuild plus Metal's system
+  shader cache already cover what binary archives would.
 
 ## Guest CPU (all platforms)
 
@@ -70,13 +82,11 @@ depth-borrowing experiment on Metal was.
    per rect, fourth corner computed in the vertex shader). Required for correct
    Metal output; also removes the geometry shader stage on D3D12/Vulkan, where GS is
    slow on many GPUs.
-2. **Framebuffer switches.** 68% of Metal pass breaks come from DrawImpl switching
-   between the same color target with and without depth. Keeping depth attached
-   when the guest leaves it bound but disabled would merge those passes. On
-   desktop GPUs this reduces render-target changes; on Apple GPUs it avoids a
-   store/load of every attachment.
-3. **Barrier batching.** 31% of pass breaks come from barriers; batch resolves and
-   copies at the end of a pass instead of between draws.
+2. **Framebuffer switches.** *Measured 2026-09-29: ~1.4% GPU time, reverted (see
+   Measurements).* Keeping depth attached when the guest leaves it bound but
+   disabled merges few passes; most switches are real target changes.
+3. **Barrier batching.** *Measured 2026-09-29: splits that reopen the same targets
+   after a barrier are 2.7% of passes; not worth it.*
 4. **Menu copy cost.** Menus copy full-screen targets every frame (identified in the
    worklog, not changed). Skip the copy when the source did not change.
 5. **Shader and pipeline warm-up.** Keep the pipeline-recipe prebuild; extend the
@@ -85,7 +95,9 @@ depth-borrowing experiment on Metal was.
 
 ## Metal specific
 
-- Binary archives (`MTLBinaryArchive`) for pipelines, to remove first-use stutter.
+- Binary archives (`MTLBinaryArchive`): *not needed for stutter (no first-use
+  stutter measured on a warm cache).* Only useful if a shipped archive shortens the
+  first launch, and archives are tied to GPU family and OS version.
 - Memoryless or `DontCare` load/store actions on transient targets (depth that is
   never read back).
 - Argument buffer reuse across draws with identical bindings.
