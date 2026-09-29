@@ -23,8 +23,8 @@ python3 tools/regression.py accept out/regression/runs/<timestamp>
 The report is `out/regression/runs/<timestamp>/report.md`. A scenario fails when it
 fails its own checks, loses more than 5% FPS, or its final screenshot (reduced to
 160x90) differs from the baseline by more than `max_image_diff` (default 40, mean
-absolute difference) or changes brightness by more than 30. GPU time more than 10%
-above the baseline is a warning. The baseline stays in `out/regression/baseline` and
+absolute difference) or changes brightness by more than 30. GPU time more than 20%
+above the baseline is a warning (capped scenes vary about 15% between runs). The baseline stays in `out/regression/baseline` and
 is never committed; accept a new one after an intended visual or performance change.
 
 ## Single scenarios

@@ -15,7 +15,9 @@ Usage:
 Comparison rules (per scenario, [checks] in the TOML can override):
   - a scenario that fails its own checks fails;
   - median FPS more than 5% (and 1 FPS) below the baseline fails;
-  - median GPU time more than 10% (and 0.5 ms) above the baseline is a warning;
+  - median GPU time more than 20% (and 0.5 ms) above the baseline is a warning
+    (at a 30 FPS cap the GPU clocks down and the same scene measures 13-16 ms
+    across runs; uncapped scenarios are covered by the FPS rule);
   - the final screenshot, reduced to 160x90, differs from the baseline's by more
     than max_image_diff (default 40, mean absolute difference 0-255) or its mean
     brightness moves by more than 30: fails. compare_image = false skips it
@@ -123,7 +125,7 @@ def compare(run_root: Path) -> tuple[list[dict], bool]:
                 row["status"] = "FAIL"
                 row["notes"].append(f"FPS {fps} < baseline {base_fps}")
             gpu, base_gpu = row["gpu_ms"], base.get("median_gpu_ms")
-            if gpu and base_gpu and gpu > base_gpu * 1.10 and gpu - base_gpu >= 0.5:
+            if gpu and base_gpu and gpu > base_gpu * 1.20 and gpu - base_gpu >= 0.5:
                 if row["status"] == "PASS":
                     row["status"] = "WARN"
                 row["notes"].append(f"GPU {gpu} ms > baseline {base_gpu} ms")
