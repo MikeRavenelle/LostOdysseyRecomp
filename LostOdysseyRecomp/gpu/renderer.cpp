@@ -53,6 +53,7 @@
 #include "shader/binary_cache.h"
 #include "shader/preparation_queue.h"
 #include "shader/retry_state.h"
+#include "shader/rect_list_hlsl.h"
 #include "shader/startup_cache.h"
 #include "shader/portable_shader_pack.h"
 #include "shader/portable_shader_contract.h"
@@ -378,6 +379,9 @@ namespace gpu::renderer
             position_evidence::Summary position;
             bool positionReady = false;
             xenos::retry::State retry;
+            // Rect-list variant (shader/rect_list_hlsl.h), built on first use.
+            std::unique_ptr<RenderShader> rectList;
+            bool rectListFailed = false;
         };
 
         using PipelineKey = gpu::pipeline_cache::Key;
@@ -386,7 +390,12 @@ namespace gpu::renderer
         struct Renderer
         {
             RenderDevice* device = nullptr;
+            // vulkan: SPIR-V shaders and the Vulkan descriptor layout (Vulkan and
+            // Metal). nativeVulkan: code that calls Vulkan APIs or casts to plume
+            // Vulkan types, which Metal must never reach.
             bool vulkan = false;
+            bool nativeVulkan = false;
+            const char* BackendLabel() const { return nativeVulkan ? "Vulkan" : vulkan ? "Metal" : "D3D12"; }
             xenos::ShaderBinaryFormat binaryFormat = xenos::ShaderBinaryFormat::Dxil;
             RenderShaderFormat renderFormat = RenderShaderFormat::DXIL;
             float pointSizeLimit = 1.0e9f;
@@ -559,6 +568,10 @@ namespace gpu::renderer
             std::unique_ptr<RenderBuffer> dummyBuffer;
             HostTexture dummyTexture2D, dummyTexture3D, dummyTextureCube;
             std::unique_ptr<RenderShader> rectListGs;
+            // Rect lists expand in the vertex stage on every backend; LO_RECT_LIST_GS
+            // keeps the geometry shader path where the device supports one.
+            bool rectListExpansion = true;
+            uint32_t rectListSkipped = 0;
 
             std::unordered_map<uint64_t, Shader> shaders[2];
             std::unordered_map<PipelineKey, std::unique_ptr<RenderPipeline>, PipelineKeyHash> pipelines;
@@ -1303,7 +1316,7 @@ namespace gpu::renderer
                     taaTiming.samples, taaTiming.totalMilliseconds, taaTiming.lastMilliseconds,
                     replayTiming.samples, replayTiming.totalMilliseconds, replayTiming.lastMilliseconds,
                     maskTiming.samples, maskTiming.totalMilliseconds, maskTiming.lastMilliseconds,
-                    temporal::LiveJsonString(vulkan ? "Vulkan" : "D3D12"),
+                    temporal::LiveJsonString(BackendLabel()),
                     temporal::LiveJsonString(lo_version::Source), temporal::LiveJsonString(taaLiveError));
                 state.close();
                 if (state.fail()) return;
@@ -1661,13 +1674,13 @@ namespace gpu::renderer
             {
                 try {
                     LOG_ERROR("renderer init failed: backend={} stage={} bytes={} slot={}",
-                        vulkan ? "Vulkan" : "D3D12", stage, bytes, slot);
+                        BackendLabel(), stage, bytes, slot);
                     os::diagnostics::LogHostMemory("renderer initialization failure");
                 } catch (...) {
                     char line[384];
                     const int size = std::snprintf(line, sizeof(line),
                         "[error] renderer init failed: backend=%s stage=%s bytes=%llu slot=%d\n",
-                        vulkan ? "Vulkan" : "D3D12", stage, static_cast<unsigned long long>(bytes), slot);
+                        BackendLabel(), stage, static_cast<unsigned long long>(bytes), slot);
                     if (size > 0) os::logger::EmergencyWrite(line, size_t(size) < sizeof(line) ? size_t(size) : sizeof(line) - 1);
                 }
                 return false;
@@ -1676,7 +1689,8 @@ namespace gpu::renderer
             {
                 device = video::GetDevice();
                 queue = video::GetQueue();
-                vulkan = video::IsVulkan();
+                vulkan = video::UsesSpirv();
+                nativeVulkan = video::IsVulkan();
 #if defined(LO_GPU_PLUME)
                 dlssController = video::GetDlssController();
 #if !defined(LO_RENDERER_P2_EMBEDDED_TEST)
@@ -1686,7 +1700,7 @@ namespace gpu::renderer
                 const char* batchOverride = getenv("LO_VK_DESCRIPTOR_BATCH_LIMIT");
                 descriptorBatchLimit = render_batch::DescriptorLimit(vulkan, batchOverride ? batchOverride : "");
                 LOG_INFO("renderer: descriptor reuse={} backend={} limit={} gpu_slots={} (LO_DESCRIPTOR_REUSE=0 disables reuse)",
-                    descriptorReuse, vulkan ? "Vulkan" : "D3D12", descriptorBatchLimit, kGpuSlots);
+                    descriptorReuse, nativeVulkan ? "Vulkan" : vulkan ? "Metal" : "D3D12", descriptorBatchLimit, kGpuSlots);
                 binaryFormat = vulkan ? xenos::ShaderBinaryFormat::Spirv : xenos::ShaderBinaryFormat::Dxil;
                 renderFormat = vulkan ? RenderShaderFormat::SPIRV : RenderShaderFormat::DXIL;
                 if (!device || !queue)
@@ -1702,7 +1716,8 @@ namespace gpu::renderer
                         if(collector->Prepare(device))sparseCollector=std::move(collector);
                         else LOG_WARNING("renderer: sparse GPU collection unavailable; VS/PS and summary collection remain available");
                     } else if(taa_collection::Enabled()&&vulkan) {
-                        LOG_INFO("renderer: Vulkan sparse GPU collection skipped: coherent nonblocking readback unavailable; VS/PS and summary collection remain available");
+                        LOG_INFO("renderer: {} sparse GPU collection skipped: coherent nonblocking readback unavailable; VS/PS and summary collection remain available",
+                            nativeVulkan ? "Vulkan" : "Metal");
                     }
                 } catch(const std::exception& error) {
                     sparseCollector.reset();
@@ -1817,7 +1832,7 @@ namespace gpu::renderer
                     [&](const auto& handles) { return CreateSamplerTable(handles); }))
                     return InitFailure("guest_sampler_table.create");
                 maximumAnisotropy = 16; // D3D12's supported anisotropy range.
-                if (vulkan) {
+                if (nativeVulkan) {
                     const auto* native = static_cast<const VulkanDevice*>(device);
                     VkPhysicalDeviceFeatures features{};
                     vkGetPhysicalDeviceFeatures(native->physicalDevice, &features);
@@ -1854,17 +1869,18 @@ namespace gpu::renderer
                     } else LOG_INFO("renderer: shader cache {}", shaderCacheDir);
                 }
 
-                CompileRectListGs();
+                rectListExpansion = !(getenv("LO_RECT_LIST_GS") && device->getCapabilities().geometryShader);
+                if (!rectListExpansion) CompileRectListGs();
                 CompileBlitShaders();
                 CompileSceneCopyPromotionShaders();
                 CompileTransferShader();
-                if (!rectListGs) return InitFailure("rect_list_shader.create");
+                if (!rectListExpansion && !rectListGs) return InitFailure("rect_list_shader.create");
                 if (!blitVs || !blitPs) return InitFailure("blit_shader.create");
                 if (!transferPs) return InitFailure("transfer_shader.create");
                 PrepareKnownShaders();
                 if (initializationModuleFailure) return InitFailure("known_shaders.prepare");
                 PrepareKnownPipelines();
-                taa_collection::SetDevice(vulkan, device->getDescription().name, device->getDescription().driverVersion);
+                taa_collection::SetDevice(nativeVulkan ? "vulkan" : vulkan ? "metal" : "d3d12", device->getDescription().name, device->getDescription().driverVersion);
                 const auto dxcStats = xenos::GetDxcStatistics();
                 LOG_INFO("renderer: startup DXC actual calls {}, succeeded {}, deterministic rejections {}, infrastructure failures {}",
                     dxcStats.calls, dxcStats.succeeded, dxcStats.rejected, dxcStats.infrastructureFailed);
@@ -2585,14 +2601,14 @@ namespace gpu::renderer
                 config.colorSpace = promotion.inputs.colorEncoding == temporal::ColorEncoding::Sdr ?
                     dlss::SrColorSpace::DisplayEncoded : dlss::SrColorSpace::Linear;
                 std::shared_ptr<dlss::EvaluateCapture> evidence;
-                if (vulkan && activePlan.requestedUpscaler == upscaling::Upscaler::Dlss && evaluatePage && evaluatePage->frame == frame && promotion.inputs.color.texture && promotion.scratch) {
+                if (nativeVulkan && activePlan.requestedUpscaler == upscaling::Upscaler::Dlss && evaluatePage && evaluatePage->frame == frame && promotion.inputs.color.texture && promotion.scratch) {
                     try {
                         evidence = evaluatePage->NewAttempt(*device, promotion.inputs, config,
                             *static_cast<plume::VulkanTexture*>(promotion.inputs.color.texture),
                             *static_cast<plume::VulkanTexture*>(promotion.scratch->texture.get()),
                             temporalScene.Color().ordinal, drawsThisFrame);
                     } catch (const std::exception&) { evaluatePage->captureFailed = true; }
-                } else if (vulkan && activePlan.requestedUpscaler == upscaling::Upscaler::Fsr && evaluatePage &&
+                } else if (nativeVulkan && activePlan.requestedUpscaler == upscaling::Upscaler::Fsr && evaluatePage &&
                     evaluatePage->frame == frame && temporalHistory && promotion.inputs.color.texture &&
                     promotion.inputs.depth.texture && promotion.inputs.motion.texture &&
                     promotion.inputs.motionInvalidity.texture && promotion.scratch) {
@@ -3459,7 +3475,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     motionReplay->ReleaseCompletedThrough(s.motionSerial);
                 }
                 for (const auto& texture : s.retiredTextures) {
-                    if (vulkan && texture && texture->texture && vk_object_trace::Permit()) {
+                    if (nativeVulkan && texture && texture->texture && vk_object_trace::Permit()) {
                         const auto& image = *static_cast<const VulkanTexture*>(texture->texture.get());
                         std::fprintf(stderr, "VK_OBJECT_TRACE route=renderer_retired event=fence_completed_release slot=%u allocation=%llu image=0x%llx view=0x%llx temporal_serial=%llu sr_serial=%llu\n",
                             i, vk_object_trace::Id(texture->allocationSerial), vk_object_trace::Id(image.vk),
@@ -3979,7 +3995,9 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     for (const auto& key : loaded.keys) {
                         CheckPreparationCancel();
                         const auto vs = shaders[0].find(key.vs), ps = shaders[1].find(key.ps);
+                        // Rect-list variants are built from guest microcode at the first draw.
                         if (vs == shaders[0].end() || !vs->second.valid ||
+                            (key.prim == 8 && rectListExpansion && !vs->second.rectList) ||
                             (key.ps && (ps == shaders[1].end() || !ps->second.valid))) { ++missingShaders; continue; }
                         jobs.push_back({key, &vs->second, key.ps ? &ps->second : nullptr, {}});
                     }
@@ -4073,10 +4091,68 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 if (reuseBundle) {
                     uint32_t modules = 0, cachedFailures = 0;
                     double moduleMs = 0;
+                    // Metal module creation (SPIR-V to MSL plus the Metal compiler)
+                    // dominates a warm start, so records are collected in bounded
+                    // batches and each batch is built in parallel; MTLDevice is
+                    // thread-safe. Other backends create modules inline.
+                    struct PendingModule { bool pixel; uint64_t hash; std::vector<uint8_t> binary; std::unique_ptr<RenderShader> shader; };
+                    std::vector<PendingModule> pendingModules;
+                    const bool parallelModules = video::IsMetal();
+                    constexpr size_t kModuleBatch = 256;
+                    // Metal builds only shaders used by recorded pipeline recipes at
+                    // a warm start; GetShader builds the rest from the SPIR-V cache on
+                    // first use. Building all ~28k takes ~10 s and keeps every library
+                    // resident. The first launch still builds all of them, warming
+                    // Metal's own compiler cache for later first uses.
+                    // LO_SHADER_EAGER_MODULES=1 restores eager creation.
+                    const bool lazyModules = parallelModules && !getenv("LO_SHADER_EAGER_MODULES");
+                    std::unordered_set<uint64_t> wantedModules[2];
+                    if (lazyModules && !getenv("LO_NO_PIPELINE_CACHE")) {
+                        const auto recipes = gpu::pipeline_cache::Load(
+                            std::filesystem::path(shaderCacheDir) / (vulkan ? "pipelines_vk12_1.bin" : "pipelines.bin"),
+                            xenos::cache::Version, kPipelineRecipeVersion, ValidPipelineRecipe);
+                        for (const auto& key : recipes.keys) {
+                            wantedModules[0].insert(key.vs);
+                            if (key.ps) wantedModules[1].insert(key.ps);
+                        }
+                    }
+                    uint32_t deferredModules = 0;
+                    auto flushModules = [&] {
+                        if (pendingModules.empty()) return;
+                        const auto begin = std::chrono::steady_clock::now();
+                        std::atomic<size_t> next{0};
+                        auto work = [&] {
+                            for (size_t i; (i = next.fetch_add(1)) < pendingModules.size();) {
+                                auto& module = pendingModules[i];
+                                try { module.shader = device->createShader(module.binary.data(), module.binary.size(), "main", renderFormat); }
+                                catch (const std::exception&) { module.shader.reset(); }
+                            }
+                        };
+                        const size_t workers = std::min<size_t>(pendingModules.size(),
+                            std::max(1u, std::thread::hardware_concurrency()));
+                        std::vector<std::thread> threads;
+                        for (size_t t = 1; t < workers; ++t) threads.emplace_back(work);
+                        work();
+                        for (auto& thread : threads) thread.join();
+                        moduleMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+                        for (auto& module : pendingModules) {
+                            auto& entry = shaders[module.pixel ? 1 : 0][module.hash];
+                            entry.shader = std::move(module.shader);
+                            entry.valid = entry.shader != nullptr;
+                            if (!entry.valid) throw std::runtime_error("cached shader device module creation failed");
+                            ++modules;
+                        }
+                        pendingModules.clear();
+                    };
                     try {
                         auto loaded = startup::LoadTransactional(bundlePath, bundleIdentity, cacheIdentity, [&](startup::Record&& record) {
                             ExportPortableShader(record.hash, record.info, record.binary, record.failure, true);
                             std::string{}.swap(record.info.hlsl); // Export counts source text, but the renderer does not retain it.
+                            if (lazyModules && record.failure.empty() &&
+                                !wantedModules[record.info.isPixelShader ? 1 : 0].contains(record.hash)) {
+                                ++deferredModules;
+                                return;
+                            }
                             auto& entry = shaders[record.info.isPixelShader ? 1 : 0][record.hash];
                             entry.info = std::move(record.info);
                             if (!record.failure.empty()) {
@@ -4087,23 +4163,32 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                     record.failure.substr(0, record.failure.find('\n')));
                                 return;
                             }
+                            if (parallelModules) {
+                                pendingModules.push_back({entry.info.isPixelShader, record.hash, std::move(record.binary), nullptr});
+                                if (pendingModules.size() >= kModuleBatch) flushModules();
+                                return;
+                            }
                             const auto begin = std::chrono::steady_clock::now();
                             entry.shader = device->createShader(record.binary.data(), record.binary.size(), "main", renderFormat);
                             moduleMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-begin).count();
                             entry.valid = entry.shader != nullptr;
                             if (!entry.valid) throw std::runtime_error("cached shader device module creation failed");
                             ++modules;
-                        }, [&] { shaders[0].clear(); shaders[1].clear(); }, [] {},
+                        }, [&] { pendingModules.clear(); deferredModules = 0; shaders[0].clear(); shaders[1].clear(); }, [] {},
                         [] { CheckPreparationCancel(); }, [](uint32_t done, uint32_t total) {
                             video::SetShaderPreparationProgress(done, total, video::PreparationStage::CachedShaders,
                                 video::PreparationUnit::Shaders);
                         }, PortableExportRequested()); // Reconstruct one record at a time only for export size accounting.
+                        if (loaded.ok) flushModules();
+                        else pendingModules.clear();
                         video::SetShaderPreparationProgress(0, 0);
                         if (video::ShaderPreparationSkipped()) throw xenos::preparation::Cancelled{};
                         if (!loaded.ok) throw std::runtime_error(loaded.reason);
                         FinishPortableShaderExport();
                         LOG_INFO("renderer: startup bundle hit: {} records, {} modules ready, {} cached failures; 0 source content reads, 0 translations, 0 DXC attempts, {} bytes verified/read",
                             loaded.records, modules, cachedFailures, loaded.bytesRead);
+                        if (lazyModules)
+                            LOG_INFO("renderer: {} shader modules deferred to first use (Metal)", deferredModules);
                         LOG_INFO("renderer: startup bundle elapsed {:.0f} ms including {:.0f} ms device module creation; source discovery/expansion skipped",
                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-wholeStarted).count(), moduleMs);
                         ResetTimers();
@@ -4226,7 +4311,16 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     bool compiled = false;
                     bool deterministicFailure = false;
                     bool cachedFailure = false;
+                    // Device module built on the worker (Metal only, see below).
+                    std::unique_ptr<RenderShader> module;
+                    uint64_t moduleUs = 0;
+                    bool moduleCreated = false;
                 };
+                // Metal module creation translates SPIR-V to MSL and runs the Metal
+                // compiler; on the single install thread it starves the DXC workers.
+                // MTLDevice is thread-safe, so Metal modules are built in parallel on
+                // the workers. Vulkan and D3D12 keep creating them at install.
+                const bool modulesInWorkers = video::IsMetal();
                 const unsigned logicalThreads = std::thread::hardware_concurrency();
                 const auto workerCap = xenos::preparation::HostWorkerCap(logicalThreads);
                 const auto workerCount = xenos::preparation::WorkerCount(logicalThreads, jobs.size(),
@@ -4300,6 +4394,17 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                     item.bytecode, &item.cacheWriteError);
                             }
                         }
+                        if (modulesInWorkers && item.error.empty() && !item.bytecode.empty()) {
+                            const auto moduleStarted = std::chrono::steady_clock::now();
+                            try {
+                                item.module = device->createShader(item.bytecode.data(), item.bytecode.size(), "main", renderFormat);
+                            } catch (const std::exception& e) {
+                                LOG_WARNING("renderer: shader device module creation failed: {}", e.what());
+                            }
+                            item.moduleCreated = true;
+                            item.moduleUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - moduleStarted).count();
+                        }
                     } catch (const std::bad_alloc&) { throw; }
                     catch (const std::exception& e) { item.error = e.what(); }
                     return item;
@@ -4354,14 +4459,19 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         Shader& entry = cache[item.hash];
                         entry.info = std::move(item.info);
                         const auto moduleStarted = std::chrono::steady_clock::now();
-                        try {
-                            entry.shader = device->createShader(item.bytecode.data(), item.bytecode.size(), "main", renderFormat);
-                        } catch (const std::exception& e) {
-                            LOG_WARNING("renderer: shader device module creation failed: {}", e.what());
-                            entry.shader.reset();
+                        if (item.moduleCreated) {
+                            entry.shader = std::move(item.module);
+                            moduleUs += item.moduleUs;
+                        } else {
+                            try {
+                                entry.shader = device->createShader(item.bytecode.data(), item.bytecode.size(), "main", renderFormat);
+                            } catch (const std::exception& e) {
+                                LOG_WARNING("renderer: shader device module creation failed: {}", e.what());
+                                entry.shader.reset();
+                            }
+                            moduleUs += std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - moduleStarted).count();
                         }
-                        moduleUs += std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::steady_clock::now() - moduleStarted).count();
                         entry.valid = entry.shader != nullptr;
                         if (!entry.info.errors.empty())
                             SHADER_LOG_WARNING("translation-notes", RendererByteFnv, "renderer: {} shader {:016x} notes: {}",
@@ -4544,6 +4654,36 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     SHADER_LOG_WARNING("translation-notes", RendererByteFnv, "renderer: {} shader {:016x} notes: {}", pixel ? "pixel" : "vertex", hash, entry.info.errors);
                 if(!pixel)PreparePositionEvidence(entry,words,count,hash);
                 return entry.valid ? &entry : nullptr;
+            }
+
+            bool PrepareRectListShader(Shader& vs, const uint32_t* words, uint32_t count, uint64_t hash)
+            {
+                if (vs.rectList) return true;
+                if (vs.rectListFailed) return false;
+                vs.rectListFailed = true;
+                std::vector<uint32_t> swapped(count);
+                for (uint32_t i = 0; i < count; i++)
+                    swapped[i] = ByteSwap(words[i]);
+                const std::string source = xenos::rect_list::Vertex(xenos::TranslateShader(swapped.data(), count, false));
+                if (source.empty())
+                {
+                    SHADER_LOG_WARNING("rect-list-failed", RendererByteFnv, "renderer: vertex shader {:016x} has no rect-list entry point", hash);
+                    return false;
+                }
+                xenos::CompiledShader compiled = xenos::CompileCachedHlsl(source, "main", "vs_6_0", binaryFormat);
+                if (!compiled.ok)
+                {
+                    SHADER_LOG_WARNING("rect-list-failed", RendererByteFnv, "renderer: rect-list vertex shader {:016x} failed to compile:\n{}", hash, compiled.errors);
+                    return false;
+                }
+                try {
+                    vs.rectList = device->createShader(compiled.bytecode.data(), compiled.bytecode.size(), "main", renderFormat);
+                } catch (const std::exception& e) {
+                    SHADER_LOG_WARNING("rect-list-failed", RendererByteFnv, "renderer: rect-list shader module creation failed: {}", e.what());
+                    return false;
+                }
+                vs.rectListFailed = vs.rectList == nullptr;
+                return !vs.rectListFailed;
             }
 
             // ---- render targets ------------------------------------------------------
@@ -4915,7 +5055,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 auto it = framebuffers.find(key);
                 if (it != framebuffers.end())
                     return it->second.get();
-                if (vulkan && vk_object_trace::Permit()) {
+                if (nativeVulkan && vk_object_trace::Permit()) {
                     const auto* c = static_cast<const VulkanTexture*>(key.first);
                     const auto* d = static_cast<const VulkanTexture*>(key.second);
                     std::fprintf(stderr, "VK_OBJECT_TRACE route=renderer event=framebuffer_mapping color_image=0x%llx color_view=0x%llx color_extent=%ux%u depth_image=0x%llx depth_view=0x%llx depth_extent=%ux%u\n",
@@ -5403,7 +5543,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 
             std::unique_ptr<RenderPipeline> CreatePipeline(const PipelineKey& key, Shader* vs, Shader* ps, bool trace)
             {
-                if (vulkan && key.prim == 1 && vs && vs->shader && vk_object_trace::Permit())
+                if (nativeVulkan && key.prim == 1 && vs && vs->shader && vk_object_trace::Permit())
                     std::fprintf(stderr, "VK_OBJECT_TRACE route=renderer event=point_pipeline vs_hash=0x%llx module=0x%llx uses_point_size_metadata=%u color_mask=%u depth_format=%u\n",
                         vk_object_trace::Id(key.vs), vk_object_trace::Id(static_cast<const VulkanShader*>(vs->shader.get())->vk),
                         unsigned(vs->info.usesPointSize), key.colorMask, key.depthFormat);
@@ -5416,7 +5556,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 
                 RenderGraphicsPipelineDesc desc;
                 desc.pipelineLayout = pipelineLayout.get();
-                desc.vertexShader = vs->shader.get();
+                desc.vertexShader = key.prim == 8 && rectListExpansion ? vs->rectList.get() : vs->shader.get();
                 desc.pixelShader = ps ? ps->shader.get() : nullptr;
                 if (key.prim == 8 && rectListGs)
                     desc.geometryShader = rectListGs.get();
@@ -5737,7 +5877,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 Shader* ps = modeControl == 4 && psWords && psCount ? GetShader(true, psWords, psCount, psHash) : nullptr;
                 if (debugShaderSources && !debugCaptureDir.empty() && !(modeControl == 4 && psWords && psCount))
                     debugShaderSources->NotePixelNotBound();
-                if (!vs)
+                if (!vs || (info.primitiveType == 8 && rectListExpansion && !PrepareRectListShader(*vs, vsWords, vsCount, vsHash)))
                 {
                     drops.shader++;
                     return;
@@ -7145,6 +7285,15 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     geometry_prepare::ExpandQuadList(indices, primitiveScratch, useIndices, info.indexCount);
                     break;
                 }
+                case 8: // rect list -> six encoded corners per rectangle
+                {
+                    if (!rectListExpansion) break;
+                    const uint32_t skipped = xenos::rect_list::ExpandIndices(indices, primitiveScratch, useIndices,
+                        info.indexCount, Reg(REG_VGT_INDX_OFFSET));
+                    if (skipped && rectListSkipped++ < 8)
+                        LOG_WARNING("renderer: rect list skipped {} rectangle(s) (non-consecutive indices or vertex range)", skipped);
+                    break;
+                }
                 case 5: // triangle fan -> list
                 {
                     auto& out = primitiveScratch;
@@ -7163,7 +7312,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 default:
                     break;
                 }
-                if (info.indexed && !indexCached && indexSrcCount >= geometry_prepare::IndexCache::kMinCount)
+                // Expanded rect lists fold VGT_INDX_OFFSET into the indices, which
+                // the cache key does not cover.
+                if (info.indexed && !indexCached && indexSrcCount >= geometry_prepare::IndexCache::kMinCount &&
+                    !(info.primitiveType == 8 && rectListExpansion))
                 {
                     // Store the post-expansion result against the exact source
                     // bytes; a later identical draw copies it verbatim.
@@ -7379,7 +7531,8 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 commandList->setGraphicsDescriptorSet(set3, 3);
                 if(vulkan) commandList->setGraphicsDescriptorSet(set4,4);
 
-                int32_t baseVertex = int32_t(Reg(REG_VGT_INDX_OFFSET));
+                // Expanded rect-list indices already include the offset.
+                int32_t baseVertex = info.primitiveType == 8 && rectListExpansion ? 0 : int32_t(Reg(REG_VGT_INDX_OFFSET));
                 static uint32_t drawLogs = 0;
                 if (psTraceRemaining && ps && key.ps == psTraceHash)
                 {
@@ -7620,7 +7773,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     const auto alphaDesc = DescribePipeline(key, vs, ps, false);
                     if (alphaDesc.depthEnabled && !alphaDesc.depthWriteEnabled &&
                         alphaDesc.depthFunction == RenderComparisonFunction::GREATER_EQUAL &&
-                        !alphaDesc.stencilEnabled && !alphaDesc.geometryShader) {
+                        !alphaDesc.stencilEnabled && !alphaDesc.geometryShader && key.prim != 8) {
                         auto* alphaPipeline = fsrAlphaReplay->Prepare(key, alphaDesc, vs->info, ps->info,
                             vsWords, vsCount, psWords, psCount);
                         if (alphaPipeline) {
@@ -8834,7 +8987,13 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                         commandList->setViewports(&stretched, 1);
                         RenderRect fullRect{ 0, 0, int32_t(target->width), int32_t(mappedRows) };
                         commandList->setScissors(&fullRect, 1);
-                        commandList->drawInstanced(indexCount, 1, uint32_t(baseVertex), 0);
+                        if (useIndices) {
+                            // Expanded rect list: replay its encoded corners.
+                            RenderIndexBufferView view(RenderBufferReference(uploadRing, preparedIndexOffset),
+                                uint32_t(indices.size() * 4), RenderFormat::R32_UINT);
+                            commandList->setIndexBuffer(&view);
+                            commandList->drawIndexedInstanced(indexCount, 1, 0, baseVertex, 0);
+                        } else commandList->drawInstanced(indexCount, 1, uint32_t(baseVertex), 0);
 #if defined(LO_GPU_PLUME)
                         if (key.colorMask & 7) HandleFsrAlphaRgbWriter(*target,
                             "color_clear_rect", drawsThisFrame, key.vs, key.ps, key.blend, key.colorMask);

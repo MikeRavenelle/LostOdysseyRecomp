@@ -32,16 +32,23 @@ inline uint32_t GameLanguageIndex(uint32_t id)
             return i;
     return 0;
 }
+// Native pixels: the drawable's backing size. On macOS "follow output" uses the
+// window's logical size instead (Retina renders 4x the pixels); elsewhere both match.
+inline constexpr int InternalResolutionNative = 1;
+
 struct Config
 {
     uint32_t uiLanguage = 0;
     uint32_t debugLanguage = 0; // Independent tool UI: 0 English, 1 Simplified Chinese.
     uint32_t gameLanguage = 1;
     uint32_t width = 1280, height = 720;
-    int internalResolution = 0; // 0 follows output (up to 4K); 720/1080/1440/2160 select scene height.
+    int internalResolution = 0; // 0 follows output (up to 4K); 720/1080/1440/2160 select scene height;
+                                // InternalResolutionNative renders at the drawable's pixel size.
     WindowMode windowMode = WindowMode::Windowed;
 #ifdef _WIN32
     GraphicsBackend graphicsBackend = GraphicsBackend::D3D12; // Applied on the next process start.
+#elif LO_PLATFORM_MACOS
+    GraphicsBackend graphicsBackend = GraphicsBackend::Metal; // The only macOS backend.
 #else
     GraphicsBackend graphicsBackend = GraphicsBackend::Vulkan; // Applied on the next process start.
 #endif

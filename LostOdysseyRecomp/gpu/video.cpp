@@ -41,6 +41,8 @@
 #include <settings/menu.h>
 #include <settings/restart.h>
 #include <kernel/memory.h>
+#include <os/main_thread.h>
+#include <os/platform.h>
 #include <os/shader_log.h>
 #include <os/user_paths.h>
 #include <hid/hid.h>
@@ -61,6 +63,10 @@
 #include <plume_vulkan.h>
 #ifdef _WIN32
 #include <plume_d3d12.h>
+#endif
+#if LO_PLATFORM_MACOS
+// Declared the way plume's examples do; plume_metal.h pulls in metal-cpp.
+namespace plume { std::unique_ptr<RenderInterface> CreateMetalInterface(); }
 #endif
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
 #include "diagnostic_log.h"
@@ -100,6 +106,12 @@ namespace gpu::video
 
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
         SDL_Window* g_window = nullptr;
+#if LO_PLATFORM_MACOS
+        // Main-thread owned; the swap chain presents to the view's CAMetalLayer.
+        SDL_MetalView g_metalView = nullptr;
+        void* g_cocoaWindow = nullptr;
+        void* g_metalLayer = nullptr;
+#endif
         std::atomic<uint32_t> g_displayRefreshHz{0}; // Window thread -> presentation thread.
         std::chrono::steady_clock::time_point g_nextRefreshPoll{};
         std::atomic<bool> g_exitRequested{false};
@@ -125,6 +137,10 @@ namespace gpu::video
                 g_cursorManaged = false;
                 g_cursorHidden = false;
             }
+#if LO_PLATFORM_MACOS
+            if (g_metalView) { SDL_Metal_DestroyView(g_metalView); g_metalView = nullptr; }
+            g_cocoaWindow = g_metalLayer = nullptr;
+#endif
             if (g_window) { SDL_DestroyWindow(g_window); g_window = nullptr; }
             g_displayRefreshHz = 0;
             g_nextRefreshPoll = {};
@@ -136,6 +152,7 @@ namespace gpu::video
 #endif
         std::atomic<uint64_t> g_shaderProgress{0};
         std::atomic<bool> g_vulkan{false};
+        std::atomic<bool> g_metal{false};
         std::atomic<uint64_t> g_deviceEpoch{0};
         constexpr uint64_t kProgressMask = (1ull << 28) - 1;
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
@@ -420,6 +437,68 @@ namespace gpu::video
             return submitted;
         }
 
+#if LO_PLATFORM_MACOS
+        // plume's Metal fence is a counting semaphore: each submission signals it
+        // once and each wait consumes one signal. The runtime's waits assume an
+        // idempotent fence (a completed Vulkan fence or D3D12 value stays
+        // complete), so outstanding signals are counted per fence and a wait
+        // consumes exactly those.
+        std::mutex g_metalFenceMutex;
+        std::unordered_map<const plume::RenderCommandFence*, uint32_t> g_metalFenceSignals;
+
+        void ConsumeMetalFenceSignals(plume::RenderCommandQueue* queue, plume::RenderCommandFence* fence)
+        {
+            uint32_t pending = 0;
+            {
+                const std::scoped_lock lock(g_metalFenceMutex);
+                if (const auto it = g_metalFenceSignals.find(fence); it != g_metalFenceSignals.end())
+                    pending = std::exchange(it->second, 0);
+            }
+            for (; pending; --pending)
+                queue->waitForCommandFence(fence);
+        }
+
+        // Metal reports command buffer errors asynchronously, never at submit, so
+        // an accepted submission always succeeds here.
+        bool SubmitMetal(const plume::RenderCommandList* const* lists, uint32_t count,
+            plume::RenderCommandSemaphore* const* waits, uint32_t waitCount,
+            plume::RenderCommandSemaphore* const* signals, uint32_t signalCount,
+            plume::RenderCommandFence* fence, uint64_t* serial, int32_t* rawResult)
+        {
+            if (serial) *serial = 0;
+            if (rawResult) *rawResult = submission::VulkanState::InvalidState;
+            auto* queue = ActiveSubmissionQueue();
+            if (GpuWorkStopped()) {
+                if (rawResult) *rawResult = g_submissionState.Failure();
+                return false;
+            }
+            if (!g_metal || !queue || !lists || !count) {
+                StopGpuWork(submission::VulkanState::InvalidState); return false;
+            }
+            for (uint32_t i = 0; i < count; ++i)
+                if (!lists[i]) { StopGpuWork(submission::VulkanState::InvalidState); return false; }
+            uint64_t acceptedSerial = 0;
+            int32_t result = 0;
+            const bool submitted = g_submissionState.SubmitBatch(
+                [] { return submission::VulkanState::Success; },
+                [&] {
+                    queue->executeCommandLists(const_cast<const plume::RenderCommandList**>(lists), count,
+                        const_cast<plume::RenderCommandSemaphore**>(waits), waitCount,
+                        const_cast<plume::RenderCommandSemaphore**>(signals), signalCount, fence);
+                    if (fence) {
+                        const std::scoped_lock lock(g_metalFenceMutex);
+                        ++g_metalFenceSignals[fence];
+                    }
+                    return submission::VulkanState::Success;
+                },
+                acceptedSerial, result);
+            if (rawResult) *rawResult = result;
+            if (serial) *serial = acceptedSerial;
+            if (!submitted) StopGpuWork(result);
+            return submitted;
+        }
+#endif
+
 #ifdef _WIN32
         int32_t D3DResult(HRESULT result) { return FAILED(result) ? int32_t(result) : 0; }
 
@@ -513,6 +592,11 @@ namespace gpu::video
             plume::RenderCommandSemaphore* const* signals, uint32_t signalCount,
             plume::RenderCommandFence* fence, uint64_t* serial, int32_t* rawResult)
         {
+#if LO_PLATFORM_MACOS
+            if (g_metal)
+                return SubmitMetal(lists, count, waits, waitCount, signals, signalCount,
+                    fence, serial, rawResult);
+#endif
             if (g_vulkan)
                 return SubmitVulkan(lists, count, waits, waitCount, signals, signalCount,
                     fence, serial, rawResult);
@@ -725,7 +809,7 @@ namespace gpu::video
             result->swap = g_captureCopy.ticket.swap;
             result->deviceEpoch = g_captureCopy.ticket.deviceEpoch;
             result->presentAccepted = presented;
-            result->backend = g_vulkan ? "Vulkan" : "D3D12";
+            result->backend = g_vulkan ? "Vulkan" : g_metal ? "Metal" : "D3D12";
             result->format = "R8G8B8A8_UNORM";
             result->available = false;
             if (!g_captureCopy.ticket.active)
@@ -747,7 +831,8 @@ namespace gpu::video
                 return;
             }
             bool complete = false;
-            if (g_vulkan)
+            // Metal's counted fence wait proves completion as Vulkan's fence does.
+            if (g_vulkan || g_metal)
             {
                 complete = WaitForGpuFence(g_fence.get());
                 if (complete)
@@ -815,7 +900,8 @@ namespace gpu::video
         {
             upscaling::BackendDeviceSnapshot snapshot;
             const bool vulkan = g_vulkan.load(std::memory_order_acquire);
-            snapshot.backend = vulkan ? backend::Backend::Vulkan : backend::Backend::D3D12;
+            snapshot.backend = vulkan ? backend::Backend::Vulkan
+                : g_metal.load(std::memory_order_acquire) ? backend::Backend::Metal : backend::Backend::D3D12;
             snapshot.deviceEpoch = g_deviceEpoch.load(std::memory_order_acquire);
 #if defined(LO_GPU_PLUME) && !defined(LO_VIDEO_SUBMISSION_UNIT)
             snapshot.deviceReady = g_available && g_device != nullptr;
@@ -842,7 +928,8 @@ namespace gpu::video
         void PublishClearedDeviceCapability()
         {
             upscaling::BackendDeviceSnapshot snapshot;
-            snapshot.backend = g_vulkan.load(std::memory_order_acquire) ? backend::Backend::Vulkan : backend::Backend::D3D12;
+            snapshot.backend = g_vulkan.load(std::memory_order_acquire) ? backend::Backend::Vulkan
+                : g_metal.load(std::memory_order_acquire) ? backend::Backend::Metal : backend::Backend::D3D12;
             snapshot.deviceEpoch = g_deviceEpoch.load(std::memory_order_acquire);
             snapshot.deviceReady = false;
             snapshot.dlssAvailable = false;
@@ -880,7 +967,7 @@ namespace gpu::video
     void StopGpuWork(int32_t nativeResult) {
         if (!g_submissionState.Stopped())
             LOG_ERROR("video: native GPU work stopped backend={} raw_result={}; device restart required",
-                g_vulkan ? "Vulkan" : "D3D12", nativeResult);
+                g_vulkan ? "Vulkan" : g_metal ? "Metal" : "D3D12", nativeResult);
         g_submissionState.Stop(nativeResult);
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
         g_fgPresent.CancelAll(frame_generation::HandoffCancel::DeviceLost);
@@ -893,6 +980,10 @@ namespace gpu::video
     bool BeginGpuCommands(plume::RenderCommandList* list) {
         if (GpuWorkStopped()) return false;
         if (!list) { StopGpuWork(submission::VulkanState::InvalidState); return false; }
+#if LO_PLATFORM_MACOS
+        // Metal command encoding reports no errors at record time.
+        if (g_metal) { list->begin(); return true; }
+#endif
         if (!g_vulkan) {
 #ifdef _WIN32
             auto* native = static_cast<plume::D3D12CommandList*>(list);
@@ -917,6 +1008,9 @@ namespace gpu::video
     bool EndGpuCommands(plume::RenderCommandList* list) {
         if (GpuWorkStopped()) return false;
         if (!list) { StopGpuWork(submission::VulkanState::InvalidState); return false; }
+#if LO_PLATFORM_MACOS
+        if (g_metal) { list->end(); return true; }
+#endif
         if (!g_vulkan) {
 #ifdef _WIN32
             auto* native = static_cast<plume::D3D12CommandList*>(list);
@@ -940,6 +1034,12 @@ namespace gpu::video
     bool WaitForGpuFence(plume::RenderCommandFence* fence) {
         auto* queueHolder = ActiveSubmissionQueue();
         if (!queueHolder || !fence) { StopGpuWork(submission::VulkanState::InvalidState); return false; }
+#if LO_PLATFORM_MACOS
+        if (g_metal) {
+            ConsumeMetalFenceSignals(queueHolder, fence);
+            return g_submissionState.WaitSubmitted([] { return submission::VulkanState::Success; });
+        }
+#endif
         if (!g_vulkan) {
 #ifdef _WIN32
             auto* queue = static_cast<plume::D3D12CommandQueue*>(queueHolder);
@@ -1004,6 +1104,21 @@ namespace gpu::video
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
     void DrainGpuForShutdown() {
         if (!g_device) return;
+#if LO_PLATFORM_MACOS
+        if (g_metal) {
+            // Every submission signalled a counted fence; consuming them all
+            // proves completion.
+            std::vector<plume::RenderCommandFence*> fences;
+            {
+                const std::scoped_lock lock(g_metalFenceMutex);
+                for (const auto& [fence, pending] : g_metalFenceSignals)
+                    if (pending) fences.push_back(const_cast<plume::RenderCommandFence*>(fence));
+            }
+            if (g_queue)
+                for (auto* fence : fences) ConsumeMetalFenceSignals(g_queue.get(), fence);
+            return;
+        }
+#endif
         if (g_vulkan) {
             const auto result = vkDeviceWaitIdle(static_cast<plume::VulkanDevice*>(g_device.get())->vk);
             if (result == VK_SUCCESS) {
@@ -1076,6 +1191,12 @@ namespace gpu::video
         plume::RenderCommandFence* fence, uint64_t& submissionSerial, int32_t& rawResult,
         bool* executionMayBeInFlight)
     {
+#if LO_PLATFORM_MACOS
+        if (g_metal) {
+            if (executionMayBeInFlight) *executionMayBeInFlight = false;
+            return SubmitMetal(lists, count, nullptr, 0, nullptr, 0, fence, &submissionSerial, &rawResult);
+        }
+#endif
         if (g_vulkan) {
             if (executionMayBeInFlight) *executionMayBeInFlight = false;
             return SubmitVulkan(lists, count, nullptr, 0, nullptr, 0, fence, &submissionSerial, &rawResult);
@@ -1123,6 +1244,18 @@ namespace gpu::video
     }
 
     bool IsVulkan() { return g_vulkan; }
+    bool IsMetal() { return g_metal; }
+    bool UsesSpirv() { return g_vulkan || g_metal; }
+    uint32_t LogicalOutputHeight()
+    {
+#if !defined(_WIN32)
+        int width = 0, height = 0;
+        if (g_window) SDL_GetWindowSize(g_window, &width, &height);
+        return height > 0 ? uint32_t(height) : 0;
+#else
+        return 0;
+#endif
+    }
     upscaling::BackendDeviceSnapshot BackendDeviceState()
     {
         return upscaling::PublishedDeviceCapability();
@@ -1287,7 +1420,10 @@ namespace gpu::video
             const bool background = getenv("LO_BACKGROUND") != nullptr;
             const auto config=settings::GetConfig();
             uint32_t flags = SDL_WINDOW_RESIZABLE | (background ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN);
-#ifndef _WIN32
+#if LO_PLATFORM_MACOS
+            // macOS renders through plume's Metal backend (CAMetalLayer).
+            flags |= SDL_WINDOW_METAL;
+#elif !defined(_WIN32)
             flags |= SDL_WINDOW_VULKAN;
 #endif
             g_window = SDL_CreateWindow(lo_version::WindowTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -1333,6 +1469,22 @@ namespace gpu::video
             const auto windowIcon = reinterpret_cast<HICON>(GetClassLongPtrW(g_nativeWindow, GCLP_HICON));
             LOG_INFO("video: window icon resource match={}", resourceIcon && windowIcon == resourceIcon);
 #endif
+#if LO_PLATFORM_MACOS
+            // plume's Metal swap chain presents to this view's CAMetalLayer.
+            SDL_SysWMinfo info{};
+            SDL_VERSION(&info.version);
+            if (SDL_GetWindowWMInfo(g_window, &info))
+                g_metalView = SDL_Metal_CreateView(g_window);
+            if (!g_metalView)
+            {
+                LOG_WARNING("video: Metal view creation failed: {}", SDL_GetError());
+                SDL_DestroyWindow(g_window);
+                g_window = nullptr;
+                return false;
+            }
+            g_cocoaWindow = info.info.cocoa.window;
+            g_metalLayer = SDL_Metal_GetLayer(g_metalView);
+#endif
             return true;
         };
 #ifdef _WIN32
@@ -1371,7 +1523,10 @@ namespace gpu::video
         }
         LOG_INFO("video: render thread {}", GetCurrentThreadId());
 #else
-        if (!createWindow()) { Shutdown(); g_initAttempted = true; return false; }
+        // macOS: AppKit window work must run on the process main thread.
+        bool created = false;
+        os::main_thread::Run([&] { created = createWindow(); });
+        if (!created) { Shutdown(); g_initAttempted = true; return false; }
 #endif
 
 #if defined(LO_GPU_PLUME)
@@ -1413,6 +1568,10 @@ namespace gpu::video
                 g_temporalUpscaler = std::make_unique<TemporalUpscaler>(*g_dlssController);
                 g_interface = plume::CreateD3D12Interface();
             }
+#elif LO_PLATFORM_MACOS
+            // NGX/FSR are D3D12/Vulkan only: no DLSS controller or upscaler on Metal.
+            g_metal.store(candidate == backend::Backend::Metal);
+            g_interface = plume::CreateMetalInterface();
 #else
             g_dlssController = std::make_unique<dlss::Controller>(DlssApplicationDataPath(), DlssRuntimePath());
             g_temporalUpscaler = std::make_unique<TemporalUpscaler>(*g_dlssController);
@@ -1489,6 +1648,8 @@ namespace gpu::video
             if (!g_commandList || !g_fence || !g_acquireSemaphore || !g_releaseSemaphore) return "command/synchronization initialization failed";
 #ifdef _WIN32
             g_swapChain = g_queue->createSwapChain(plume::RenderSwapChainDesc(g_nativeWindow, kSwapChainFormat, kSwapChainBuffers));
+#elif LO_PLATFORM_MACOS
+            g_swapChain = g_queue->createSwapChain(plume::RenderSwapChainDesc(plume::RenderWindow{ g_cocoaWindow, g_metalLayer }, kSwapChainFormat, kSwapChainBuffers));
 #else
             g_swapChain = g_queue->createSwapChain(plume::RenderSwapChainDesc(g_window, kSwapChainFormat, kSwapChainBuffers));
 #endif
@@ -1575,7 +1736,7 @@ namespace gpu::video
         g_preparationWindow = nullptr;
         g_shaderProgress = 0;
 #else
-        DestroyWindowResources();
+        os::main_thread::Run(DestroyWindowResources);
 #endif
         g_available = false;
         g_initAttempted = false;
@@ -1722,8 +1883,16 @@ namespace gpu::video
     void PumpEvents()
     {
 #ifndef _WIN32
-        PumpWindowEvents();
+        os::main_thread::Run(PumpWindowEvents);
 #endif
+    }
+
+    void PumpIdleEvents()
+    {
+        // Runs on the main thread between video-thread requests. Events stay
+        // queued for PumpWindowEvents; this only keeps the host app responsive.
+        if (g_window && !ExitRequested())
+            SDL_PumpEvents();
     }
 
     void SetShaderPreparationProgress(uint32_t completed, uint32_t total, PreparationStage stage, PreparationUnit unit)
@@ -1903,7 +2072,7 @@ namespace gpu::video
             return;
         if (settings::restart::Requested()) {
             renderer::WaitDebugCaptureArchive();
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || LO_PLATFORM_POSIX
             if (settings::restart::LaunchWaitingChild()) {
                 RequestExit();
                 return;

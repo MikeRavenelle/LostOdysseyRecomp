@@ -333,6 +333,10 @@ std::wstring DlssNotice()
 }
 bool GraphicsRowHidden(int r)
 {
+#if LO_PLATFORM_MACOS
+    // Metal has no frame generation provider; keep the ids, hide the rows.
+    if (r == int(GraphicsRow::FrameGeneration)) return true;
+#endif
     return (r == int(GraphicsRow::DlssQuality) && edit.upscaler == gpu::upscaling::Upscaler::Off) ||
            (r == int(GraphicsRow::FsrSharpness) && edit.upscaler != gpu::upscaling::Upscaler::Fsr) ||
            (r == int(GraphicsRow::FrameGenerationMultiplier) && edit.frameGenerationProvider != framegen::Provider::Dlss);
@@ -446,6 +450,8 @@ void Publish(uint8_t *base, uint32_t config)
 #ifdef _WIN32
         placeGraphics(GraphicsRow::Backend, makeChoices(L"Graphics backend", L"圖形後端", {L"Direct3D 12", L"Vulkan", Tr(L"Direct3D 11 (unsupported)", L"Direct3D 11（尚未支援）")},
                    uint32_t(edit.graphicsBackend)));
+#elif LO_PLATFORM_MACOS
+        placeGraphics(GraphicsRow::Backend, makeChoices(L"Graphics backend", L"圖形後端", {L"Metal"}, 0));
 #else
         placeGraphics(GraphicsRow::Backend, makeChoices(L"Graphics backend", L"圖形後端", {L"Vulkan"}, 0));
 #endif
@@ -476,9 +482,17 @@ void Publish(uint8_t *base, uint32_t config)
             }
         }
         placeGraphics(GraphicsRow::OutputResolution, makeChoices(L"Output resolution", L"輸出解析度", std::move(outputChoices), outputChoice));
+        std::vector<std::wstring> renderChoices;
+        for (const int height : graphics_menu::RenderResolutions)
+            renderChoices.push_back(height == 0 ? Tr(L"Follow output", L"跟隨輸出") :
+                height == InternalResolutionNative ? Tr(L"Native (Retina)", L"原生（Retina）") :
+                std::to_wstring(height) + L"p");
+        placeGraphics(GraphicsRow::RenderResolution, makeChoices(L"Render resolution", L"渲染解析度",
+                   std::move(renderChoices), graphics_menu::RenderResolutionChoice(edit)));
+        std::vector<std::wstring> aaChoices{Tr(L"Off", L"關"), L"FXAA", L"SMAA", Tr(L"TAA (Experimental)", L"TAA（實驗性）"), L"DLSS", L"FSR 3.1"};
+        aaChoices.resize(graphics_menu::AaChoiceCount);
         placeGraphics(GraphicsRow::AntiAliasing, makeChoices(L"Anti-aliasing / Upscaling", L"抗鋸齒 / 超解析度",
-                   {Tr(L"Off", L"關"), L"FXAA", L"SMAA", Tr(L"TAA (Experimental)", L"TAA（實驗性）"), L"DLSS", L"FSR 3.1"},
-                   graphics_menu::AaChoice(edit)));
+                   std::move(aaChoices), std::min(graphics_menu::AaChoice(edit), graphics_menu::AaChoiceCount - 1)));
         const bool savedFsr = edit.upscaler == gpu::upscaling::Upscaler::Fsr;
         auto dlssQuality = makeChoices(savedFsr ? L"FSR quality" : L"DLSS quality", savedFsr ? L"FSR 品質" : L"DLSS 品質",
                    {Tr(L"Performance", L"效能"), Tr(L"Balanced", L"平衡"), Tr(L"Quality", L"品質"), savedFsr ? L"Native AA" : L"DLAA"},
@@ -523,8 +537,9 @@ void Publish(uint8_t *base, uint32_t config)
             providers.emplace_back(provider == framegen::Provider::Off ? Tr(L"Off", L"關") :
                 provider == framegen::Provider::Dlss ? L"DLSS" : L"FSR");
         }
-        placeGraphics(GraphicsRow::FrameGeneration,
-            makeChoices(L"Frame generation", L"影格生成", std::move(providers), selected));
+        auto frameGeneration = makeChoices(L"Frame generation", L"影格生成", std::move(providers), selected);
+        frameGeneration.hidden = GraphicsRowHidden(int(GraphicsRow::FrameGeneration));
+        placeGraphics(GraphicsRow::FrameGeneration, std::move(frameGeneration));
         std::vector<std::wstring> multipliers;
         for (uint32_t multiplier = 2; multiplier <= 16; ++multiplier)
             multipliers.push_back(std::to_wstring(multiplier) + L"×");
@@ -586,7 +601,8 @@ void Publish(uint8_t *base, uint32_t config)
             const auto selected = gpu::video::SelectedBackend();
             next.help += Tr(L" Running: ", L" 目前使用：");
             next.help += selected == gpu::backend::Backend::Vulkan ? L"Vulkan" :
-                selected == gpu::backend::Backend::D3D12 ? L"Direct3D 12" : L"-";
+                selected == gpu::backend::Backend::D3D12 ? L"Direct3D 12" :
+                selected == gpu::backend::Backend::Metal ? L"Metal" : L"-";
             break;
         }
         case GraphicsRow::Widescreen:
@@ -596,6 +612,15 @@ void Publish(uint8_t *base, uint32_t config)
         case GraphicsRow::OutputResolution:
             next.help = Tr(L"Sets the output size. Borderless fullscreen uses the desktop size.",
                            L"設定輸出尺寸；無邊框全螢幕使用桌面尺寸。");
+            break;
+        case GraphicsRow::RenderResolution:
+#if LO_PLATFORM_MACOS
+            next.help = Tr(L"Scene resolution before scaling. Follow output uses the window size in points; Native uses every Retina pixel (4x the work).",
+                           L"縮放前的場景解析度。跟隨輸出使用視窗的點尺寸；原生使用全部 Retina 像素（4 倍工作量）。");
+#else
+            next.help = Tr(L"Scene resolution before scaling to the output. Follow output matches the output size.",
+                           L"縮放至輸出前的場景解析度。跟隨輸出與輸出尺寸相同。");
+#endif
             break;
         case GraphicsRow::AntiAliasing:
             if (edit.upscaler == gpu::upscaling::Upscaler::Fsr)
@@ -1232,6 +1257,8 @@ PPC_FUNC(sub_822F19B0)
             case GraphicsRow::Backend:
 #ifdef _WIN32
                 edit.graphicsBackend = GraphicsBackend(cycle(uint32_t(edit.graphicsBackend), 3));
+#elif LO_PLATFORM_MACOS
+                edit.graphicsBackend = GraphicsBackend::Metal;
 #else
                 edit.graphicsBackend = GraphicsBackend::Vulkan;
 #endif
@@ -1264,6 +1291,10 @@ PPC_FUNC(sub_822F19B0)
                 edit.height = list[index][1];
                 break;
             }
+            case GraphicsRow::RenderResolution:
+                edit.internalResolution = graphics_menu::RenderResolutions[
+                    cycle(graphics_menu::RenderResolutionChoice(edit), uint32_t(std::size(graphics_menu::RenderResolutions)))];
+                break;
             case GraphicsRow::AntiAliasing:
                 graphics_menu::SelectAa(edit, cycle(graphics_menu::AaChoice(edit), graphics_menu::AaChoiceCount));
                 break;

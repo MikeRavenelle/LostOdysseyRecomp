@@ -1,0 +1,343 @@
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index 373c87e..f916d83 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -16,6 +16,12 @@
+ 
+ #include <algorithm>
+ #include <mutex>
++#include <sstream>
++#include <string>
++#include <vector>
++
++#include <spirv_msl.hpp>
++#include <spirv_parser.hpp>
+ 
+ #include "plume_metal.h"
+ 
+@@ -1329,19 +1335,140 @@ namespace plume {
+ 
+     // MetalShader
+ 
++    // LostOdysseyRecomp: SPIR-V input. The options mirror examples/cmake/tools/
++    // spirv_cross_msl.cpp, which defines the binding model this backend expects:
++    // descriptor set N as argument buffer N, push constants at buffer(8)
++    // (PUSH_CONSTANTS_BINDING_INDEX), and contiguous argument buffer ids.
++    static std::string PadDescriptorSets(const std::string &source) {
++        std::stringstream result;
++        std::istringstream lines(source);
++        std::string line;
++        bool insideSet = false;
++        int currentId = 0;
++        while (std::getline(lines, line)) {
++            if (line.find("struct spvDescriptorSetBuffer") != std::string::npos) {
++                insideSet = true;
++                currentId = 0;
++                result << line << '\n';
++                if (std::getline(lines, line))
++                    result << line << '\n'; // opening brace
++                continue;
++            }
++            if (insideSet) {
++                if (line == "};") {
++                    insideSet = false;
++                } else {
++                    const size_t start = line.find("[[id(");
++                    if (start != std::string::npos) {
++                        const int lineId = std::atoi(line.c_str() + start + 5);
++                        for (; currentId < lineId; currentId++)
++                            result << "\tconstant float* _PadResource" << currentId << " [[id(" << currentId << ")]];\n";
++                        currentId++;
++                    }
++                }
++            }
++            result << line << '\n';
++        }
++        return result.str();
++    }
++
++    static bool TranslateSpirvToMsl(const void *data, uint64_t size, const char *entryPointName, std::string &source, std::string &functionName, bool &writesPointSize) {
++        if ((size % sizeof(uint32_t)) != 0) {
++            fprintf(stderr, "SPIR-V size %llu is not a whole number of words.\n", (unsigned long long)size);
++            return false;
++        }
++        try {
++            const auto *words = static_cast<const uint32_t *>(data);
++            spirv_cross::Parser parser(std::vector<uint32_t>(words, words + size / sizeof(uint32_t)));
++            parser.parse();
++            spirv_cross::CompilerMSL msl(std::move(parser.get_parsed_ir()));
++
++            spv::ExecutionModel model = spv::ExecutionModelMax;
++            std::string entryName;
++            const std::string requested = entryPointName != nullptr ? entryPointName : "";
++            for (const auto &entry : msl.get_entry_points_and_stages()) {
++                if (requested.empty() || entry.name == requested) {
++                    model = entry.execution_model;
++                    entryName = entry.name;
++                    msl.set_entry_point(entryName, model);
++                    break;
++                }
++            }
++            if (model == spv::ExecutionModelMax) {
++                fprintf(stderr, "SPIR-V has no entry point named '%s'.\n", requested.c_str());
++                return false;
++            }
++
++            spirv_cross::CompilerMSL::Options mslOptions;
++            // 2.3, not the reference 2.1: the runtime's SPIR-V reads 64-bit
++            // device addresses, which MSL supports from 2.3.
++            mslOptions.msl_version = spirv_cross::CompilerMSL::Options::make_msl_version(2, 3);
++            mslOptions.argument_buffers = true;
++            mslOptions.texture_buffer_native = true;
++            mslOptions.enable_decoration_binding = true;
++            msl.set_msl_options(mslOptions);
++
++            for (const spv::ExecutionModel stage : { spv::ExecutionModelVertex, spv::ExecutionModelFragment, spv::ExecutionModelGLCompute }) {
++                spirv_cross::MSLResourceBinding binding;
++                binding.stage = stage;
++                binding.desc_set = spirv_cross::kPushConstDescSet;
++                binding.binding = spirv_cross::kPushConstBinding;
++                binding.msl_buffer = PUSH_CONSTANTS_BINDING_INDEX;
++                msl.add_msl_resource_binding(binding);
++            }
++
++            spirv_cross::CompilerGLSL::Options commonOptions;
++            commonOptions.vertex.flip_vert_y = true;
++            msl.set_common_options(commonOptions);
++
++            source = PadDescriptorSets(msl.compile());
++            functionName = msl.get_cleansed_entry_point_name(entryName, model);
++            writesPointSize = source.find("[[point_size]]") != std::string::npos;
++            return true;
++        }
++        catch (const std::exception &e) {
++            fprintf(stderr, "SPIR-V to MSL translation failed: %s\n", e.what());
++            return false;
++        }
++    }
++
+     MetalShader::MetalShader(const MetalDevice *device, const void *data, uint64_t size, const char *entryPointName, const RenderShaderFormat format) {
+         assert(device != nullptr);
+         assert(data != nullptr);
+         assert(size > 0);
+-        assert(format == RenderShaderFormat::METAL);
+ 
+         this->format = format;
+ 
+         MetalAutoreleasePool releasePool;
++        NS::Error *error = nullptr;
++        if (format == RenderShaderFormat::SPIRV) {
++            std::string source, translatedName;
++            if (!TranslateSpirvToMsl(data, size, entryPointName, source, translatedName, writesPointSize))
++                return;
++
++            functionName = NS::String::string(translatedName.c_str(), NS::UTF8StringEncoding);
++            functionName->retain();
++
++            // Match DXC's IEEE float behavior; Metal enables fast math by default.
++            MTL::CompileOptions *options = MTL::CompileOptions::alloc()->init();
++            options->setLanguageVersion(MTL::LanguageVersion2_3);
++            options->setFastMathEnabled(false);
++            library = device->mtl->newLibrary(NS::String::string(source.c_str(), NS::UTF8StringEncoding), options, &error);
++            options->release();
++            if (library == nullptr) {
++                fprintf(stderr, "MTLDevice newLibraryWithSource: failed with error %s.\n",
++                    error != nullptr ? error->localizedDescription()->utf8String() : "unknown");
++            }
++            return;
++        }
++        if (format != RenderShaderFormat::METAL) {
++            fprintf(stderr, "Metal cannot create shaders from format %d.\n", int(format));
++            return;
++        }
++
+         functionName = (entryPointName != nullptr) ? NS::String::string(entryPointName, NS::UTF8StringEncoding) : MTLSTR("");
+         functionName->retain();
+ 
+-        NS::Error *error = nullptr;
+         const dispatch_data_t dispatchData = dispatch_data_create(data, size, dispatch_get_main_queue(), ^{});
+         library = device->mtl->newLibrary(dispatchData, &error);
+ 
+@@ -1353,8 +1480,12 @@ namespace plume {
+ 
+     MetalShader::~MetalShader() {
+         MetalAutoreleasePool releasePool;
+-        functionName->release();
+-        library->release();
++        if (functionName != nullptr) {
++            functionName->release();
++        }
++        if (library != nullptr) {
++            library->release();
++        }
+ 
+         if (debugName != nullptr) {
+             debugName->release();
+@@ -1370,10 +1501,15 @@ namespace plume {
+         debugName = NS::String::string(name.c_str(), NS::UTF8StringEncoding);
+         debugName->retain();
+ 
+-        library->setLabel(debugName);
++        if (library != nullptr) {
++            library->setLabel(debugName);
++        }
+     }
+ 
+     MTL::Function* MetalShader::createFunction(const RenderSpecConstant *specConstants, const uint32_t specConstantsCount) const {
++        if (library == nullptr) {
++            return nullptr;
++        }
+         MTL::FunctionConstantValues *values = MTL::FunctionConstantValues::alloc()->init();
+         if (specConstants != nullptr) {
+             for (uint32_t i = 0; i < specConstantsCount; i++) {
+@@ -1494,7 +1630,15 @@ namespace plume {
+ 
+         MetalAutoreleasePool releasePool;
+         MTL::RenderPipelineDescriptor *descriptor = MTL::RenderPipelineDescriptor::alloc()->init();
+-        descriptor->setInputPrimitiveTopology(mapPrimitiveTopologyClass(desc.primitiveTopology));
++        // LostOdysseyRecomp: translated vertex shaders may write point size for
++        // every topology (Vulkan ignores it outside point lists); Metal rejects
++        // that unless the topology class is point or unspecified.
++        MTL::PrimitiveTopologyClass topologyClass = mapPrimitiveTopologyClass(desc.primitiveTopology);
++        if (topologyClass != MTL::PrimitiveTopologyClassPoint && desc.vertexShader != nullptr &&
++            static_cast<const MetalShader *>(desc.vertexShader)->writesPointSize) {
++            topologyClass = MTL::PrimitiveTopologyClassUnspecified;
++        }
++        descriptor->setInputPrimitiveTopology(topologyClass);
+         descriptor->setRasterSampleCount(desc.multisampling.sampleCount);
+         descriptor->setAlphaToCoverageEnabled(desc.alphaToCoverageEnabled);
+         descriptor->setDepthAttachmentPixelFormat(mapPixelFormat(desc.depthTargetFormat));
+@@ -1909,6 +2053,9 @@ namespace plume {
+         this->layer = static_cast<CA::MetalLayer*>(desc.renderWindow.view);
+         layer->setDevice(commandQueue->device->mtl);
+         layer->setPixelFormat(mapPixelFormat(desc.format));
++        // LostOdysseyRecomp: the runtime reads presented images back (captures,
++        // screenshots); framebuffer-only drawables cannot be a blit source.
++        layer->setFramebufferOnly(false);
+ 
+         this->commandQueue = commandQueue;
+         this->desc = desc;
+@@ -2725,6 +2872,12 @@ namespace plume {
+     }
+ 
+     void MetalCommandList::setFramebuffer(const RenderFramebuffer *framebuffer) {
++        // LostOdysseyRecomp: as in the patched Vulkan backend, rebinding an
++        // unchanged target keeps the active render pass (and any pending clear);
++        // on tile-based GPUs every pass break stores and reloads the attachments.
++        if (targetFramebuffer == framebuffer) {
++            return;
++        }
+         MetalAutoreleasePool releasePool;
+         endOtherEncoders(EncoderType::Render);
+         endActiveRenderEncoder();
+@@ -2775,6 +2928,13 @@ namespace plume {
+     }
+ 
+     void MetalCommandList::clearColor(const uint32_t attachmentIndex, RenderColor colorValue, const RenderRect *clearRects, const uint32_t clearRectsCount) {
++        // LostOdysseyRecomp: the quad clear uses fixed MAX_CLEAR_RECTS arrays;
++        // batch larger requests, as the patched D3D12 and Vulkan backends do.
++        if (clearRects != nullptr && clearRectsCount > MAX_CLEAR_RECTS) {
++            for (uint32_t first = 0; first < clearRectsCount; first += MAX_CLEAR_RECTS)
++                clearColor(attachmentIndex, colorValue, clearRects + first, std::min<uint32_t>(MAX_CLEAR_RECTS, clearRectsCount - first));
++            return;
++        }
+         assert(targetFramebuffer != nullptr);
+         assert(attachmentIndex < targetFramebuffer->colorAttachments.size());
+         assert((!clearRects || clearRectsCount <= MAX_CLEAR_RECTS) && "Too many clear rects");
+@@ -2864,6 +3024,12 @@ namespace plume {
+     }
+ 
+     void MetalCommandList::clearDepthStencil(const bool clearDepth, const bool clearStencil, const float depthValue, const uint32_t stencilValue, const RenderRect *clearRects, const uint32_t clearRectsCount) {
++        // LostOdysseyRecomp: batch as in clearColor.
++        if (clearRects != nullptr && clearRectsCount > MAX_CLEAR_RECTS) {
++            for (uint32_t first = 0; first < clearRectsCount; first += MAX_CLEAR_RECTS)
++                clearDepthStencil(clearDepth, clearStencil, depthValue, stencilValue, clearRects + first, std::min<uint32_t>(MAX_CLEAR_RECTS, clearRectsCount - first));
++            return;
++        }
+         assert(targetFramebuffer != nullptr);
+         assert(targetFramebuffer->depthAttachment.format != RenderFormat::UNKNOWN);
+         assert((!clearRects || clearRectsCount <= MAX_CLEAR_RECTS) && "Too many clear rects");
+@@ -3022,6 +3188,44 @@ namespace plume {
+                 dstOrigin
+             );
+             activeBlitEncoder->popDebugGroup();
++        } else if (dstLocation.type == RenderTextureCopyType::PLACED_FOOTPRINT && srcLocation.type == RenderTextureCopyType::SUBRESOURCE) {
++            // LostOdysseyRecomp: texture to buffer (readback), the reverse of the
++            // case above, with the same placed footprint row layout.
++            // The source may be a swap chain drawable, not a MetalTexture.
++            const MTL::Texture *source = static_cast<const ExtendedRenderTexture *>(srcLocation.texture)->getTexture();
++            assert(dstBuffer != nullptr);
++            assert(source != nullptr);
++
++            const RenderFormat format = dstLocation.placedFootprint.format;
++            const uint32_t blockWidth = RenderFormatBlockWidth(format);
++            const uint32_t horizontalBlocks = (dstLocation.placedFootprint.rowWidth + blockWidth - 1) / blockWidth;
++            const uint32_t verticalBlocks = (dstLocation.placedFootprint.height + blockWidth - 1) / blockWidth;
++            const uint32_t bytesPerRow = horizontalBlocks * RenderFormatSize(format);
++            const uint32_t bytesPerImage = bytesPerRow * verticalBlocks;
++
++            MTL::Origin srcOrigin = { 0, 0, 0 };
++            MTL::Size size = { dstLocation.placedFootprint.width, dstLocation.placedFootprint.height, dstLocation.placedFootprint.depth };
++            if (srcBox != nullptr) {
++                srcOrigin = { NS::UInteger(srcBox->left), NS::UInteger(srcBox->top), NS::UInteger(srcBox->front) };
++                size = { NS::UInteger(srcBox->right - srcBox->left), NS::UInteger(srcBox->bottom - srcBox->top), NS::UInteger(srcBox->back - srcBox->front) };
++            }
++
++            const uint64_t dstOffset = dstLocation.placedFootprint.offset + uint64_t(dstZ) * bytesPerImage +
++                uint64_t(dstY / blockWidth) * bytesPerRow + uint64_t(dstX / blockWidth) * RenderFormatSize(format);
++
++            activeBlitEncoder->pushDebugGroup(MTLSTR("CopyTextureRegion"));
++            activeBlitEncoder->copyFromTexture(
++                source,
++                srcLocation.subresource.arrayIndex,
++                srcLocation.subresource.mipLevel,
++                srcOrigin,
++                size,
++                dstBuffer->mtl,
++                dstOffset,
++                bytesPerRow,
++                bytesPerImage
++            );
++            activeBlitEncoder->popDebugGroup();
+         } else {
+             assert(dstTexture != nullptr);
+             assert(srcTexture != nullptr);
+@@ -3818,6 +4022,10 @@ namespace plume {
+         // TODO: Support Raytracing.
+         // capabilities.raytracing = mtl->supportsRaytracing();
+         capabilities.maxTextureSize = mtl->supportsFamily(MTL::GPUFamilyApple3) ? 16384 : 8192;
++        // LostOdysseyRecomp: the device reports its native shader format too
++        // (as the patched Vulkan and D3D12 devices do); createShader also
++        // accepts SPIR-V, translated to MSL.
++        capabilities.shaderFormat = RenderShaderFormat::METAL;
+         capabilities.sampleLocations = mtl->programmableSamplePositionsSupported();
+         capabilities.resolveRegion = true;
+         capabilities.resolveModes = false;
+@@ -3885,7 +4093,13 @@ namespace plume {
+     }
+ 
+     std::unique_ptr<RenderShader> MetalDevice::createShader(const void *data, uint64_t size, const char *entryPointName, RenderShaderFormat format) {
+-        return std::make_unique<MetalShader>(this, data, size, entryPointName, format);
++        auto shader = std::make_unique<MetalShader>(this, data, size, entryPointName, format);
++        // LostOdysseyRecomp: report translation/compile failure as a null shader,
++        // as failed Vulkan and D3D12 shader creation does.
++        if (shader->library == nullptr) {
++            return nullptr;
++        }
++        return shader;
+     }
+ 
+     std::unique_ptr<RenderSampler> MetalDevice::createSampler(const RenderSamplerDesc &desc) {
+diff --git a/plume_metal.h b/plume_metal.h
+index 59ae129..ff5066f 100644
+--- a/plume_metal.h
++++ b/plume_metal.h
+@@ -635,6 +635,8 @@ namespace plume {
+         RenderShaderFormat format = RenderShaderFormat::UNKNOWN;
+         MTL::Library *library = nullptr;
+         NS::String *debugName = nullptr;
++        // LostOdysseyRecomp: set for SPIR-V input whose MSL writes [[point_size]].
++        bool writesPointSize = false;
+ 
+         MetalShader(const MetalDevice *device, const void *data, uint64_t size, const char *entryPointName, RenderShaderFormat format);
+         ~MetalShader() override;

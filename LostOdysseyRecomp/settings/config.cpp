@@ -13,7 +13,8 @@ namespace
 std::mutex mutex;
 Config Validate(Config value)
 {
-    if (value.internalResolution != 0 && value.internalResolution != 720 && value.internalResolution != 1080 &&
+    if (value.internalResolution != 0 && value.internalResolution != InternalResolutionNative &&
+        value.internalResolution != 720 && value.internalResolution != 1080 &&
         value.internalResolution != 1440 && value.internalResolution != 2160)
         value.internalResolution = 0;
     if (value.scalingQuality > 1) value.scalingQuality = 1;
@@ -54,8 +55,10 @@ Config Validate(Config value)
 #else
         value.graphicsBackend = GraphicsBackend::Vulkan;
 #endif
-#ifndef _WIN32
-    if (value.graphicsBackend == GraphicsBackend::D3D12 || value.graphicsBackend == GraphicsBackend::D3D11)
+#if LO_PLATFORM_MACOS
+    value.graphicsBackend = GraphicsBackend::Metal; // The only macOS backend.
+#elif !defined(_WIN32)
+    if (value.graphicsBackend != GraphicsBackend::Vulkan)
         value.graphicsBackend = GraphicsBackend::Vulkan;
 #endif
     if (value.width < 640 || value.width > 7680 || value.height < 480 || value.height > 4320)

@@ -1,4 +1,5 @@
 #include "dxc_compiler.h"
+#include <os/platform.h>
 #include "cache.h"
 #include "binary_cache.h"
 #include "resource_cpx_index_sha256.h"
@@ -91,8 +92,13 @@ namespace xenos
 #else
         void LoadDxc()
         {
+#if LO_PLATFORM_MACOS
+            constexpr const char* kLibrary = "libdxcompiler.dylib";
+#else
+            constexpr const char* kLibrary = "libdxcompiler.so";
+#endif
             std::vector<std::filesystem::path> candidates;
-            candidates.push_back("libdxcompiler.so");
+            candidates.push_back(kLibrary);
             if (const char* envPath = std::getenv("LO_DXC_PATH"); envPath && *envPath)
             {
                 candidates.push_back(envPath);
@@ -101,8 +107,13 @@ namespace xenos
             const auto cwd = std::filesystem::current_path(ec);
             if (!ec)
             {
-                candidates.push_back(cwd / "libdxcompiler.so");
+                candidates.push_back(cwd / kLibrary);
             }
+#if LO_PLATFORM_MACOS
+            // dyld resolves this beside the running executable.
+            candidates.push_back(std::string("@executable_path/") + kLibrary);
+            const std::filesystem::path relativeDxc = "tools/XenosRecomp/thirdparty/dxc-bin/lib/arm64/libdxcompiler.dylib";
+#else
             char selfPath[4096]{};
             const ssize_t n = readlink("/proc/self/exe", selfPath, sizeof(selfPath) - 1);
             if (n > 0)
@@ -111,6 +122,7 @@ namespace xenos
                 candidates.push_back(std::filesystem::path(selfPath).parent_path() / "libdxcompiler.so");
             }
             const std::filesystem::path relativeDxc = "tools/XenosRecomp/thirdparty/dxc-bin/lib/x64/libdxcompiler.so";
+#endif
             if (std::filesystem::exists(relativeDxc, ec))
             {
                 candidates.push_back(relativeDxc);

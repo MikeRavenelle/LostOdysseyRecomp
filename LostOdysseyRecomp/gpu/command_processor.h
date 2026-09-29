@@ -6,6 +6,7 @@
 #include <thread>
 #include <vector>
 #include "gpu/frame_plan.h"
+#include <os/guest_code_thread.h>
 
 // Minimal Xenos command processor: consumes the primary ring buffer, executes
 // the PM4 packets the CPU synchronises against (memory writes, fences, waits,
@@ -123,8 +124,8 @@ namespace gpu
         uint64_t m_binSelect = 0xFFFFFFFFFFFFFFFFull;
 
         std::thread m_worker;
-        std::thread m_vsync;
-        std::thread m_interruptThread;
+        os::GuestCodeThread m_vsync;
+        os::GuestCodeThread m_interruptThread;
     };
 
     extern CommandProcessor g_commandProcessor;

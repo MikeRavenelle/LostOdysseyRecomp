@@ -261,8 +261,8 @@ namespace gpu
             return false;
         }
         try {
-            m_vsync = std::thread([this] { VsyncMain(); });
-            m_interruptThread = std::thread([this] { InterruptMain(); });
+            m_vsync = os::GuestCodeThread([this] { VsyncMain(); });
+            m_interruptThread = os::GuestCodeThread([this] { InterruptMain(); });
         } catch (const std::exception& e) {
             LOG_ERROR("graphics worker creation failed: {}", e.what());
             Shutdown();
@@ -291,9 +291,11 @@ namespace gpu
             std::lock_guard lock(m_interruptMutex);
         }
         m_interruptCv.notify_all();
-        for (auto* t : { &m_worker, &m_vsync, &m_interruptThread })
-            if (t->joinable())
-                t->join();
+        // m_vsync and m_interruptThread run guest callbacks (os::GuestCodeThread).
+        auto join = [](auto& thread) { if (thread.joinable()) thread.join(); };
+        join(m_worker);
+        join(m_vsync);
+        join(m_interruptThread);
     }
 
     void CommandProcessor::InitializeRingBuffer(uint32_t physicalAddress, uint32_t sizeLog2)
