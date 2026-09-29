@@ -66,14 +66,14 @@ Current state on an M1 Pro (macOS 27):
 
 Known limitations:
 
-- DLSS, FSR and frame generation are not available; **Scaling filter → MetalFX** upscales with Apple's spatial scaler instead.
-- Busy cities are CPU-bound near 60 FPS on an M1 Pro, so the 90/120 FPS targets are not reached there yet.
+- DLSS, FSR and frame generation are not available. **Anti-aliasing / Upscaling → MetalFX Temporal** is Apple's temporal upscaler in their place; **Scaling filter → MetalFX** is the spatial one.
+- Busy cities reach about 55 FPS at 720p on an M1 Pro (GPU and renderer thread both near their limit), so the 90/120 FPS targets are not reached there yet.
 - The first launch compiles about 28,500 shaders (about 5 minutes on an M1 Pro); later launches start in under a second.
 - No auto-updater. `tools/package_macos.py` wraps a local build as an ad-hoc signed `.app` that runs on the building Mac only.
 
 Notes:
 
-- **Output resolution** is the window size in points. **Render resolution → Native (Retina)** renders every display pixel, about 4× the work of *Follow output*; *Follow output* with **Scaling filter → MetalFX** is the cheaper way to a sharp Retina image.
+- **Output resolution** is the window size in points. **Render resolution → Native (Retina)** renders every display pixel, about 4× the work of *Follow output*. **MetalFX Temporal** is the cheaper way to a sharp Retina image: in Numara on an M1 Pro, Performance (720p → 1440p) runs at about 45 FPS against 33 FPS for native 1440p. **Scaling filter → MetalFX** is cheaper still but upscales the finished frame, UI included, without temporal detail.
 - **Adaptive sync (ProMotion)** keeps display sync on and shows each frame for one game frame, so ProMotion displays follow the game's frame rate; targets above 60 FPS use it automatically.
 - DLC: run the game with `--install` and choose the folder with your DLC packages. Xenia save folders convert with `tools/import_xenia_saves.py`.
 - x86-64 and AArch64 differences handled by the port are listed in [ARM64 notes](docs/ARM64_NOTES.md).

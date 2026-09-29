@@ -35,9 +35,15 @@ Conventions confirmed on screen: motion vectors in render pixels with scale 1
 (`LO_METALFX_MV_SCALE` overrides), jitter passed with FSR's sign (the opposite
 sign visibly blurs static detail; `LO_METALFX_JITTER_SIGN` overrides).
 
-Next: phase 3 (menu entry, quality row on macOS, failure fallbacks) and phase 4
-(scenario suite, more measurements). The scenario `numara-metalfx-temporal`
-covers the default path.
+Phase 3 done: on macOS the Anti-aliasing / Upscaling row's fifth choice is
+"MetalFX Temporal", the quality row (FSR quality IDs) is labelled MetalFX, and the
+status line reports MetalFX results. Failures reuse the SR fallbacks: a frame
+without eligible inputs renders normally; a scaler failure disables the request
+for that plan (logged with its step).
+
+Remaining (phase 4): battle and cutscene scenarios, 1080p -> 2160p measurement on
+an external display, and a look at moving characters during fast camera turns
+with camera-only motion.
 
 ## Goal
 
