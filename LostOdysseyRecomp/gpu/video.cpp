@@ -1567,8 +1567,13 @@ namespace gpu::video
 
     void Shutdown()
     {
+        const bool exiting = ExitRequested();
+        if (exiting) LOG_INFO("video: shutdown stage=gpu-reset begin");
         ResetGpu();
+        if (exiting) LOG_INFO("video: shutdown stage=gpu-reset complete");
+        if (exiting) LOG_INFO("video: shutdown stage=window-stop begin");
 #ifdef _WIN32
+        // DXGI teardown above still needs the window thread to pump messages.
         g_windowThread.request_stop();
         if (g_windowThread.joinable()) g_windowThread.join();
         g_nativeWindow = nullptr;
@@ -1577,6 +1582,7 @@ namespace gpu::video
 #else
         DestroyWindowResources();
 #endif
+        if (exiting) LOG_INFO("video: shutdown stage=window-stop complete");
         g_available = false;
         g_initAttempted = false;
         hid::SetExternalEventPump(false);
@@ -1711,7 +1717,9 @@ namespace gpu::video
             std::fflush(nullptr); std::_Exit(EXIT_FAILURE);
         }
         // All presentation stack/recording guards have unwound at this point.
+        LOG_INFO("video: shutdown stage=capture-archive begin");
         renderer::WaitDebugCaptureArchive();
+        LOG_INFO("video: shutdown stage=capture-archive complete");
         Shutdown(); // Failed native/SDK drains terminate with EXIT_FAILURE.
         LOG_INFO("video: owner shutdown complete native_ngx_cleanup=complete streamline_cleanup=complete exit_code=0");
         os::shaderlog::CloseForExit();
@@ -1835,10 +1843,19 @@ namespace gpu::video
 
     void PumpWindowEvents()
     {
-        if (ExitRequested() || !g_window) return;
+        if (!g_window) return;
+        // DXGI Present, fullscreen transitions and swapchain release may send
+        // synchronous messages to this thread during GPU-owner cleanup. Keep
+        // pumping until Shutdown has released the GPU and stops this thread.
+        SDL_PumpEvents();
+        if (ExitRequested()) {
+            // Service native messages, but do not run UI/settings/display work
+            // or accumulate input events after the renderer starts tearing down.
+            SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+            return;
+        }
         // Service close even during an outstanding FG window handshake. The
         // regular event loop below cannot run while that handshake is pending.
-        SDL_PumpEvents();
         PollDisplayRefresh();
         SDL_Event closeEvent{};
         if (SDL_PeepEvents(&closeEvent, 1, SDL_GETEVENT, SDL_QUIT, SDL_QUIT) > 0) {

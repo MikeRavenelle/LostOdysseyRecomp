@@ -743,3 +743,23 @@ Focused verification fixtures introduced for post-v0.6.11 lifecycle fixes, capab
 | `motion_replay_gpu_test` | `motion_replay_gpu_test.exe --depth-retirement-only` | 26 Vulkan hardware checks (RTX 5080 D32S8) verifying external depth unbinding before texture destruction. |
 | `LoDlssEvaluateCaptureContractTest` | `LoDlssEvaluateCaptureContractTest.exe --evaluate-capture-contract-only` | Contract checks for RGBA8/RGBA16F Evaluate capture, quotas (4 entries/128 MiB), truncation, and formatting. |
 | `LoNativeDlssRendererTest` | `LoNativeDlssRendererTest.exe --evaluate-capture-only` | Vulkan hardware execution of isolated pre-Evaluate input and post-Evaluate scratch output copies with checked submit. |
+
+## Quit-to-desktop message-pump regression (#82)
+
+`video_exit_pump_test.py` extracts the actual `PumpWindowEvents` prelude from an explicit `video.cpp`, compiles it with real SDL/Win32, and replaces the later UI body with counters. It creates only a hidden 64x64 window. A second thread uses a bounded synchronous native message to check that shutdown continues servicing the window thread; the fixture also checks late SDL-event disposal and an exit requested during native dispatch. It does not create a GPU device, change fullscreen state, launch the game, or touch saves.
+
+Use an x64 Developer Command Prompt with Clang and an existing static SDL build:
+
+```powershell
+python -B tools/tests/video_exit_pump_test.py `
+  --source LostOdysseyRecomp/gpu/video.cpp `
+  --sdl-include thirdparty/SDL/include `
+  --sdl-lib out/build/windows-clang/thirdparty/SDL/SDL2-static.lib `
+  --output out/issue82/exit-pump-check
+```
+
+The output directory must be new. It retains the extracted production prelude, native fixture, build/run logs and `results.json`. No full runtime build is implicit.
+
+On base `2ce27e3`, the fixture failed three checks: the post-exit synchronous message timed out, late SDL events remained queued, and an exit during native dispatch still allowed application work. With the #82 correction, all nine checks passed. Evidence is retained locally at `out/issue82/baseline-03/` and `out/issue82/fixed-03/` in the issue worktree. The changed full Windows `video.cpp` translation unit also compiled with D3D12, Streamline and both FG provider flags enabled, using existing dependency headers; this was a compile-only check, not a full executable link or live GPU shutdown test.
+
+The reporter's attached log is an F1 capture-time snapshot ending before the quit request. It does not identify the actual stalled native call. Reporter reproduction with the corrected build, and Linux/gameplay shutdown validation, remain pending. Use the active `logs/runtime-*.log` after reproduction to distinguish `capture-archive`, `gpu-reset` and `window-stop` shutdown stages; an F1 ZIP taken before quitting cannot contain those later records.

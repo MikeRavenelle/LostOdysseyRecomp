@@ -4,6 +4,16 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 
 按新到旧记录简短更新，日期采用 UTC。技术验证见[开发状态](docs/STATUS.md)，后续计划见[路线图](docs/ROADMAP.zh-CN.md)。
 
+## Unreleased
+
+### English
+
+- Keep Windows native messages pumping during GPU shutdown to prevent a DXGI quit-to-desktop deadlock (#82). Reporter confirmation is pending.
+
+### 简体中文
+
+- 退出期间继续处理Windows窗口消息，修复DXGI清理时可能出现的退出桌面死锁（#82）；报告者复测待完成。
+
 ## [v0.7.15 — 2026-09-29](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.15)
 
 ### English
