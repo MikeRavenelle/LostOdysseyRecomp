@@ -28,8 +28,8 @@ inline EnvironmentSelection ParseEnvironment(const char* provider, const char* m
         uint32_t value = 0;
         const std::string_view text(multiplier);
         const auto result = std::from_chars(text.data(), text.data()+text.size(), value);
-        if (result.ec != std::errc{} || result.ptr != text.data()+text.size() || value < 2) {
-            out.error = "LO_FG_MULTIPLIER must be an integer >= 2"; return out;
+        if (result.ec != std::errc{} || result.ptr != text.data()+text.size() || value < 2 || value > kMaxMultiplier) {
+            out.error = "LO_FG_MULTIPLIER must be an integer from 2 to 6"; return out;
         }
         out.config.generatedFrames = value - 1;
     }
