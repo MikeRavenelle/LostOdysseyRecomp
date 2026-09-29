@@ -1,4 +1,5 @@
 #include "shared/frame_generation/core.h"
+#include "shared/frame_generation/environment.h"
 #include <cstdio>
 #include <limits>
 #include <cstdlib>
@@ -22,6 +23,13 @@ int main() {
     CHECK(Select(mfg,caps).rejection == Rejection::Multiplier);
     mfg.generatedFrames=0;
     CHECK(Select(mfg,caps).rejection == Rejection::InvalidConfig);
+    // LO_FG_MULTIPLIER accepts the same 2x..6x range as the settings menu.
+    CHECK(ParseEnvironment("dlss","fixed","2",nullptr).config.generatedFrames == 1);
+    const auto six=ParseEnvironment("dlss","fixed","6",nullptr);
+    CHECK(six.Enabled() && six.config.generatedFrames == kMaxMultiplier - 1);
+    CHECK(ParseEnvironment("dlss","fixed","7",nullptr).error != nullptr);
+    CHECK(ParseEnvironment("dlss","fixed","16",nullptr).error != nullptr);
+    CHECK(ParseEnvironment("dlss","fixed","1",nullptr).error != nullptr);
     Config fsr{Provider::Fsr,Mode::Fixed,1,0};
     CHECK(Select(fsr,{true,1,false}).Enabled());
     fsr.mode=Mode::Dynamic;

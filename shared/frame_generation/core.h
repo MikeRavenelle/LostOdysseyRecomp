@@ -17,6 +17,10 @@ struct Config {
     float targetFrameRate = 0;    // Dynamic mode: zero asks the SDK to use the display.
     bool operator==(const Config&) const = default;
 };
+// Largest total multiplier (rendered frame included) that settings and
+// LO_FG_MULTIPLIER may request; DLSS multi-frame generation tops out at 6x.
+// Select() still limits each request to the SDK-reported maximum.
+constexpr uint32_t kMaxMultiplier = 6;
 struct Capabilities {
     bool available = false;
     uint32_t maxGeneratedFrames = 0;

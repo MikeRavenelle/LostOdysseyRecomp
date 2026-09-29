@@ -1107,11 +1107,12 @@ int main(int argc, char** argv)
                     "DLSS reveals multiplier row");
             settings::row = int(GraphicsRow::FrameGenerationMultiplier);
             settings::pending = 4; Tick(base);
-            Require(settings::edit.frameGenerationMultiplier == 16 &&
-                    settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].value == L"16×",
-                    "DLSS multiplier wraps from 2 to 16");
+            Require(settings::edit.frameGenerationMultiplier == 6 &&
+                    settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].value == L"6×" &&
+                    settings::snapshot.rows[int(GraphicsRow::FrameGenerationMultiplier)].choices.size() == 5,
+                    "DLSS multiplier wraps from 2 to 6");
             settings::pending = 8; Tick(base);
-            Require(settings::edit.frameGenerationMultiplier == 2, "DLSS multiplier wraps from 16 to 2");
+            Require(settings::edit.frameGenerationMultiplier == 2, "DLSS multiplier wraps from 6 to 2");
             settings::pending = 8; Tick(base);
             Require(settings::edit.frameGenerationMultiplier == 3, "DLSS multiplier accepts 3x");
 
@@ -1502,16 +1503,18 @@ int main(int argc, char** argv)
             sharpness.fsrSharpnessPercent = 0;
             Require(settings::SaveConfig(sharpness) && settings::Read().fsrSharpnessPercent == 0,
                     "Off roundtrips as zero");
-            writeIni("frame_generation_provider=1\nframe_generation_mode=0\nframe_generation_multiplier=16\n");
+            writeIni("frame_generation_provider=1\nframe_generation_mode=0\nframe_generation_multiplier=6\n");
             const auto maxFg = settings::Read();
             Require(maxFg.frameGenerationProvider == framegen::Provider::Dlss &&
-                    maxFg.frameGenerationMultiplier == 16, "DLSS maximum multiplier reads from INI");
-            writeIni("frame_generation_provider=1\nframe_generation_multiplier=17\n");
+                    maxFg.frameGenerationMultiplier == 6, "DLSS maximum multiplier reads from INI");
+            writeIni("frame_generation_provider=1\nframe_generation_multiplier=7\n");
             Require(settings::Read().frameGenerationMultiplier == 2, "out-of-range FG multiplier resets to 2");
+            writeIni("frame_generation_provider=1\nframe_generation_multiplier=16\n");
+            Require(settings::Read().frameGenerationMultiplier == 2, "former 16x maximum resets to 2");
             writeIni("frame_generation_provider=99\nframe_generation_multiplier=2\n");
             Require(settings::Read().frameGenerationProvider == framegen::Provider::Off,
                     "unknown FG provider resets to Off");
-            writeIni("frame_generation_provider=2\nframe_generation_mode=1\nframe_generation_multiplier=16\nframe_generation_target_fps=144\n");
+            writeIni("frame_generation_provider=2\nframe_generation_mode=1\nframe_generation_multiplier=6\nframe_generation_target_fps=144\n");
             const auto fsrFg = settings::Read();
             Require(fsrFg.frameGenerationProvider == framegen::Provider::Fsr &&
                     fsrFg.frameGenerationMode == framegen::Mode::Fixed &&
@@ -1522,16 +1525,16 @@ int main(int argc, char** argv)
             fgConfig.frameGenerationMultiplier = 2;
             Require(settings::SaveConfig(fgConfig) && settings::Read().frameGenerationMultiplier == 2,
                     "minimum DLSS multiplier survives real save/reload");
-            fgConfig.frameGenerationMultiplier = 16;
+            fgConfig.frameGenerationMultiplier = 6;
             Require(settings::SaveConfig(fgConfig), "maximum DLSS multiplier saves");
             const auto savedFg = settings::Read();
             Require(savedFg.frameGenerationProvider == framegen::Provider::Dlss &&
-                    savedFg.frameGenerationMultiplier == 16, "maximum DLSS multiplier survives real save/reload");
+                    savedFg.frameGenerationMultiplier == 6, "maximum DLSS multiplier survives real save/reload");
             {
                 std::ifstream fgIni("settings.ini");
                 const std::string fgText((std::istreambuf_iterator<char>(fgIni)), std::istreambuf_iterator<char>());
                 Require(fgText.find("frame_generation_provider=1\n") != std::string::npos &&
-                        fgText.find("frame_generation_multiplier=16\n") != std::string::npos,
+                        fgText.find("frame_generation_multiplier=6\n") != std::string::npos,
                         "real INI writes FG provider and multiplier");
             }
             std::puts("PASS FG settings.ini provider and multiplier validation, FSR normalization, and min/max save/reload");
