@@ -14,9 +14,30 @@ depth-borrowing experiment on Metal was.
 - Current macOS numbers (M1 Pro, 720p): attract 30.0 FPS locked, about 10.4 ms GPU
   per frame, 82 render + 18 blit passes per frame.
 
+## Measurements (2026-09-29, M1 Pro, macOS, Numara city)
+
+- **Above 30 FPS the limit is the GPU command-processing thread**, not game logic:
+  a 10 s `sample` at the 120 FPS target shows the game's main thread sleeping in
+  `KeDelayExecutionThread` 72% of the time while `GPU CmdProc` never idles. Its hot
+  spots: per-draw register snapshots (`ReadRegisters` copies all 2,048 ALU constants,
+  8 KB, for each of ~3,300 draws per frame), vertex-content change checks (memcmp,
+  memmove, `VertexSampledContent::Matches`, `SampleHash`), packet decode, and
+  (only with `LO_RENDER_TIMING`) timing calls (~9%).
+- **Register promotion (below) is not worth it here:** the safe subset
+  (`cr/xer/reserved_as_local`, `skip_msr`) gave 53.4 → 54.7 FPS, within noise;
+  `non_argument_as_local` crashes at startup (guest access at 0xFFFFFFC4). Reverted.
+- **Camera TAA is GPU-bound** (13 FPS; 52 ms of each 75 ms frame waiting for a
+  drawable). Metal System Trace: ~1,080 render passes per frame with TAA vs ~220
+  without; vertex/tiling work 700 vs 270 ms per second. The motion-vector replay
+  draws into its own target between scene draws, splitting the scene pass at almost
+  every draw. Fix: batch the replay draws (e.g. after the scene) instead of
+  interleaving them; changes TAA timing semantics, so it needs care.
+- **Without TAA at 30 FPS** the GPU is about half busy (~220 passes per frame).
+
 ## Guest CPU (all platforms)
 
-1. **XenonRecomp local-variable options.** `LostOdysseyRecompLib/config/LostOdysseyRecomp.toml`
+1. **XenonRecomp local-variable options.** *Measured 2026-09-29: ~2%, reverted (see
+   Measurements).* `LostOdysseyRecompLib/config/LostOdysseyRecomp.toml`
    has every register-promotion option off (`ctr_as_local`, `xer_as_local`,
    `reserved_as_local`, `cr_as_local`, `non_argument_as_local`,
    `non_volatile_as_local`, `skip_lr`, `skip_msr`). UnleashedRecomp turns most of
@@ -35,6 +56,12 @@ depth-borrowing experiment on Metal was.
 4. **Vector code on AArch64.** simde maps VMX to NEON; check the hot VMX ops in the
    generated code for scalar fallbacks (permute, pack/unpack, `vpkd3d128`,
    dot products) and add direct NEON paths where simde falls back.
+
+## Renderer CPU (all platforms, the real limit above 30 FPS)
+
+1. Upload ALU constants only when they changed since the previous draw instead of
+   snapshotting all 2,048 registers per draw.
+2. Cheaper vertex-content change detection (the memcmp/hash path).
 
 ## GPU, all backends
 
