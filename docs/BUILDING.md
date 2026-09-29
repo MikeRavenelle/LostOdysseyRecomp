@@ -146,9 +146,9 @@ The tool stages the executable, icons, desktop entry, metainfo, vendored DXC lib
 The release workflow keeps this AppDir for the Linux packaging job. Its
 Flatpak export reuses the already packaged `usr` tree from the persistent
 AppDir instead of compiling the source a second time. The stable bundle export
-and isolated user installation/sandbox shell checks passed; full GitHub Release
-CI has not run this workflow, and this does not change the already published
-v0.7.3 provenance.
+and isolated user installation/sandbox shell checks passed. Release CI [36500844014](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36500844014)
+ran this workflow successfully for v0.7.15; the published package facts and
+validation limits are recorded in [development status](STATUS.md).
 
 ### Packaging Flatpak
 

@@ -4,9 +4,9 @@ Base: `menu@257f3866e9f9f5d3e65550c86dce453290cf7ee4`.
 This change follows reblue's build/distribution separation; it does not copy its
 renderer or change Lost Odyssey's shader translation semantics.
 
-## Current v0.7.10 release
+## v0.7.10 shader-pack release
 
-The current shader-pack follow-up adds backend-specific selection and a DX12
+The v0.7.10 shader-pack work added backend-specific selection and a DX12
 `.lospd` format alongside the existing Vulkan `.lospv` path. The new Vulkan
 pack contains 28,546 records and is 180,198,461 bytes; it covers 8,186
 installed v24 `.spv` cache entries, 62 source microcodes and 205 direct DLC
@@ -83,7 +83,9 @@ Deck, AppImage update transactions and full-game shader coverage remain unverifi
 - Windows ZIP and Linux AppImage staging currently copy only `shaders/portable_vk.lospv`,
   validate it with the native tool, and retain the Zstandard license. They do not
   scoop up `cache/shaders`, debug output, HLSL, both backends, or old cache versions.
-  DX12 `.lospd` packaging remains a separate follow-up.
+  The DX12 `.lospd` asset is packaged and published separately, with the dimensions
+  and bounded runtime-hit evidence recorded above; it is not copied into these
+  application payloads.
 
 ## Applying
 

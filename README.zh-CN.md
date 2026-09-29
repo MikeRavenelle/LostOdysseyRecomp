@@ -23,6 +23,7 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 
 | 版本 | 主要更新 |
 | :--- | :--- |
+| [v0.7.15](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.15) | 原生 90／120 FPS 目标与 VRR 节奏控制、RGB Range 与 F1 变速控制、Hungry Man 计时修复、便携式游戏路径后备，以及限定范围的天空闪烁 TAA 映射。 |
 | [v0.7.10](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.10) | 更新内置 Vulkan shader（增加 19 条捕获记录），并提供放在 `shaders/` 下的独立 DX12 shader pack。 |
 | [v0.7.9](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9) | Windows D3D12 帧生成（关／DLSS／FSR），保存后无需重启；修复 Ubuntu 22.04 AppImage 兼容性和更新器问题。 |
 | [v0.7.3](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.3) | 减少 D3D12 重复绑定，新增可选渲染诊断。 |
@@ -34,7 +35,7 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 ## 开始游戏
 
 ### Windows
-1. 从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** v0.7.10 Windows 发布包（`LostOdysseyRecomp-windows-x64-v0.7.10.zip`），放在可写入的文件夹中。
+1. 从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) **下载并完整解压** v0.7.15 Windows 发布包（`LostOdysseyRecomp-windows-x64-v0.7.15.zip`），放在可写入的文件夹中。
 2. **运行 `LostOdysseyRecomp.exe` 并按提示导入游戏文件**。支持已提取文件夹、`default.xex`、XDVDFS ISO 或 GOD 容器。
 3. **选择语言和图形设置**，设置与着色器预编译完成后继续进入游戏。
 
@@ -43,12 +44,12 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
   ```bash
   flatpak --system install flathub org.freedesktop.Platform//26.08
   ```
-  从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载 v0.7.10 独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.10.flatpak`）并执行安装：
+  从[最新 Release](https://github.com/freefrank/LostOdysseyRecomp/releases/latest) 下载 v0.7.15 独立 `.flatpak` bundle（`LostOdysseyRecomp-linux-x64-v0.7.15.flatpak`）并执行安装：
   ```bash
-  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.10.flatpak
+  flatpak --user install --bundle LostOdysseyRecomp-linux-x64-v0.7.15.flatpak
   flatpak run io.github.freefrank.LostOdysseyRecomp
   ```
-- **AppImage**：下载 `LostOdysseyRecomp-linux-x64-v0.7.10.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
+- **AppImage**：下载 `LostOdysseyRecomp-linux-x64-v0.7.15.AppImage`，赋予执行权限（`chmod +x`）后直接运行。
 
 发布包不需要安装 Python 或 Visual Studio。后续启动会复用着色器缓存；更新程序时请保留存档和档案文件夹。
 
@@ -80,11 +81,11 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 | 图形设置 | Auto／手动内部分辨率（配置文件／兼容回退）、含宽屏开关的 16:9 / 21:9 分辨率预设、Off／FXAA／SMAA／实验性 TAA、缩放技术选项（关／DLSS／FSR 3.1，含画质档位）、标准／高质量滤波、可选 RGB Range 扩展（关／扩展）、30／60／90／120 FPS、FreeSync／G-SYNC Compatible VRR 及输出／显示控制；全屏、跨 DPI 和更广超分场景仍需更多测试 |
 | 帧生成设置 | 图像页内提供关／DLSS／FSR、DLSS 倍数、固定 2× FSR、会话状态及保存后即时生效；DLSS FG 切换到 FSR FG 需要重启；已限定验证 D3D12 Uhra 场景 |
 | 设置菜单 | 原版字体、支持长列表滚动的菜单风格；图形设置单击保存并应用，支持按 Start/Enter 聚焦“保存”且不立即保存，需要重启时选择 Now/Later |
-| 着色器预编译 | 内置便携式 Vulkan 着色器包（.lospv）、多线程自适应编译、即时跳过与缓存复用；v0.7.10 独立 DX12 .lospd 资产放入 `shaders/` |
+| 着色器预编译 | 内置便携式 Vulkan 着色器包（.lospv）、多线程自适应编译、即时跳过与缓存复用；独立 DX12 .lospd 资产放入 `shaders/` |
 | CPU 使用率 | 减少不必要的轮询，复用渲染计算 |
 | 输入与调试 | 手柄和键盘输入；英文／简体中文游戏内浮层调试菜单（F1 或手柄 LB+RB）提供捕获、地图信息与同地图 POI 传送 |
 
-发布包通过 `LostOdysseyRecomp.exe` 的 **Files** 或 **Folder** 导入游戏光盘和受支持的 DLC。自 v0.7.1 起新增 **Gameplay → 导入光盘与 DLC** 入口，可重新打开导入器并替换所选光盘与 DLC。v0.7.10 提供 Windows ZIP、Linux AppImage 与 Linux Flatpak 独立安装包，并提供放在 `shaders/` 下的独立 DX12 shader 资产。验证边界见[安装说明](docs/INSTALLING.md#automatic-content-import)、[构建说明](docs/BUILDING.md#packaging-flatpak)和[开发状态](docs/STATUS.md)。
+发布包通过 `LostOdysseyRecomp.exe` 的 **Files** 或 **Folder** 导入游戏光盘和受支持的 DLC。自 v0.7.1 起新增 **Gameplay → 导入光盘与 DLC** 入口，可重新打开导入器并替换所选光盘与 DLC。v0.7.15 提供 Windows ZIP、Linux AppImage 与 Linux Flatpak 独立安装包，并提供放在 `shaders/` 下的独立 DX12 shader 资产。验证边界见[安装说明](docs/INSTALLING.md#automatic-content-import)、[构建说明](docs/BUILDING.md#packaging-flatpak)和[开发状态](docs/STATUS.md)。
 
 验证进展和剩余工作见[公开维护者 Project](https://github.com/users/freefrank/projects/3)。
 
