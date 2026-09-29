@@ -48,6 +48,18 @@ depth-borrowing experiment on Metal was.
   travel, 0.7 s) and submitted nothing. The startup prebuild plus Metal's system
   shader cache already cover what binary archives would.
 
+- **Loading (2026-09-29):** the disc 4 switch spent 69% of the main thread in
+  `RtlTimeFieldsToTime` (host `timegm` locks and checks the time zone database on
+  macOS). Integer calendar arithmetic cut the switch from 1,751 to 708 ms. The rest
+  of that load, and the ~0.7 s travel loads, are guest work spread over the loader
+  thread, the main thread and the game's job workers (one decodes in
+  `sub_82CCA0B0` while the other spin-waits in `sub_82CC3C50`); a native decoder
+  would need that routine identified first.
+- **Frame timing above 60 FPS (2026-09-29):** game time follows real time at 30, 60
+  and 120 FPS (`game_time_ratio` 1.00), the opening movie and first battle start at
+  the same wall-clock times, and a 20 s walk ends at the same spot. Battles are
+  GPU-bound near 53 FPS at 720p. `new-game-battle-60fps` guards this.
+
 ## Guest CPU (all platforms)
 
 1. **XenonRecomp local-variable options.** *Measured 2026-09-29: ~2%, reverted (see
