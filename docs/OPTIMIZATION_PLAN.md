@@ -16,22 +16,24 @@ depth-borrowing experiment on Metal was.
 
 ## Measurements (2026-09-29, M1 Pro, macOS, Numara city)
 
-- **Above 30 FPS the limit is the GPU command-processing thread**, not game logic:
-  a 10 s `sample` at the 120 FPS target shows the game's main thread sleeping in
-  `KeDelayExecutionThread` 72% of the time while `GPU CmdProc` never idles. Its hot
-  spots: per-draw register snapshots (`ReadRegisters` copies all 2,048 ALU constants,
-  8 KB, for each of ~3,300 draws per frame), vertex-content change checks (memcmp,
-  memmove, `VertexSampledContent::Matches`, `SampleHash`), packet decode, and
-  (only with `LO_RENDER_TIMING`) timing calls (~9%).
+- **Above 30 FPS the GPU and the GPU command-processing thread are balanced**:
+  at the 120 FPS target in Numara a frame takes ~18.5 ms, of which the GPU is busy
+  17.4 ms (`gpu_queue_batches_elapsed_ms`) and the command thread ~16 ms (draws
+  11.4 ms). The game's main thread sleeps in `KeDelayExecutionThread` 72% of the
+  time. Speeding up only one side barely moves FPS. Command-thread hot spots:
+  per-draw constant snapshots (now incremental, 1.87 -> 1.34 ms/frame), index and
+  vertex preparation (~3.3 ms), bindings, and (only with `LO_RENDER_TIMING`)
+  timing calls (~9%). GPU side: ~220 render passes per frame; vertex/tiling work
+  exceeds fragment work, so fewer passes is the lever.
 - **Register promotion (below) is not worth it here:** the safe subset
   (`cr/xer/reserved_as_local`, `skip_msr`) gave 53.4 → 54.7 FPS, within noise;
   `non_argument_as_local` crashes at startup (guest access at 0xFFFFFFC4). Reverted.
-- **Camera TAA is GPU-bound** (13 FPS; 52 ms of each 75 ms frame waiting for a
-  drawable). Metal System Trace: ~1,080 render passes per frame with TAA vs ~220
+- **Camera TAA was GPU-bound** (13 FPS; 52 ms of each 75 ms frame waiting for a
+  drawable); fixed on Metal by batching the replay draws: 30 FPS (cap). Metal System Trace: ~1,080 render passes per frame with TAA vs ~220
   without; vertex/tiling work 700 vs 270 ms per second. The motion-vector replay
   draws into its own target between scene draws, splitting the scene pass at almost
-  every draw. Fix: batch the replay draws (e.g. after the scene) instead of
-  interleaving them; changes TAA timing semantics, so it needs care.
+  every draw. Fixed on Metal by queuing the replay draws and recording them in one
+  pass before submits, clears, resolves and MV reads.
 - **Without TAA at 30 FPS** the GPU is about half busy (~220 passes per frame).
 
 ## Guest CPU (all platforms)
@@ -59,8 +61,7 @@ depth-borrowing experiment on Metal was.
 
 ## Renderer CPU (all platforms, the real limit above 30 FPS)
 
-1. Upload ALU constants only when they changed since the previous draw instead of
-   snapshotting all 2,048 registers per draw.
+1. *Done:* ALU constants are re-read only when a bank changed (generation per bank).
 2. Cheaper vertex-content change detection (the memcmp/hash path).
 
 ## GPU, all backends

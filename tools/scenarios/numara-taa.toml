@@ -15,9 +15,9 @@ screenshot = true
 [checks]
 # Numara draws about 3,300 per frame; other destinations stay far below.
 min_draws = 3000
-# Camera TAA re-draws the scene for motion vectors: about 13 FPS on an M1 Pro.
-# The run guards correctness (an "mv:" init failure is an [error] line).
-min_fps = 10
+# Motion-vector replay is batched on Metal (was ~13 FPS when interleaved).
+# An "mv:" init failure is an [error] line and fails the run.
+min_fps = 25
 
 [settings]
 antialiasing = 3
