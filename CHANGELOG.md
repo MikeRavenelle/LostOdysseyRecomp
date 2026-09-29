@@ -11,14 +11,16 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 - Added native 90/120 FPS graphics targets and FreeSync / G-SYNC Compatible VRR output pacing. Switching from DLSS FG to FSR FG requires a restart.
 - Added an optional Graphics RGB Range expansion from 16–235 to 0–255, plus Hold/Toggle speed mode in F1 Cheats; Hold remains the default.
 - Fixed the Hungry Man errand timer at higher frame rates and made portable installs prefer the `game` directory beside the executable, with `../game` retained as a fallback.
-- Added a targeted TAA jitter mapping for the reported sky-flicker path. Broader gameplay and physical-display acceptance remain pending.
+- Added a targeted TAA jitter mapping for the reported sky-flicker path. Broader gameplay and physical-display coverage remain separate follow-up work.
+- The maintainer accepted all functionality included in the v0.7.15 release on 2026-09-29. This acceptance is limited to the released feature set and does not establish complete playthrough, all-scene, cross-GPU or physical-display coverage.
 
 ### 简体中文
 
 - 新增原生 90／120 FPS 图形目标和 FreeSync／G-SYNC Compatible VRR 输出节奏控制。从 DLSS FG 切换到 FSR FG 必须重启。
 - 图像设置新增可选的 RGB Range 扩展，将游戏画面的 RGB 范围从 16–235 扩展到 0–255；F1 Cheats 新增按住／切换变速模式，默认仍为按住。
 - 修复高帧率下 Hungry Man 差事计时，并让便携式安装优先使用可执行文件旁的 `game` 目录，同时保留 `../game` 作为后备路径。
-- 针对反馈的天空闪烁路径新增限定范围的 TAA 抖动映射；更广游戏流程和实体显示验收仍待完成。
+- 针对反馈的天空闪烁路径新增限定范围的 TAA 抖动映射；更广游戏流程和实体显示覆盖作为后续回归工作。
+- 维护者于 2026-09-29 确认 v0.7.15 本轮发布的全部功能通过验收。该验收限于已发布功能，不等于完整通关、所有场景、跨 GPU 或实体显示覆盖。
 
 ## [v0.7.10 — 2026-09-28](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.10)
 
