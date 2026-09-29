@@ -38,12 +38,22 @@ so Linux AArch64 (and any other ARM target) starts from known ground.
 - **`char` signedness.** Signed on Apple arm64 and x86, unsigned on Linux AArch64.
   Audit host code that relies on `char` being signed before a Linux AArch64 build.
 
-## Still to audit
+## Audited (2026-09-28)
 
-- Runtime kernel objects shared with guest threads (events, critical sections,
-  interlocked helpers in `kernel/`): confirm atomics or locks on every
-  cross-thread field.
-- Guest code that spins on a plain load without a barrier (would need the load to be
-  re-read; the compiler may hoist it). None found yet.
-- `vrefp`/`vrsqrtefp` precision via simde versus x86 `rcpps`/`rsqrtps` (12-bit
-  estimates on both, different rounding).
+- **Interlocked lists.** The game pushes onto SLIST headers inline (ldarx/stdcx., a
+  64-bit CAS on the 8-byte header) and imports only `InterlockedPopEntrySList` and
+  `InterlockedFlushSList`. Those ran under a host mutex with plain reads and writes,
+  which cannot exclude a concurrent guest push (lost or corrupted entries; a race on
+  any ISA, more likely on AArch64). They now update the header with the same 64-bit
+  CAS.
+- **Critical sections and spin locks** use `std::atomic_ref` CAS/stores (sequentially
+  consistent): correct on both ISAs.
+- **Events, semaphores, mutants** are host objects with their own locking; the
+  guest-visible `SignalState` is only read at creation (same on every platform).
+- **`vrefp`, `vrsqrtefp`, `frsqrte`** are translated as exact IEEE division and square
+  root, not estimates, so both ISAs give identical results.
+
+## Not ISA-specific, noted
+
+- Guest loops that spin on a plain load compile to ordinary C++ loads, which the
+  compiler may hoist out of the loop. This would hang on x86 as well; none seen.

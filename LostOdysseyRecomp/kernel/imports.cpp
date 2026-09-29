@@ -868,26 +868,41 @@ static void ExFreePool(uint32_t address)
 }
 
 // Interlocked singly linked lists (SLIST_HEADER: Next.Next, Depth:16, Sequence:16).
+// Guest code pushes inline with ldarx/stdcx. on the whole 8-byte header, which
+// XenonRecomp turns into a 64-bit compare-and-swap. Pop and flush must update the
+// header with the same CAS; a host lock would not exclude a concurrent guest push.
+static uint64_t SListHeaderValue(uint64_t stored) { return std::byteswap(stored); }
+
 static uint32_t InterlockedPopEntrySList_x(be<uint32_t>* header)
 {
-    std::lock_guard lock(g_kernelLock);
-    uint32_t first = header[0];
-    if (first == 0)
-        return 0;
-    auto* entry = reinterpret_cast<be<uint32_t>*>(g_memory.Translate(first));
-    header[0] = entry[0];
-    uint32_t depthSeq = header[1];
-    header[1] = ((depthSeq - 1) & 0xFFFF) | ((depthSeq + 0x10000) & 0xFFFF0000);
-    return first;
+    std::atomic_ref<uint64_t> ref(*reinterpret_cast<uint64_t*>(header));
+    uint64_t stored = ref.load();
+    for (;;)
+    {
+        const uint64_t value = SListHeaderValue(stored);
+        const uint32_t first = uint32_t(value >> 32);
+        if (first == 0)
+            return 0;
+        auto* entry = reinterpret_cast<be<uint32_t>*>(g_memory.Translate(first));
+        const uint32_t next = entry[0];
+        const uint32_t depthSeq = uint32_t(value);
+        const uint32_t nextDepthSeq = ((depthSeq - 1) & 0xFFFF) | ((depthSeq + 0x10000) & 0xFFFF0000);
+        if (ref.compare_exchange_weak(stored, SListHeaderValue((uint64_t(next) << 32) | nextDepthSeq)))
+            return first;
+    }
 }
 
 static uint32_t InterlockedFlushSList_x(be<uint32_t>* header)
 {
-    std::lock_guard lock(g_kernelLock);
-    uint32_t first = header[0];
-    header[0] = 0;
-    header[1] = (uint32_t(header[1]) + 0x10000) & 0xFFFF0000;
-    return first;
+    std::atomic_ref<uint64_t> ref(*reinterpret_cast<uint64_t*>(header));
+    uint64_t stored = ref.load();
+    for (;;)
+    {
+        const uint64_t value = SListHeaderValue(stored);
+        const uint32_t nextDepthSeq = (uint32_t(value) + 0x10000) & 0xFFFF0000;
+        if (ref.compare_exchange_weak(stored, SListHeaderValue(nextDepthSeq)))
+            return uint32_t(value >> 32);
+    }
 }
 
 // ---------------------------------------------------------------------------
