@@ -585,10 +585,10 @@ void Publish(uint8_t *base, uint32_t config)
         frameGeneration.hidden = GraphicsRowHidden(int(GraphicsRow::FrameGeneration));
         placeGraphics(GraphicsRow::FrameGeneration, std::move(frameGeneration));
         std::vector<std::wstring> multipliers;
-        for (uint32_t multiplier = 2; multiplier <= 16; ++multiplier)
+        for (uint32_t multiplier = 2; multiplier <= framegen::kMaxMultiplier; ++multiplier)
             multipliers.push_back(std::to_wstring(multiplier) + L"×");
         auto fgMultiplier = makeChoices(L"FG multiplier", L"影格生成倍數", std::move(multipliers),
-            std::clamp(edit.frameGenerationMultiplier, 2u, 16u) - 2);
+            std::clamp(edit.frameGenerationMultiplier, 2u, framegen::kMaxMultiplier) - 2);
         fgMultiplier.hidden = GraphicsRowHidden(int(GraphicsRow::FrameGenerationMultiplier));
         placeGraphics(GraphicsRow::FrameGenerationMultiplier, std::move(fgMultiplier));
         placeGraphics(GraphicsRow::Brightness, makeChoices(L"Brightness calibration", L"亮度校準", {Tr(L"Open", L"開啟")}, 0));
@@ -1404,7 +1404,8 @@ PPC_FUNC(sub_822F19B0)
             }
             case GraphicsRow::FrameGenerationMultiplier:
                 if (!GraphicsRowHidden(row)) {
-                    edit.frameGenerationMultiplier = cycle(std::clamp(edit.frameGenerationMultiplier, 2u, 16u) - 2, 15) + 2;
+                    edit.frameGenerationMultiplier = cycle(std::clamp(edit.frameGenerationMultiplier, 2u,
+                        framegen::kMaxMultiplier) - 2, framegen::kMaxMultiplier - 1) + 2;
                     edit.frameGenerationMode = framegen::Mode::Fixed;
                     edit.frameGenerationTargetFps = 0;
                 }

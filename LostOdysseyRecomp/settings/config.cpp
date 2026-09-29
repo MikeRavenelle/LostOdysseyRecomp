@@ -34,7 +34,7 @@ Config Validate(Config value)
         value.frameGenerationProvider = framegen::Provider::Off;
     if (value.frameGenerationMode != framegen::Mode::Fixed && value.frameGenerationMode != framegen::Mode::Dynamic)
         value.frameGenerationMode = framegen::Mode::Fixed;
-    if (value.frameGenerationMultiplier < 2 || value.frameGenerationMultiplier > 16)
+    if (value.frameGenerationMultiplier < 2 || value.frameGenerationMultiplier > framegen::kMaxMultiplier)
         value.frameGenerationMultiplier = 2;
     if (value.frameGenerationTargetFps > 1000) value.frameGenerationTargetFps = 0;
     if (value.frameGenerationProvider == framegen::Provider::Fsr)

@@ -50,7 +50,7 @@ $env:LO_FG_TARGET_FPS='144' # 0 requests SDK display-refresh detection.
 
 ## In-game settings and session behavior
 
-Graphics settings contain an FG section with `Off`, `DLSS`, and `FSR` on D3D12 builds. DLSS exposes 2×–16× multiplier requests; FSR is fixed at 2× and hides the multiplier row. Save graphics settings to apply the request. The focused FG rows report `Pending`, `Ready`, `Unavailable`, or `Off`; `Ready` means the session and swapchain exist, not proof of generated frames. Unsupported requests use ordinary rendering.
+Graphics settings contain an FG section with `Off`, `DLSS`, and `FSR` on D3D12 builds. DLSS exposes 2×–6× multiplier requests (6× is the most DLSS multi-frame generation supports; `settings.ini` values above 6 fall back to 2× and `LO_FG_MULTIPLIER` accepts 2 to 6); FSR is fixed at 2× and hides the multiplier row. Save graphics settings to apply the request. The focused FG rows report `Pending`, `Ready`, `Unavailable`, or `Off`; `Ready` means the session and swapchain exist, not proof of generated frames. Unsupported requests use ordinary rendering.
 
 Changing the provider drains renderer, host presentation and SDK work, releases the old swapchain before unloading its SDK, replaces the native queue while retaining the Plume wrapper address, and recreates presentation. DLSS multiplier changes reconfigure the existing session. Changes apply within the current process; switching graphics backends still requires restart. Explicit diagnostic environment overrides retain priority over saved settings.
 

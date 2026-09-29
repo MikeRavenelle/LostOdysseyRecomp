@@ -4,6 +4,16 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 
 按新到旧记录简短更新，日期采用 UTC。技术验证见[开发状态](docs/STATUS.md)，后续计划见[路线图](docs/ROADMAP.zh-CN.md)。
 
+## Unreleased / 未发布 (target v0.7.20 / 目标 v0.7.20)
+
+### English
+
+- Capped frame generation multiplier requests at 6×, the most DLSS multi-frame generation supports. The Graphics menu offers 2× to 6×, `settings.ini` values above 6 fall back to 2×, and `LO_FG_MULTIPLIER` accepts 2 to 6. Each request is still limited to what the GPU and driver report.
+
+### 简体中文
+
+- 插帧倍率上限改为 6×，即 DLSS 多帧生成支持的最大值。图形菜单只提供 2× 到 6×，`settings.ini` 中大于 6 的值回退为 2×，`LO_FG_MULTIPLIER` 只接受 2 到 6。每次请求仍受显卡和驱动报告的上限限制。
+
 ## [v0.7.15 — 2026-09-29](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.15)
 
 ### English
