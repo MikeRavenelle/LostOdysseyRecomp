@@ -2037,6 +2037,7 @@ namespace gpu::renderer
 
             void TransferRegion(HostTexture& src, HostTexture& dst, uint32_t srcClass, uint32_t dstClass)
             {
+                FlushMotionReplayQueue();
                 dst.sdrProducerFrame = ~0ull;
                 consecutiveResolveCopies.Invalidate();
                 // Only the 32-bit classes share a word layout; wider ones are left alone.
@@ -3060,6 +3061,7 @@ namespace gpu::renderer
             // converting formats along the way.
             bool BlitRegion(HostTexture& src, HostTexture& dst, uint32_t x0, uint32_t y0, uint32_t w, uint32_t h)
             {
+                FlushMotionReplayQueue();
                 dst.sdrProducerFrame = ~0ull;
                 consecutiveResolveCopies.Invalidate();
                 RenderPipeline* pipeline = GetBlitPipeline(dst.format);
@@ -3587,8 +3589,16 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 return true;
             }
 
+            // Records queued motion-vector replay draws (Metal) before work that
+            // submits the command list or changes the scene depth they test.
+            void FlushMotionReplayQueue()
+            {
+                if (motionReplay) motionReplay->FlushQueued(commandList);
+            }
+
             bool Flush()
             {
+                FlushMotionReplayQueue();
                 consecutiveResolveCopies.Invalidate();
                 if (video::GpuWorkStopped()) {
 #if defined(LO_GPU_PLUME)
@@ -6212,6 +6222,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                             if (!motionReplay->Init(device, setBuilders, vulkan ? 5 : 4)) {
                                 LOG_ERROR("mv: initialization failed; requested geometric history rejected: {}", motionReplay->LastError());
                                 motionReplay.reset(); motionInitFailed = true;
+                            } else {
+                                // Tile-based GPUs pay a render pass per switch between the scene
+                                // and MV targets; LO_MV_IMMEDIATE=1 records each draw in place.
+                                motionReplay->SetQueueDraws(video::IsMetal() && !getenv("LO_MV_IMMEDIATE"));
                             }
                         }
                         if (motionReplay) {motionReplay->EnableGpuTiming(gpuTiming);motionReplay->BeginFrame(frame, temporalEpoch);}
@@ -8562,8 +8576,10 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                     const RenderBufferReference cb[4] = {{uploadRing, vsOffset}, {uploadRing, sharedOffset},
                                         {uploadRing, psOffset}, {uploadRing, mvOffset}};
                                     RenderDescriptorSet* sets[] = {set0, set1, set2, set3, set4};
+                                    const RenderIndexBufferView replayIndices(RenderBufferReference(uploadRing, preparedIndexOffset),
+                                        uint32_t(indices.size() * 4), RenderFormat::R32_UINT);
                                     if (!motionReplay->Draw(commandList, prepared.pipeline, cb, sets, vulkan ? 5 : 4,
-                                        rasterViewport, scissor, useIndices, indexCount, baseVertex)) {
+                                        rasterViewport, scissor, useIndices, indexCount, baseVertex, useIndices ? &replayIndices : nullptr)) {
                                         logFirstMotionFailure("replay_draw_failed", 5);
                                         motionReplay->AbortFrame("MV draw record failed");
                                     }
@@ -9009,6 +9025,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                             {
                                 if (getenv("LO_TRACE_CLEAR_CALL"))
                                     LOG_INFO("clear begin f{} base={} pitch={} size={}x{} count={} z={}", frame, k.base, k.pitch, target->width, target->height, clearRects.size(), rectZ);
+                                FlushMotionReplayQueue();
                                 commandList->clearDepthStencil(true, false, rectZ, 0, clearRects.data(), uint32_t(clearRects.size()));
                                 if (trackBinding) {
                                     const bool full = clearRects.size() == 1 && clearRects[0].left == 0 && clearRects[0].top == 0 &&
@@ -9699,6 +9716,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 
             void Resolve()
             {
+                FlushMotionReplayQueue();
                 ScopedTimer timer{ tResolve, cpuTimingEnabled };
                 nResolve++;
                 consecutiveResolveCopies.BeginResolve();
@@ -9909,6 +9927,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
 
             void ClearDepthTarget(uint32_t pitch, uint32_t rtHeight)
             {
+                FlushMotionReplayQueue();
                 consecutiveResolveCopies.Invalidate();
                 uint32_t depthInfo = Reg(REG_RB_DEPTH_INFO);
                 HostTexture* depth = GetRenderTarget(depthInfo & 0xFFF, (depthInfo >> 16) & 1, pitch, rtHeight, true);
