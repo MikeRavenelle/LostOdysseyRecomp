@@ -61,9 +61,19 @@ def load_scenario(path: Path) -> dict:
     data.setdefault("save", "")
     data.setdefault("timeout", 150)
     data.setdefault("buttons", "")
+    data.setdefault("timeline", "")
     data.setdefault("step", [])
     data.setdefault("checks", {})
     data.setdefault("settings", {})
+    data.setdefault("env", {})
+    timeline = []
+    letters = {"s": "start", "a": "a", "b": "b", "x": "x", "y": "y", "u": "up", "d": "down", "l": "left", "r": "right"}
+    for entry in filter(None, (e.strip() for e in data["timeline"].split(","))):
+        button, _, seconds = entry.partition("@")
+        if button not in letters or not seconds:
+            raise ValueError(f"{path.name}: bad timeline entry '{entry}'")
+        timeline.append((float(seconds), BUTTONS[letters[button]]))
+    data["timeline"] = sorted(timeline)
     for step in data["step"]:
         for button in step.get("press", "").split("+") if step.get("press") else []:
             if button not in BUTTONS:
@@ -124,6 +134,7 @@ class Run:
             "LO_SHADER_CACHE_DIR": str(Path(self.args.bin).parent / "cache/shaders"),
             "LO_AUTO_PULSE": str(self.s.get("pulse", 6)),
         })
+        env.update({key: str(value) for key, value in self.s["env"].items()})
         # Swap-stamped presses; an empty schedule must not fall back to "s".
         env["LO_AUTO_BUTTONS"] = self.s["buttons"] or "s@999999999"
         return env
@@ -152,6 +163,7 @@ class Run:
         with open(self.stdout, "wb") as out:
             proc = subprocess.Popen(cmd, cwd=self.run_dir, env=self.env(), stdout=out, stderr=subprocess.STDOUT)
         steps = list(self.s["step"])
+        timeline = list(self.s["timeline"])
         step_started = None
         max_draws = 0
         timed_out = False
@@ -161,6 +173,9 @@ class Run:
                 if elapsed >= self.s["timeout"]:
                     timed_out = True
                     break
+                # Wall-clock presses: independent of the frame rate, unlike "buttons".
+                if timeline and elapsed >= timeline[0][0]:
+                    self.send(timeline.pop(0)[1], polls=self.s.get("pulse", 6))
                 for match in DRAWS_RE.finditer(self.tail()):
                     max_draws = max(max_draws, int(match.group(2)))
                 if steps:
@@ -179,7 +194,7 @@ class Run:
                     if step_started is not None and time.time() - step_started >= step.get("hold_seconds", 1):
                         steps.pop(0)
                         step_started = None
-                time.sleep(0.5)
+                time.sleep(0.1 if timeline else 0.5)
         finally:
             if proc.poll() is None:
                 self.screenshot()

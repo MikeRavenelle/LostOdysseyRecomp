@@ -17,7 +17,11 @@ Config Validate(Config value)
         value.internalResolution != 720 && value.internalResolution != 1080 &&
         value.internalResolution != 1440 && value.internalResolution != 2160)
         value.internalResolution = 0;
+#if LO_PLATFORM_MACOS
+    if (value.scalingQuality > ScalingMetalFx) value.scalingQuality = 1;
+#else
     if (value.scalingQuality > 1) value.scalingQuality = 1;
+#endif
     if (value.anisotropicFiltering != 0 && value.anisotropicFiltering != 2 && value.anisotropicFiltering != 4 &&
         value.anisotropicFiltering != 8 && value.anisotropicFiltering != 16) value.anisotropicFiltering = 0;
     if (!gpu::upscaling::KnownUpscaler(value.upscaler)) value.upscaler = gpu::upscaling::Upscaler::Off;

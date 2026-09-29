@@ -1,4 +1,4 @@
-description = "Disc 4 world map -> City of Numara (ARM64 memory-barrier regression)"
+description = "City of Numara with MetalFX spatial upscaling (720p scene to the Retina drawable)"
 save = "user17"
 timeout = 150
 # Seconds since launch. After loading, five Downs move from Ipsilon Mountains - North to City of Numara.
@@ -15,3 +15,6 @@ screenshot = true
 # Numara draws about 3,300 per frame; other destinations stay far below.
 min_draws = 3000
 min_fps = 25
+
+[settings]
+scaling_quality = 2

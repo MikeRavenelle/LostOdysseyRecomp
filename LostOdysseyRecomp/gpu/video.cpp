@@ -66,7 +66,12 @@
 #endif
 #if LO_PLATFORM_MACOS
 // Declared the way plume's examples do; plume_metal.h pulls in metal-cpp.
-namespace plume { std::unique_ptr<RenderInterface> CreateMetalInterface(); }
+namespace plume {
+    std::unique_ptr<RenderInterface> CreateMetalInterface();
+    void SetMetalMinimumPresentDuration(RenderSwapChain* swapChain, double seconds);
+    bool EncodeMetalFxSpatialScale(RenderCommandList* commandList, const RenderTexture* input,
+        const RenderTexture* output, uint32_t inputWidth, uint32_t inputHeight);
+}
 #endif
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
 #include "diagnostic_log.h"
@@ -364,6 +369,7 @@ namespace gpu::video
             bool nativeVsyncInitialized = false;
             bool nativeVsyncBaseline = true, nativeVsyncRequested = true;
             bool nativeVsyncReportPending = false;
+            double metalMinimumPresentDuration = 0.0;
 #ifdef _WIN32
             int appliedMode = -1;
             uint64_t appliedSize = 0, appliedTicket = 0;
@@ -2002,6 +2008,43 @@ namespace gpu::video
         g_displayRefreshHz.store(refresh, std::memory_order_relaxed);
     }
 
+#if LO_PLATFORM_MACOS
+    // Scaling filter "MetalFX": Apple's spatial upscaler brings the scene to the
+    // size presentation would scale it to (aspect kept), so the normal pass then
+    // runs 1:1 with its AA, RGB range and UI. Falls back to the source on failure.
+    std::unique_ptr<plume::RenderTexture> g_metalFxOutput;
+    uint32_t g_metalFxWidth = 0, g_metalFxHeight = 0;
+    plume::RenderTexture* UpscaleWithMetalFx(plume::RenderTexture* source, uint32_t& width, uint32_t& height)
+    {
+        const uint32_t outputWidth = g_swapChain->getWidth(), outputHeight = g_swapChain->getHeight();
+        if (!width || !height || !outputWidth || !outputHeight) return source;
+        const double scale = std::min(double(outputWidth) / width, double(outputHeight) / height);
+        const uint32_t targetWidth = std::min(outputWidth, uint32_t(std::lround(width * scale)));
+        const uint32_t targetHeight = std::min(outputHeight, uint32_t(std::lround(height * scale)));
+        if (targetWidth <= width && targetHeight <= height) return source; // Not an upscale.
+        if (!g_metalFxOutput || g_metalFxWidth != targetWidth || g_metalFxHeight != targetHeight) {
+            g_metalFxOutput = g_device->createTexture(plume::RenderTextureDesc::Texture2D(targetWidth, targetHeight, 1,
+                kSwapChainFormat, plume::RenderTextureFlag::RENDER_TARGET | plume::RenderTextureFlag::UNORDERED_ACCESS));
+            g_metalFxWidth = g_metalFxOutput ? targetWidth : 0;
+            g_metalFxHeight = g_metalFxOutput ? targetHeight : 0;
+            LOG_INFO("video: MetalFX spatial upscale {}x{} -> {}x{}", width, height, targetWidth, targetHeight);
+        }
+        if (!g_metalFxOutput) return source;
+        g_commandList->barriers(plume::RenderBarrierStage::COMPUTE,
+            plume::RenderTextureBarrier(source, plume::RenderTextureLayout::SHADER_READ));
+        g_commandList->barriers(plume::RenderBarrierStage::COMPUTE,
+            plume::RenderTextureBarrier(g_metalFxOutput.get(), plume::RenderTextureLayout::GENERAL));
+        if (!plume::EncodeMetalFxSpatialScale(g_commandList.get(), source, g_metalFxOutput.get(), width, height)) {
+            static bool reported = false;
+            if (!std::exchange(reported, true)) LOG_WARNING("video: MetalFX unavailable; using the regular scaling filter");
+            return source;
+        }
+        width = targetWidth;
+        height = targetHeight;
+        return g_metalFxOutput.get();
+    }
+#endif
+
     void PumpWindowEvents()
     {
         if (ExitRequested() || !g_window) return;
@@ -2463,8 +2506,28 @@ namespace gpu::video
         // Retain the existing Vulkan DLSS-G requirement at every native cap.
         forceImmediate = bool(g_fgSession);
 #endif
+#if LO_PLATFORM_MACOS
+        // Metal keeps display sync: the compositor needs it and it never tears.
+        // Adaptive sync and targets above the 60 Hz guest clock present each
+        // drawable for at least one game frame instead, so ProMotion displays
+        // refresh at the game's cadence. 1 ms of slack keeps a frame from
+        // slipping to the next refresh.
+        const bool nativeVsync = true;
+        (void)forceImmediate;
+        {
+            const uint32_t paced = GetFramePacingTarget(nativeTarget);
+            const bool adaptive = settings::GetConfig().variableRefreshRate || frame_rate::NeedsImmediate(nativeTarget);
+            const double duration = adaptive && paced ? std::max(0.0, 1.0 / paced - 0.001) : 0.0;
+            if (duration != nativePolicy.metalMinimumPresentDuration) {
+                plume::SetMetalMinimumPresentDuration(g_swapChain.get(), duration);
+                nativePolicy.metalMinimumPresentDuration = duration;
+                LOG_INFO("video: Metal minimum present duration {:.3f} ms (pacing target {} FPS)", duration * 1000.0, paced);
+            }
+        }
+#else
         const bool nativeVsync = vrr::HostVsyncEnabled(nativeTarget,
             nativePolicy.nativeVsyncBaseline, forceImmediate, settings::GetConfig().variableRefreshRate);
+#endif
         if (nativeVsync != nativePolicy.nativeVsyncRequested) {
             // Plume marks Vulkan's swapchain for resize; the existing transaction
             // below quiesces FG, cancels leases and waits before replacing images.
@@ -2860,6 +2923,10 @@ namespace gpu::video
                     g_fgSession->Prepare(composite.producer, g_swapChain->getWidth(), g_swapChain->getHeight(),
                         uint32_t(swap->textures.size()), swap->createInfo.imageFormat, g_commandList.get(), fgProducerWaitMs);
                 }
+#endif
+#if LO_PLATFORM_MACOS
+                if (g_presentation && settings::GetConfig().scalingQuality == settings::ScalingMetalFx)
+                    source = UpscaleWithMetalFx(source, sourceWidth, sourceHeight);
 #endif
                 if(g_presentation) {
                     const auto decision = frame_plan::ResolvePresentationDecision(&sourcePlan,

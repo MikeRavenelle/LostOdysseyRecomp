@@ -19,6 +19,8 @@ description = "What the run covers"
 save = "user17"      # slot folder from --saves (default out/drive-city/save); omit for no save
 timeout = 150        # seconds; reaching it is the normal end of a run
 buttons = "s@300,a@900"   # swap-stamped presses (LO_AUTO_BUTTONS): s a b x y, u/d/l/r d-pad
+timeline = "s@10,a@30"    # the same letters at seconds since launch; use this when the
+                          # frame rate differs from 30 FPS (swap counts then drift)
 pulse = 6            # polls per stamped press (default 6)
 
 [[step]]             # event-driven steps, in order
@@ -33,6 +35,9 @@ screenshot = true
 [settings]           # settings.ini overrides; runs start from frame_rate=30,
 antialiasing = 3     # internal_resolution=0, antialiasing=0, upscaler=0,
                      # window_mode=0, variable_refresh_rate=0
+
+[env]                # extra environment variables for the game
+LO_SCREENSHOT_PRESENTED = "1"   # screenshots of the presented image, not the guest frame
 
 [checks]
 min_draws = 700      # the scene was reached

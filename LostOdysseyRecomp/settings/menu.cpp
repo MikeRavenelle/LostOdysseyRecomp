@@ -515,9 +515,15 @@ void Publish(uint8_t *base, uint32_t config)
                                   edit.anisotropicFiltering == 4 ? 2 : edit.anisotropicFiltering == 2 ? 1 : 0;
         placeGraphics(GraphicsRow::AnisotropicFiltering, makeChoices(L"Anisotropic filtering", L"各向異性過濾",
                    {Tr(L"Off", L"關"), L"2×", L"4×", L"8×", L"16×"}, afChoice));
+#if LO_PLATFORM_MACOS
+        placeGraphics(GraphicsRow::ScalingQuality, makeChoices(L"Scaling filter", L"縮放濾鏡",
+                   {Tr(L"Standard", L"標準"), Tr(L"High", L"高"), L"MetalFX"},
+                   std::min(edit.scalingQuality, ScalingMetalFx)));
+#else
         placeGraphics(GraphicsRow::ScalingQuality, makeChoices(L"Scaling filter", L"縮放濾鏡",
                    {Tr(L"Standard", L"標準"), Tr(L"High", L"高")},
                    std::min(edit.scalingQuality, 1u)));
+#endif
         placeGraphics(GraphicsRow::RgbRange, makeChoices(L"RGB Range", L"RGB 範圍",
                    {Tr(L"Off", L"關"), Tr(L"Expanded", L"擴展")}, edit.expandRgbRange ? 1 : 0));
         std::vector<std::wstring> frameRates;
@@ -528,8 +534,13 @@ void Publish(uint8_t *base, uint32_t config)
         }
         placeGraphics(GraphicsRow::FrameRate, makeChoices(L"Frame rate", L"影格率",
                    std::move(frameRates), gpu::frame_rate::MenuIndex(edit.frameRate)));
+#if LO_PLATFORM_MACOS
+        placeGraphics(GraphicsRow::VariableRefreshRate, makeChoices(L"Adaptive sync (ProMotion)",
+            L"自適應同步（ProMotion）", onOff(), edit.variableRefreshRate ? 0 : 1));
+#else
         placeGraphics(GraphicsRow::VariableRefreshRate, makeChoices(L"FreeSync / G-SYNC Compatible",
             L"FreeSync / G-SYNC Compatible", onOff(), edit.variableRefreshRate ? 0 : 1));
+#endif
         std::vector<std::wstring> providers;
         uint32_t selected = 0;
         for (auto provider : FgProviders()) {
@@ -647,8 +658,13 @@ void Publish(uint8_t *base, uint32_t config)
                            L"提升斜角觀看時的紋理清晰度。儲存後立即套用。");
             break;
         case GraphicsRow::ScalingQuality:
+#if LO_PLATFORM_MACOS
+            next.help = Tr(L"Controls filtering when upscaling is active. MetalFX uses Apple's spatial upscaler; pair it with a lower render resolution.",
+                           L"控制啟用縮放時的取樣濾鏡。MetalFX 使用 Apple 的空間放大器，建議搭配較低的渲染解析度。");
+#else
             next.help = Tr(L"Controls filtering when upscaling is active.",
                            L"控制啟用縮放時的取樣濾鏡。");
+#endif
             break;
         case GraphicsRow::RgbRange:
             next.help = Tr(L"Expands only the game image from RGB 16–235 to 0–255. Applies immediately after saving.",
@@ -662,8 +678,13 @@ void Publish(uint8_t *base, uint32_t config)
                      L"原生遊戲影格率，獨立於影格生成。儲存後套用。");
             break;
         case GraphicsRow::VariableRefreshRate:
+#if LO_PLATFORM_MACOS
+            next.help = Tr(L"Shows each frame for one game frame so ProMotion and adaptive-sync displays follow the game's frame rate. Display sync stays on.",
+                           L"每個影格至少顯示一個遊戲影格的時間，讓 ProMotion 與自適應同步螢幕跟隨遊戲影格率；顯示同步保持開啟。");
+#else
             next.help = Tr(L"VRR-friendly pacing. Enable adaptive sync in your display/driver. Actual VRR is not detected.",
                            L"VRR 友善限幀；請在螢幕與驅動程式啟用自適應同步。無法偵測實際 VRR 狀態。");
+#endif
             break;
         case GraphicsRow::FrameGeneration:
         case GraphicsRow::FrameGenerationMultiplier:
@@ -1317,7 +1338,11 @@ PPC_FUNC(sub_822F19B0)
                 break;
             }
             case GraphicsRow::ScalingQuality:
+#if LO_PLATFORM_MACOS
+                edit.scalingQuality = cycle(edit.scalingQuality, ScalingMetalFx + 1);
+#else
                 edit.scalingQuality = cycle(edit.scalingQuality, 2);
+#endif
                 break;
             case GraphicsRow::RgbRange:
                 edit.expandRgbRange = !edit.expandRgbRange;

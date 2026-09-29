@@ -37,5 +37,7 @@ if(LO_BUILD_GPU)
         set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
         add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/SPIRV-Cross" EXCLUDE_FROM_ALL)
         target_link_libraries(plume PRIVATE spirv-cross-msl)
+        # MetalFX spatial upscaling (Scaling filter = MetalFX); macOS 13+.
+        target_link_libraries(plume PUBLIC "-framework MetalFX")
     endif()
 endif()

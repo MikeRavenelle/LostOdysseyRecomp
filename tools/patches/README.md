@@ -43,6 +43,8 @@ Vulkan 改动应从受跟踪的 plume 子模块状态和上方补丁应用；它
 - `copyTextureRegion` supports texture-to-buffer copies (readback into a placed footprint), which the Metal backend lacked; the runtime uses them for screenshots and captures. The source may be a swap-chain drawable, and the `CAMetalLayer` is created with `framebufferOnly = false` so presented images can be read back.
 - `setFramebuffer` keeps the active render pass when the framebuffer is unchanged, as `plume-lostodyssey.patch` already does for Vulkan. The renderer rebinds its target between draws, and on Apple's tile-based GPUs every pass break stores and reloads the attachments.
 - Clears with more than `MAX_CLEAR_RECTS` rectangles are split into batches, matching the D3D12 and Vulkan changes in `plume-lostodyssey.patch`; the quad clear otherwise overruns fixed-size arrays.
+- `plume::SetMetalMinimumPresentDuration` makes the swap chain present each drawable with `presentAfterMinimumDuration`, so ProMotion displays follow the game's frame rate (the runtime's "Adaptive sync (ProMotion)" setting and targets above 60 FPS).
+- `plume::EncodeMetalFxSpatialScale` encodes MetalFX's spatial scaler into the command list's buffer (the "MetalFX" scaling filter). The runtime links `MetalFX.framework` to plume in `thirdparty/CMakeLists.txt`.
 
 Apply it after the upstream patch, from the repository root:
 
@@ -51,4 +53,14 @@ git -C thirdparty/plume apply ../../tools/patches/plume-lostodyssey.patch
 git -C thirdparty/plume apply ../../tools/patches/plume-macos.patch
 ```
 
-After changing either file, regenerate it with `git -C thirdparty/plume diff -- plume_metal.cpp plume_metal.h > tools/patches/plume-macos.patch`.
+After changing either file, regenerate it against a copy of plume with only the upstream patch applied, so it stays independent of that patch:
+
+```sh
+ref=$(mktemp -d)/plume
+git -C thirdparty/plume worktree add --detach "$ref" HEAD
+git -C "$ref" apply "$PWD/tools/patches/plume-lostodyssey.patch"
+git -C "$ref" add -A && git -C "$ref" -c user.name=ref -c user.email=ref@local commit -qm ref
+cp thirdparty/plume/plume_metal.cpp thirdparty/plume/plume_metal.h "$ref/"
+git -C "$ref" diff > tools/patches/plume-macos.patch
+git -C thirdparty/plume worktree remove --force "$ref"
+```
