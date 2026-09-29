@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
+# Minimum macOS version; ignored elsewhere. Must precede project(), and keeps
+# plume from falling back to its own 10.15 default.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS deployment target")
 project(LostOdysseyRecomp VERSION 0.7.15 LANGUAGES C CXX)
 include(GNUInstallDirs)
 # Source version, not a release/commit or clean-checkout assertion.
@@ -10,15 +13,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(BUILD_SHARED_LIBS OFF)
 
+# LO_TARGET_PLATFORM / LO_TARGET_ISA for every platform-specific decision below.
+include(cmake/LoPlatform.cmake)
 # Sandy Bridge baseline (AVX): lets simde map VMX ops to real SSE4.1/AVX intrinsics
 # instead of scalar fallbacks (which pull in C23 roundeven*). Same as UnleashedRecomp.
-# Guarded to x86 so non-x86 Clang builds do not receive an invalid -march.
-string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" LO_TARGET_PROCESSOR)
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
-   LO_TARGET_PROCESSOR MATCHES "^(x86_64|amd64|x64|i[3-6]86|x86)$")
+# Guarded to x86 so non-x86 Clang builds do not receive an invalid -march; on
+# AArch64, simde maps VMX ops to NEON, which is always available.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND LO_TARGET_ISA MATCHES "^x86")
     add_compile_options(-march=sandybridge)
 endif()
-# Optimization, target architecture, LTO, PGO, and BOLT options. The default
+# Optimization, target architecture, LTO, PGO, and BOLT options. On x86 the default
 # architecture repeats the sandybridge baseline above (benign duplicate flag);
 # an explicit LO_TARGET_ARCH comes later on the command line and wins.
 include(cmake/LoOptimization.cmake)
@@ -26,6 +30,11 @@ include(cmake/LoDlss.cmake)
 include(cmake/LoStreamline.cmake)
 include(cmake/LoFrameGeneration.cmake)
 include(cmake/LoFsr.cmake)
+# NGX and the FidelityFX SDK paths are D3D12/Vulkan only; macOS renders through
+# Metal. Upscaling there is a separate later feature (MetalFX).
+if(LO_TARGET_PLATFORM STREQUAL "macos" AND (LO_ENABLE_DLSS OR LO_ENABLE_FSR OR LO_ENABLE_STREAMLINE_FG))
+    message(FATAL_ERROR "DLSS, FSR and DLSS frame generation are not available on macOS")
+endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # 阶段 1 之前这里只是占位。生成 ppc/ 之后再按 UnleashedRecomp 的
@@ -68,7 +77,7 @@ if(LO_BUILD_RUNTIME)
                 ${CMAKE_SOURCE_DIR}/LostOdysseyRecomp/modding/mod_api.cpp)
         endif()
     endforeach()
-    if(LO_BUILD_GPU)
+    if(LO_BUILD_GPU AND NOT LO_TARGET_PLATFORM STREQUAL "macos")
         add_subdirectory(tools/tests/native_dlss)
     endif()
     if(TARGET LoPpcAutoSync)

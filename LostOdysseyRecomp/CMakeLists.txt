@@ -92,9 +92,11 @@ list(FILTER LO_RUNTIME_SOURCES EXCLUDE REGEX "updater/posix_ui\\.cpp$")
 list(FILTER LO_RUNTIME_SOURCES EXCLUDE REGEX "gpu/shader/portable_shader_pack\\.cpp$")
 
 set(LO_IMPORT_STUBS "${LO_RUNTIME_ROOT}/kernel/imports_stubs.cpp")
+# macOS provides only python3; resolve the interpreter rather than assuming "python".
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_custom_command(
     OUTPUT ${LO_IMPORT_STUBS}
-    COMMAND python "${CMAKE_SOURCE_DIR}/tools/gen_import_stubs.py"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/gen_import_stubs.py"
             "${LO_PRIVATE_DIR}/image_disc1.bin.sym" "${LO_RUNTIME_ROOT}" "${LO_IMPORT_STUBS}"
     DEPENDS ${LO_RUNTIME_SOURCES} "${CMAKE_SOURCE_DIR}/tools/gen_import_stubs.py" "${LO_PRIVATE_DIR}/image_disc1.bin.sym"
     COMMENT "Generating kernel import stubs"
@@ -132,7 +134,9 @@ target_include_directories(LostOdysseyRecomp PRIVATE
     ${CMAKE_SOURCE_DIR}/tools/XenonRecomp/XenonUtils
     ${CMAKE_SOURCE_DIR}/tools/XenonRecomp/thirdparty/simde
     ${CMAKE_SOURCE_DIR}/thirdparty/unordered_dense/include
-    ${CMAKE_SOURCE_DIR}/thirdparty/o1heap/o1heap)
+    ${CMAKE_SOURCE_DIR}/thirdparty/o1heap/o1heap
+    # gpu/shader/dxc_compiler.cpp is part of every runtime build, GPU or not.
+    ${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/inc)
 
 target_precompile_headers(LostOdysseyRecomp PRIVATE stdafx.h)
 target_compile_features(LostOdysseyRecomp PRIVATE cxx_std_20)
@@ -160,8 +164,7 @@ target_link_libraries(LostOdysseyRecomp PRIVATE lo_avcodec)
 if(LO_BUILD_GPU)
     target_link_libraries(LostOdysseyRecomp PRIVATE plume)
     target_include_directories(LostOdysseyRecomp PRIVATE
-        ${CMAKE_SOURCE_DIR}/thirdparty/plume
-        ${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/inc)
+        ${CMAKE_SOURCE_DIR}/thirdparty/plume)
     target_compile_definitions(LostOdysseyRecomp PRIVATE LO_GPU_PLUME=1)
     if(WIN32)
         target_link_libraries(LostOdysseyRecomp PRIVATE d3d12 dxgi)
@@ -438,7 +441,8 @@ target_compile_features(LoCriticalSectionTest PRIVATE cxx_std_23)
 
 add_executable(LoMemoryAliasTest EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/tools/tests/memory_alias_test.cpp
-    ${LO_RUNTIME_ROOT}/kernel/guest_address_space.cpp)
+    ${LO_RUNTIME_ROOT}/kernel/guest_address_space.cpp
+    ${LO_RUNTIME_ROOT}/kernel/guest_address_space_macos.cpp)
 target_include_directories(LoMemoryAliasTest PRIVATE ${LO_RUNTIME_ROOT})
 target_compile_features(LoMemoryAliasTest PRIVATE cxx_std_20)
 if(WIN32)
@@ -797,7 +801,13 @@ if(WIN32 AND LO_BUILD_GPU)
         endif()
     endforeach()
 elseif(UNIX AND LO_BUILD_GPU)
-    set(LO_DXC_SO "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/lib/x64/libdxcompiler.so")
+    if(LO_TARGET_PLATFORM STREQUAL "macos")
+        # Universal (arm64 + x86_64) build shipped with dxc-bin.
+        set(LO_DXC_SO "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/lib/arm64/libdxcompiler.dylib")
+    else()
+        set(LO_DXC_SO "${CMAKE_SOURCE_DIR}/tools/XenosRecomp/thirdparty/dxc-bin/lib/x64/libdxcompiler.so")
+    endif()
+    get_filename_component(LO_DXC_SO_NAME "${LO_DXC_SO}" NAME)
     if(EXISTS "${LO_DXC_SO}")
         install(FILES "${LO_DXC_SO}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
     endif()
@@ -805,7 +815,7 @@ elseif(UNIX AND LO_BUILD_GPU)
         if(TARGET ${target} AND EXISTS "${LO_DXC_SO}")
             add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${LO_DXC_SO}" "$<TARGET_FILE_DIR:${target}>/libdxcompiler.so" VERBATIM)
+                    "${LO_DXC_SO}" "$<TARGET_FILE_DIR:${target}>/${LO_DXC_SO_NAME}" VERBATIM)
         endif()
     endforeach()
 endif()
