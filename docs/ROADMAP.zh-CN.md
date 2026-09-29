@@ -10,8 +10,8 @@ Issue、Project 字段和已合并提交于 2026-09-28 核对，发布记录于 
 - [x] **v0.7.1 已发布：**源码提交 `c585ef820cb72993ad87a90a1a03c1c648fb654c`，打标 `v0.7.1`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.1)（2026-09-26T21:51:24Z），Release CI [36274702691](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36274702691)。包含 Gameplay → 导入光盘与 DLC、安全重启至导入器、选择性替换与失败回滚。公开产物已核实 SHA256：Windows 包 `LostOdysseyRecomp-windows-x64-v0.7.1.zip`（243,762,106 字节，SHA256 `e53753a71b06ab39c41a3a5b327a8477523db4b006543c54e70834b183c5291f`），Linux AppImage `LostOdysseyRecomp-linux-x64-v0.7.1.AppImage`（251,038,200 字节，SHA256 `878d04f9a530771fc2ba752842c1c9b5ba1cfc3fea63555a401dd53b46dd6e65`），正式独立 Flatpak `LostOdysseyRecomp-linux-x64-v0.7.1.flatpak`（265,618,800 字节，SHA256 `2efe0a4ba556037f9118894b36cba4b7667132b708c9ec3ea325db9c16f71775`，stable 分支），以及 Flathub 输入 runtime `LostOdysseyRecomp-linux-x64-v0.7.1-flatpak-runtime.tar.xz`（SHA256 `661838345ca5e1590dce99e35a9dba2bc1138d073c1c76d947aec34ea4db931f`）。Flatpak 经验证获 psvita 用户验收（严格限制于该验证范围，不推断性能或多场景兼容性）。
 - [x] **v0.7.2 已发布：**merge 源码 `e2fc909dc15757aa5180566cecfd1ef2ff25dd18`，打标 `v0.7.2`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.2)（2026-09-27T08:59:13Z），Release CI [36305268629](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36305268629)。新增有界的 Windows D3D12 DLSS/FSR SR、DLAA 尺寸修正，以及原生物体运动不可用时的相机／深度 hybrid motion。10 个资产均与 GitHub SHA-256 和大小记录一致；Windows ZIP、AppImage sidecar 和 Flatpak CI 核验通过。更广场景、画质、性能和其他 GPU 覆盖不在本次发布证据范围内。
 - [x] **v0.7.9 已发布：**打标 `v0.7.9`，tag commit 为 `99fdcfa232e4deff2a80989d217524e7eb4bb365`，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.9)（2026-09-28T05:03:17Z），Release CI [36378342125](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36378342125)。新增 Windows D3D12 图像页 FG 分区，支持关／DLSS／FSR 和同进程即时生效，并加入 Ubuntu 22.04 AppImage 基线及 AppDir 复用 Flatpak。公开发布仅包含 Windows ZIP、Linux AppImage 和 stable Flatpak；更广游戏、跨 GPU、画质及物理显示验证仍待完成。
-- [x] **v0.7.15 已发布：**tag 与 Release CI head 均为 [`b074b689`](https://github.com/freefrank/LostOdysseyRecomp/commit/b074b689a3d2ffdbebabc1e14aad524d87e8c3ae)，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.15)（2026-09-29T00:26:14Z），Release CI [36500844014](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36500844014)。5 个 job 均成功，4 个公开资产已上传；独立 DX12 shader 资产复用 v0.7.10 资产。发布与包检查不等于完整游戏、跨 GPU、实体显示或完整玩家验收。
-- [x] **PR #80 已随 v0.7.15 发布：**合并提交 [`e79a793`](https://github.com/freefrank/LostOdysseyRecomp/commit/e79a793530412633bc57b6fbd9b43097023deb3c) 新增原生 90／120 FPS 目标和 FreeSync／G-SYNC Compatible VRR 输出节奏控制。PR 最终 8 项 CI 检查通过；同场景用户证据确认输出节奏低于 144，且 G-SYNC／刷新率发生变化。FG Off→On 后正常运行超过 20 秒，但正常退出曾发生 NGX 访问冲突；清理修复已通过构建，尚未重新进行前台验证。重启后的 FSR 启动未测试，更广游戏、退出生命周期和 FG 画质验收仍待完成。
+- [x] **v0.7.15 已发布并通过功能验收：**tag 与 Release CI head 均为 [`b074b689`](https://github.com/freefrank/LostOdysseyRecomp/commit/b074b689a3d2ffdbebabc1e14aad524d87e8c3ae)，[发布页](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.15)（2026-09-29T00:26:14Z），Release CI [36500844014](https://github.com/freefrank/LostOdysseyRecomp/actions/runs/36500844014)。5 个 job 均成功，4 个公开资产已上传；独立 DX12 shader 资产复用 v0.7.10 资产。维护者于 2026-09-29 确认本轮发布的全部功能通过验收。该验收限于已发布功能，不等于完整游戏、跨 GPU、实体显示或完整通关覆盖。
+- [x] **PR #80 已随 v0.7.15 发布：**合并提交 [`e79a793`](https://github.com/freefrank/LostOdysseyRecomp/commit/e79a793530412633bc57b6fbd9b43097023deb3c) 新增原生 90／120 FPS 目标和 FreeSync／G-SYNC Compatible VRR 输出节奏控制。PR 最终 8 项 CI 检查通过；同场景用户证据确认输出节奏低于 144，且 G-SYNC／刷新率发生变化。v0.7.15 已发布功能已获维护者验收；更广游戏、退出生命周期、画质和实体显示覆盖仍作为后续回归工作。
 
 ## 已完成功能与已核对跟踪项
 
@@ -28,7 +28,7 @@ Issue、Project 字段和已合并提交于 2026-09-28 核对，发布记录于 
 
 ## 当前工作
 
-- [~] **未关闭报告：**#49 物理像素窗口坐标、#64 DLSS/FSR 行为及 #67 Grand Staff 天空闪烁仍开放。已有尺寸恢复和诊断不代表这些报告已解决。
+- [~] **未关闭报告：**[#49](https://github.com/freefrank/LostOdysseyRecomp/issues/49) 物理像素窗口坐标和 [#74](https://github.com/freefrank/LostOdysseyRecomp/issues/74) 多队伍迷宫中的 Debug Save Anywhere 行为仍开放。Issue [#64](https://github.com/freefrank/LostOdysseyRecomp/issues/64)、[#67](https://github.com/freefrank/LostOdysseyRecomp/issues/67) 和 [#77](https://github.com/freefrank/LostOdysseyRecomp/issues/77) 已在 GitHub 关闭（2026-09-29 核对）；关闭和 v0.7.15 功能验收不等于完整通关或更广硬件、场景覆盖。
 - [~] **Issue #40 剩余 Mod 范围：**PS 提示、v1 框架与 Wiki 已交付；更广游戏纹理／模型接入、真实外部管理器集成仍待完成，Issue 保持开放。
 - [ ] **功能请求：**景深控制（#30）和晕动症选项（#48）。
 - [~] **原生运动与时序颜色：**几何／刚体／骨骼 replay 基础和已确认的 SDR 输入已实现，并有有界战斗与 Hybrid SR 证据。余项为未映射 draw、更广骨骼／场景覆盖、HDR／曝光和 D3D12 replay PSO 错误 `0x80070057`。
@@ -47,7 +47,7 @@ Issue、Project 字段和已合并提交于 2026-09-28 核对，发布记录于 
 4. [~] **独立 FSR 插帧后续：**独立 D3D12 FSR FG provider 已随 v0.7.9 交付；更广硬件、场景、节奏和画质验证仍待完成。
 5. [~] **D3D12 DLSS 插帧后续：**D3D12 DLSS FG 和图像菜单即时切换已随 v0.7.9 交付；更广验证和 failure injection 覆盖仍待完成。
 6. [~] **动态 MFG 后续：**D3D12 adapter 已包含受能力限制的诊断动态 MFG 路径，游戏内菜单仍只提供固定模式。更广 API、平台、倍率和硬件验证仍待完成。
-7. [~] **原生 90／120 FPS 与 VRR：**原生游戏呈现和 FreeSync／G-SYNC Compatible 输出节奏已随 v0.7.15 发布。同场景输出节奏和硬件指示器变化已有有界用户证据；Ring、音频、过场、更广游戏、退出生命周期、FG 画质和更广发布验证仍待完成，默认保留 60 FPS。
+7. [x] **原生 90／120 FPS 与 VRR：**原生游戏呈现和 FreeSync／G-SYNC Compatible 输出节奏已随 v0.7.15 发布，并获维护者验收。同场景输出节奏和硬件指示器变化已有有界用户证据；Ring、音频、过场、更广游戏、退出生命周期、FG 画质和独立 120 FPS 实体显示帧测量仍属后续覆盖，默认保留 30 FPS。
 8. [ ] **移除 PM4 转换器：**替代架构可行性提前调查，执行排在插帧与呈现工作之后。
 9. [ ] **Linux AArch64：**平台交付目标，尚不宣称官方包或实机验收。
 10. [ ] **macOS AArch64／Apple Silicon：**图形后端与依赖可行性提前调查，平台交付目标。
