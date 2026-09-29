@@ -1706,6 +1706,11 @@ namespace gpu::renderer
                 if (!device || !queue)
                     return InitFailure("device_or_queue");
                 cacheIdentity = xenos::cache::MakeIdentity(vulkan ? backend::Backend::Vulkan : backend::Backend::D3D12, xenos::DxcIdentity());
+                if (vulkan && !nativeVulkan) {
+                    // Metal re-optimizes translated MSL; see SetSpirvOptimizationLevel.
+                    xenos::SetSpirvOptimizationLevel(1);
+                    cacheIdentity.options = xenos::cache::MetalOptions();
+                }
 
                 // Optional collection resources are prepared before the game loop.
                 // Enabling collection later never compiles or maps on a draw; an

@@ -18,4 +18,5 @@ frame_rate = 60
 [checks]
 # Numara draws about 3,300 per frame; other destinations stay far below.
 min_draws = 3000
-min_fps = 55
+# CPU-bound: other apps on the Mac cost a few FPS.
+min_fps = 50

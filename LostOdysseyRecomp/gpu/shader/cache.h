@@ -32,6 +32,12 @@ inline std::string DefaultOptions(Backend backend) {
     }
     return {};
 }
+// Metal consumes the Vulkan SPIR-V contract compiled at -O1 (SetSpirvOptimizationLevel).
+inline std::string MetalOptions() {
+    auto options = DefaultOptions(Backend::Vulkan);
+    options.replace(options.find(";O3;"), 4, ";O1;");
+    return options;
+}
 inline Identity MakeIdentity(Backend backend, std::string_view compiler) {
     Identity result;
     result.backend = backend;

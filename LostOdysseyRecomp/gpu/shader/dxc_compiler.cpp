@@ -190,6 +190,8 @@ namespace xenos
         return {g_calls.load(), g_succeeded.load(), g_rejected.load(), g_infrastructureFailed.load()};
     }
 
+    static std::atomic<int> g_spirvOptimization{3};
+
     static CompiledShader CompileHlslImpl(const std::string& source, const char* entryPoint, const char* profile, ShaderBinaryFormat format, bool debugInfo)
     {
         CompiledShader result;
@@ -236,7 +238,7 @@ namespace xenos
         }
         else
         {
-            args.push_back(L"-O3");
+            args.push_back(format == ShaderBinaryFormat::Spirv && g_spirvOptimization.load() == 1 ? L"-O1" : L"-O3");
             args.push_back(L"-Qstrip_debug");
             if (format == ShaderBinaryFormat::Dxil) args.push_back(L"-Qstrip_reflect");
         }
@@ -318,6 +320,11 @@ namespace xenos
         return CompileHlsl(source, entry, profile, ShaderBinaryFormat::Dxil, debugInfo);
     }
 
+    void SetSpirvOptimizationLevel(int level)
+    {
+        g_spirvOptimization = level == 1 ? 1 : 3;
+    }
+
     CompiledShader CompileCachedHlsl(const std::string& source, const char* entry, const char* profile, ShaderBinaryFormat format)
     {
         const std::string key = source + '\0' + entry + '\0' + profile + "lo-dxc-vulkan12-dx-layout-v1";
@@ -325,6 +332,7 @@ namespace xenos
         for (uint8_t byte : key) { hash ^= byte; hash *= 0x100000001b3ull; }
         const bool spirv = format == ShaderBinaryFormat::Spirv;
         auto identity = cache::MakeIdentity(spirv ? cache::Backend::Vulkan : cache::Backend::D3D12, DxcIdentity());
+        if (spirv && g_spirvOptimization.load() == 1) identity.options = cache::MetalOptions();
         identity.variant = "builtin:" + std::to_string(std::strlen(entry)) + ":" + entry +
             ":" + std::to_string(std::strlen(profile)) + ":" + profile;
         const bool pixel = std::string_view(profile).starts_with("ps_");
