@@ -1,0 +1,5 @@
+description = "Boot, title screen and attract sequence without input"
+timeout = 90
+
+[checks]
+min_fps = 25

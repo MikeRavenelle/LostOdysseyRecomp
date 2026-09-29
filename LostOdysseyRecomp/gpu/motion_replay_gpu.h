@@ -1,4 +1,5 @@
 #pragma once
+#include "shader/target_format.h"
 #include "temporal_gpu_timing.h"
 #include "motion_vector.h"
 #include "motion_frame.h"
@@ -201,7 +202,7 @@ public:
     }
     bool Init(plume::RenderDevice* device, const plume::RenderDescriptorSetBuilder* originalSets, uint32_t setCount) {
         if (!device || !originalSets || (setCount != 4 && setCount != 5)) return false;
-        device_ = device; vulkan_ = device->getCapabilities().shaderFormat == plume::RenderShaderFormat::SPIRV;
+        device_ = device; vulkan_ = gpu::shader::UsesSpirv(device); // Metal consumes SPIR-V too.
         plume::RenderPipelineLayoutBuilder b; b.begin(false, false);
         if (vulkan_) b.addPushConstant(0, 0, 4 * sizeof(uint64_t), plume::RenderShaderStageFlag::VERTEX | plume::RenderShaderStageFlag::PIXEL);
         else for (unsigned i = 0; i < 4; ++i) b.addRootDescriptor(i, 0, plume::RenderRootDescriptorType::CONSTANT_BUFFER);

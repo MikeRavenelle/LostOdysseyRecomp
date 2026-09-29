@@ -1,0 +1,21 @@
+description = "City of Numara with camera TAA (motion vectors on Metal)"
+save = "user17"
+timeout = 150
+# After loading, five Downs move from Ipsilon Mountains - North to City of Numara.
+buttons = "s@300,d@600,a@900,a@1200,a@1500,d@1900,d@1960,d@2020,d@2080,d@2140,a@2300,a@2500,a@2700"
+
+[[step]]
+wait_draws = 700
+stick = [0, 28000]
+polls = 600
+hold_seconds = 20
+screenshot = true
+
+[checks]
+min_draws = 700
+# Camera TAA re-draws the scene for motion vectors: about 13 FPS on an M1 Pro.
+# The run guards correctness (an "mv:" init failure is an [error] line).
+min_fps = 10
+
+[settings]
+antialiasing = 3
