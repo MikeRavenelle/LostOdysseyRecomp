@@ -97,6 +97,14 @@ void RunDlcIoTest()
     install::SetTestDlcWriteFailure({}, {});
     Require(install::InstallContent(scan, destination).dlcImported.size() == 1, "retry after I/O failures did not succeed");
     Require(ReadBytes(installed / "payload.bin") == std::vector<uint8_t>({'d', 'a', 't', 'a'}), "installed payload changed");
+    // The runtime (kernel/dlc_content.cpp) ignores a DLC without these digests.
+    {
+        const auto bytes = ReadBytes(installed / ".lo-dlc.json");
+        const std::string manifest(bytes.begin(), bytes.end());
+        Require(manifest.find(R"("source_sha256": ")") != std::string::npos, "DLC manifest has no source digest");
+        Require(manifest.find(R"("sha256": "3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7")") != std::string::npos,
+                "DLC manifest payload digest is missing or wrong");
+    }
     // lexically_normal retains the final separator; scanning must still terminate.
     const auto trailingPath = installed / "";
     const auto extracted = install::ScanContent(trailingPath);
