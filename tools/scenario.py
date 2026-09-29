@@ -43,6 +43,8 @@ BUTTONS = {
 DRAWS_RE = re.compile(r"render timing frame=(\d+) draws=(\d+)")
 FRAME_MS_RE = re.compile(r"present timing completed=\d+ .*?frame_ms=([0-9.]+)")
 GPU_MS_RE = re.compile(r"gpu_queue_batches_elapsed_ms=([0-9.]+)")
+# One-second summaries (LO_FRAME_TIMING_SUMMARY=1): game time advanced per real second.
+GAME_TIME_RE = re.compile(r"frame timing completed=\d+ .*?game_time_ratio=([0-9.]+)")
 # Settings every run starts from, so results do not depend on the player's
 # settings.ini; a scenario's [settings] table overrides single keys.
 BASELINE_SETTINGS = {"frame_rate": 30, "internal_resolution": 0, "antialiasing": 0,
@@ -216,12 +218,15 @@ class Run:
         # The second half of the run: after loading, in the scene being checked.
         tail = frame_ms[len(frame_ms) // 2:]
         gpu_tail = gpu_ms[len(gpu_ms) // 2:]
+        game_time = [float(m.group(1)) for m in GAME_TIME_RE.finditer(text)]
+        game_tail = game_time[len(game_time) // 2:]
         min_draws = checks.get("min_draws", 0)
         result = {
             "scenario": self.s["name"], "description": self.s["description"], "save": self.s["save"],
             "elapsed_s": round(elapsed, 1), "exit_code": code, "ran_to_timeout": timed_out,
             "max_draws": max(draws, default=0), "median_fps": round(1000 / statistics.median(tail), 1) if tail else None,
             "median_gpu_ms": round(statistics.median(gpu_tail), 2) if gpu_tail else None,
+            "median_game_time_ratio": round(statistics.median(game_tail), 3) if game_tail else None,
             "screenshots": sorted(p.name for p in self.shots.glob("*.ppm")),
             "crash_reports": [str(p) for p in sorted(crashes)], "unfinished_steps": len(pending),
             "counts": {name: len(pattern.findall(text)) for name, pattern in FAILURES.items()},
@@ -242,6 +247,11 @@ class Run:
             failures.append(f"scene not reached: max draws {result['max_draws']} < {min_draws}")
         if checks.get("min_fps") and (result["median_fps"] or 0) < checks["min_fps"]:
             failures.append(f"median FPS {result['median_fps']} < {checks['min_fps']}")
+        if checks.get("game_time_ratio"):
+            low, high = checks["game_time_ratio"]
+            ratio = result["median_game_time_ratio"]
+            if ratio is None or not low <= ratio <= high:
+                failures.append(f"game time ratio {ratio} outside [{low}, {high}] (set LO_FRAME_TIMING_SUMMARY=1)")
         result["passed"] = not failures
         (self.dir / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result

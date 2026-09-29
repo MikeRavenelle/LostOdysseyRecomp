@@ -65,6 +65,8 @@ min_draws = 700      # the scene was reached
 compare_image = true # regression.py: compare the final screenshot with the baseline
 max_image_diff = 40  # regression.py: allowed mean difference (0-255)
 min_fps = 25         # median of the second half of the run
+game_time_ratio = [0.95, 1.05]  # game seconds per real second (needs
+                     # LO_FRAME_TIMING_SUMMARY=1 in [env]); catches game logic tied to the frame rate
 max_errors = 0       # [error] log lines allowed
 ```
 
