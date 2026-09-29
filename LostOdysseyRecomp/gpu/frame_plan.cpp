@@ -98,7 +98,7 @@ namespace gpu::frame_plan
         const auto output = upscaling::ResolveOutputRegion({uint32_t(extent >> 32), uint32_t(extent)});
         const auto device = video::BackendDeviceState();
         std::optional<upscaling::OutputSizing> sizing;
-        if ((config.upscaler == upscaling::Upscaler::Dlss || config.upscaler == upscaling::Upscaler::Fsr) && device.deviceReady)
+        if (config.upscaler != upscaling::Upscaler::Off && device.deviceReady)
             sizing = sizingCache.LookupOrRequestSizing({device.deviceEpoch, output.width, output.height,
                 config.upscaler, output.x, output.y});
         cpuPlan = planner.Begin({uint32_t(config.internalResolution), config.antialiasing, config.scalingQuality,

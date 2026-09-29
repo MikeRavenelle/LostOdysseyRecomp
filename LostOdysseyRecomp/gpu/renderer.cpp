@@ -82,6 +82,13 @@
 #ifdef _WIN32
 #include <plume_d3d12.h>
 #endif
+#if LO_PLATFORM_MACOS
+namespace plume {
+    // Orders the scene-copy SR command lists; plume resources are untracked on Metal.
+    void EncodeMetalQueueSignal(RenderCommandList* commandList);
+    void EncodeMetalQueueWait(RenderCommandList* commandList);
+}
+#endif
 #include "sampler_description.h"
 #include "dlss_ngx.h"
 #include "temporal_upscaler.h"
@@ -1761,7 +1768,7 @@ namespace gpu::renderer
                     auto& g = gpuSlots[i];
                     g.list = queue->createCommandList();
                     if (!g.list) return InitFailure("command_list.create", 0, i);
-                    if (dlssController) {
+                    if (dlssController || temporalUpscaler) {
                         g.srIsolated = queue->createCommandList();
                         g.srContinuation = queue->createCommandList();
                         if (!g.srIsolated || !g.srContinuation)
@@ -2175,8 +2182,11 @@ namespace gpu::renderer
                 scratch->guestWidth = scratch->width = std::max(1u, output.width);
                 scratch->guestHeight = scratch->height = std::max(1u, output.height);
                 scratch->resolutionSize = output;
+                // MetalFX writes its output as a render target.
+                const auto scratchFlags = RenderTextureFlag::STORAGE | RenderTextureFlag::UNORDERED_ACCESS |
+                    (activePlan.requestedUpscaler == upscaling::Upscaler::MetalFx ? RenderTextureFlag::RENDER_TARGET : RenderTextureFlag::NONE);
                 scratch->texture = device->createTexture(RenderTextureDesc::Texture2D(scratch->width, scratch->height, 1,
-                    scratch->format, RenderTextureFlag::STORAGE | RenderTextureFlag::UNORDERED_ACCESS));
+                    scratch->format, scratchFlags));
                 scratch->layout = RenderTextureLayout::UNKNOWN;
                 if (!scratch->texture) return nullptr;
                 return scratch;
@@ -2655,6 +2665,8 @@ namespace gpu::renderer
 #ifdef _WIN32
                     !vulkan ? controller.Prepare(*static_cast<plume::D3D12Device*>(device),
                         {activePlan, promotion.inputs, promotion.srOptions}) :
+#elif LO_PLATFORM_MACOS
+                    !nativeVulkan ? controller.Prepare(*device, {activePlan, promotion.inputs, promotion.srOptions}) :
 #endif
                     controller.Prepare(*static_cast<plume::VulkanDevice*>(device),
                     {activePlan, promotion.inputs, promotion.srOptions});
@@ -2677,6 +2689,11 @@ namespace gpu::renderer
 #endif
                 if (!sessionReady) {
                     if (evidence) { evidence->stage = "ensure_session"; evidence->reason = "session_unavailable"; }
+#if !defined(LO_RENDERER_P2_EMBEDDED_TEST)
+                    LOG_WARNING("renderer: SR prepare rejected frame={} provider={} status={} input={}x{} output={}x{}",
+                        frame, uint32_t(activePlan.requestedUpscaler), uint32_t(prepared.status),
+                        promotion.inputs.color.width, promotion.inputs.color.height, activePlan.output.width, activePlan.output.height);
+#endif
                     DisableDlssRequest(frame_plan::FailureReason::DlssUnavailable);
                     return false;
                 }
@@ -2689,7 +2706,7 @@ namespace gpu::renderer
                 std::vector<RenderTextureBarrier> barriers;
                 for (auto* image : {promotion.inputs.color.texture, promotion.inputs.depth.texture,
                                     promotion.inputs.motion.texture, promotion.inputs.motionInvalidity.texture})
-                    if (image) barriers.emplace_back(image, (!vulkan || activePlan.requestedUpscaler == upscaling::Upscaler::Fsr) ?
+                    if (image) barriers.emplace_back(image, (!nativeVulkan || activePlan.requestedUpscaler == upscaling::Upscaler::Fsr) ?
                         RenderTextureLayout::SHADER_READ : RenderTextureLayout::GENERAL);
                 barriers.emplace_back(promotion.scratch->texture.get(), activePlan.requestedUpscaler == upscaling::Upscaler::Fsr ?
                     RenderTextureLayout::COPY_DEST : RenderTextureLayout::GENERAL);
@@ -2716,6 +2733,9 @@ namespace gpu::renderer
                             RenderFormat::R32_FLOAT, depth.width, depth.height, 4, RenderTextureLayout::SHADER_READ);
                 }
                 Gpu().drawProbe.End(commandList);
+#if LO_PLATFORM_MACOS
+                if (!nativeVulkan) plume::EncodeMetalQueueSignal(commandList);
+#endif
                 if (!video::EndGpuCommands(commandList)) {
                     if (evidence) { evidence->stage = "prefix_end"; evidence->reason = "prefix_end_failed"; }
                     listOpen = false; return false;
@@ -2736,6 +2756,9 @@ namespace gpu::renderer
                     !vulkan ? controller.RecordIsolated(*static_cast<plume::D3D12CommandList*>(Gpu().srIsolated.get()),
                         {activePlan, promotion.inputs, promotion.srOptions},
                         *static_cast<plume::D3D12Texture*>(promotion.scratch->texture.get()), evidence.get()) :
+#elif LO_PLATFORM_MACOS
+                    !nativeVulkan ? controller.RecordIsolated(*Gpu().srIsolated,
+                        {activePlan, promotion.inputs, promotion.srOptions}, *promotion.scratch->texture, evidence.get()) :
 #endif
                     controller.RecordIsolated(*static_cast<plume::VulkanCommandList*>(Gpu().srIsolated.get()),
                     {activePlan, promotion.inputs, promotion.srOptions},
@@ -2798,6 +2821,9 @@ namespace gpu::renderer
                 }
                 Gpu().srIsolatedAccepted = accepted;
                 commandList = Gpu().srContinuation.get(); if (!video::BeginGpuCommands(commandList)) return false;
+#if LO_PLATFORM_MACOS
+                if (!nativeVulkan) plume::EncodeMetalQueueWait(commandList);
+#endif
 #if defined(LO_GPU_PLUME) && defined(_WIN32)
                 if (!vulkan) static_cast<plume::D3D12CommandList*>(commandList)->captureRootBindingStats = render_timing::Enabled();
 #endif
@@ -2826,8 +2852,12 @@ namespace gpu::renderer
                         // the normal continuation layouts restored. Keep the
                         // request alive; the next real FSR frame resets on a gap.
                         NoteDlssFrameFallback(frame_plan::DlssEffectReason::NoEligibleScene);
-                    } else
+                    } else {
+                        LOG_WARNING("renderer: SR record rejected frame={} provider={} input={}x{} output={}x{}",
+                            frame, uint32_t(activePlan.requestedUpscaler), promotion.inputs.color.width,
+                            promotion.inputs.color.height, activePlan.output.width, activePlan.output.height);
                         DisableDlssRequest(frame_plan::FailureReason::DlssUnavailable);
+                    }
                     return false;
                 }
                 Transition(*promotion.active, RenderTextureLayout::SHADER_READ, RenderBarrierStage::GRAPHICS);
@@ -7432,7 +7462,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 bool scenePromotionActivated = false;
                 if (dlssSrRequested && dlssSceneCopyInputs && fullSceneCopy && !depth
 #if defined(LO_GPU_PLUME)
-                    && dlssController
+                    && (dlssController || temporalUpscaler)
 #else
                     && false
 #endif

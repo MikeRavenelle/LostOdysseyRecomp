@@ -1,5 +1,5 @@
 diff --git a/plume_metal.cpp b/plume_metal.cpp
-index 373c87e..394f774 100644
+index 373c87e..343f717 100644
 --- a/plume_metal.cpp
 +++ b/plume_metal.cpp
 @@ -8,14 +8,22 @@
@@ -354,7 +354,7 @@ index 373c87e..394f774 100644
      }
  
      std::unique_ptr<RenderSampler> MetalDevice::createSampler(const RenderSamplerDesc &desc) {
-@@ -4222,6 +4443,73 @@ namespace plume {
+@@ -4222,6 +4443,108 @@ namespace plume {
  
      // Global creation function.
  
@@ -419,6 +419,41 @@ index 373c87e..394f774 100644
 +        cache.scaler->setInputContentHeight(std::min<NS::UInteger>(inputHeight, color->height()));
 +        cache.scaler->encodeToCommandBuffer(list->mtl);
 +        return true;
++    }
++
++    // plume resources are untracked, so a later command buffer on the queue can
++    // overlap an earlier one. These order whole command lists of one submission
++    // with a queue event: a list signals the next value, the following list waits
++    // for the latest signalled value before its first encoder.
++    static MTL::Event *queueOrderEvent = nullptr;
++    static uint64_t queueOrderValue = 0;
++
++    static MTL::Event *QueueOrderEvent(MetalCommandList *list) {
++        if (queueOrderEvent == nullptr) {
++            queueOrderEvent = list->device->mtl->newEvent();
++            queueOrderEvent->setLabel(MTLSTR("Queue Order Event"));
++        }
++        return queueOrderEvent;
++    }
++
++    void EncodeMetalQueueSignal(RenderCommandList *commandList) {
++        auto *list = static_cast<MetalCommandList *>(commandList);
++        list->endOtherEncoders(EncoderType::None);
++        list->activeType = EncoderType::None;
++        list->mtl->encodeSignalEvent(QueueOrderEvent(list), ++queueOrderValue);
++    }
++
++    void EncodeMetalQueueWait(RenderCommandList *commandList) {
++        auto *list = static_cast<MetalCommandList *>(commandList);
++        list->endOtherEncoders(EncoderType::None);
++        list->activeType = EncoderType::None;
++        list->mtl->encodeWait(QueueOrderEvent(list), queueOrderValue);
++    }
++
++    bool SupportsMetalFxTemporal(RenderDevice *device) {
++        auto *metalDevice = static_cast<MetalDevice *>(device);
++        return metalDevice != nullptr && metalDevice->mtl != nullptr &&
++            MTLFX::TemporalScalerDescriptor::supportsDevice(metalDevice->mtl);
 +    }
 +
 +    void SetMetalMinimumPresentDuration(RenderSwapChain *swapChain, double seconds) {

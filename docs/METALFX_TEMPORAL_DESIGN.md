@@ -1,6 +1,18 @@
 # MetalFX Temporal: design
 
-Status: design, 2026-09-29. Nothing below is implemented yet.
+Status, 2026-09-29: phase 1 done. Upscaler setting 3 (`upscaler=3`, quality from
+`fsr_quality`) runs the scene-copy promotion on Metal with MetalFX Spatial as a
+stand-in provider. Two Metal-specific requirements surfaced:
+
+- The provider opens and closes the isolated command list itself (as NGX and FSR
+  do).
+- plume's resources are untracked, so the prefix, isolated and continuation
+  command buffers can overlap on the GPU. `EncodeMetalQueueSignal` /
+  `EncodeMetalQueueWait` (plume patch) order them with a queue event; without
+  this the composite read the scratch target before MetalFX wrote it (black scene).
+
+The stand-in output is harsher than native 1440p (sharpening, banding in the sky
+from the 8-bit input); colour is checked again with the temporal scaler.
 
 ## Goal
 

@@ -71,6 +71,7 @@ namespace plume {
     void SetMetalMinimumPresentDuration(RenderSwapChain* swapChain, double seconds);
     bool EncodeMetalFxSpatialScale(RenderCommandList* commandList, const RenderTexture* input,
         const RenderTexture* output, uint32_t inputWidth, uint32_t inputHeight);
+    bool SupportsMetalFxTemporal(RenderDevice* device);
 }
 #endif
 #if !defined(LO_VIDEO_SUBMISSION_UNIT)
@@ -915,6 +916,11 @@ namespace gpu::video
                 g_dlssController->Report().state == dlss::ProbeState::Available;
             snapshot.fsrAvailable = snapshot.deviceReady &&
                 (vulkan ? LO_HAS_FSR : LO_HAS_FSR_D3D12);
+#if LO_PLATFORM_MACOS
+            snapshot.fsrAvailable = false;
+            snapshot.metalFxAvailable = snapshot.deviceReady && g_temporalUpscaler &&
+                snapshot.backend == backend::Backend::Metal && plume::SupportsMetalFxTemporal(g_device.get());
+#endif
             snapshot.gpuWorkStopped = g_submissionState.Stopped();
 #elif defined(LO_GPU_PLUME)
             snapshot.deviceReady = false;
@@ -1280,6 +1286,9 @@ namespace gpu::video
 #ifdef _WIN32
         else
             frame_plan::PublishSizing(g_temporalUpscaler->QuerySizing(*static_cast<plume::D3D12Device*>(g_device.get()), *key));
+#elif LO_PLATFORM_MACOS
+        else
+            frame_plan::PublishSizing(g_temporalUpscaler->QuerySizing(*g_device, *key));
 #endif
         PublishOwnedDeviceCapability();
     }
@@ -1575,8 +1584,9 @@ namespace gpu::video
                 g_interface = plume::CreateD3D12Interface();
             }
 #elif LO_PLATFORM_MACOS
-            // NGX/FSR are D3D12/Vulkan only: no DLSS controller or upscaler on Metal.
+            // NGX/FSR are D3D12/Vulkan only; on Metal the upscaler records MetalFX.
             g_metal.store(candidate == backend::Backend::Metal);
+            g_temporalUpscaler = std::make_unique<TemporalUpscaler>(static_cast<dlss::Controller*>(nullptr));
             g_interface = plume::CreateMetalInterface();
 #else
             g_dlssController = std::make_unique<dlss::Controller>(DlssApplicationDataPath(), DlssRuntimePath());

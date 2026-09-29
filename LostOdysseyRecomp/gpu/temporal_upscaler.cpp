@@ -4,7 +4,18 @@
 #include "dlss_ngx.h"
 #include "fsr_upscaler.h"
 #include "fsr_projection.h"
+#include <algorithm>
 #include <cfloat>
+
+#if LO_PLATFORM_MACOS
+namespace plume {
+    struct RenderCommandList; struct RenderTexture;
+    bool EncodeMetalFxSpatialScale(RenderCommandList* commandList, const RenderTexture* input,
+        const RenderTexture* output, uint32_t inputWidth, uint32_t inputHeight);
+    void EncodeMetalQueueSignal(RenderCommandList* commandList);
+    void EncodeMetalQueueWait(RenderCommandList* commandList);
+}
+#endif
 
 namespace gpu {
 namespace {
@@ -66,13 +77,15 @@ dlss::SrConfig DlssConfig(const SrRequest& request) {
 }
 
 TemporalUpscaler::TemporalUpscaler(dlss::Controller& controller)
+    : TemporalUpscaler(&controller) {}
+TemporalUpscaler::TemporalUpscaler(dlss::Controller* controller)
     : dlss_(controller), fsr_(std::make_unique<fsr::Controller>()) {}
 TemporalUpscaler::~TemporalUpscaler() = default;
 
 upscaling::OutputSizing TemporalUpscaler::QuerySizing(const plume::VulkanInterface& api,
     const plume::VulkanDevice& device, const upscaling::SizingKey& key) {
-    if (CanQueryNgxSizing(key))
-        return dlss_.QueryOutputSizing(api, device, key);
+    if (CanQueryNgxSizing(key) && dlss_)
+        return dlss_->QueryOutputSizing(api, device, key);
     upscaling::OutputSizing unavailable{};
     unavailable.key = key;
     for (uint32_t i = 0; i < unavailable.modes.size(); ++i) {
@@ -99,7 +112,7 @@ SrResult TemporalUpscaler::Prepare(plume::VulkanDevice& device, const SrRequest&
         return result;
     }
     result.actualProvider = upscaling::Upscaler::Dlss;
-    result.status = Convert(dlss_.EnsureSession(device));
+    result.status = dlss_ ? Convert(dlss_->EnsureSession(device)) : SrResultStatus::Unavailable;
     return result;
 }
 
@@ -119,7 +132,8 @@ SrResult TemporalUpscaler::RecordIsolated(plume::VulkanCommandList& commands,
             attempt.useId, request.plan.requestSignature, request.plan.geometryEpoch};
         return result;
     }
-    const auto attempt = dlss_.RecordIsolated(commands, DlssConfig(request), request.inputs, output, capture);
+    if (!dlss_) return result;
+    const auto attempt = dlss_->RecordIsolated(commands, DlssConfig(request), request.inputs, output, capture);
     result.actualProvider = upscaling::Upscaler::Dlss;
     result.status = Convert(attempt.status);
     result.rawResult = attempt.rawNgxResult;
@@ -131,8 +145,8 @@ SrResult TemporalUpscaler::RecordIsolated(plume::VulkanCommandList& commands,
 
 #ifdef _WIN32
 upscaling::OutputSizing TemporalUpscaler::QuerySizing(const plume::D3D12Device& device, const upscaling::SizingKey& key) {
-    if (CanQueryNgxSizing(key))
-        return dlss_.QueryOutputSizing(device, key);
+    if (CanQueryNgxSizing(key) && dlss_)
+        return dlss_->QueryOutputSizing(device, key);
     upscaling::OutputSizing unavailable{};
     unavailable.key = key;
     for (uint32_t i = 0; i < unavailable.modes.size(); ++i) {
@@ -159,7 +173,7 @@ SrResult TemporalUpscaler::Prepare(plume::D3D12Device& device, const SrRequest& 
         return result;
     }
     result.actualProvider = upscaling::Upscaler::Dlss;
-    result.status = Convert(dlss_.EnsureSession(device));
+    result.status = dlss_ ? Convert(dlss_->EnsureSession(device)) : SrResultStatus::Unavailable;
     return result;
 }
 
@@ -179,7 +193,8 @@ SrResult TemporalUpscaler::RecordIsolated(plume::D3D12CommandList& commands,
             attempt.useId, request.plan.requestSignature, request.plan.geometryEpoch};
         return result;
     }
-    const auto attempt = dlss_.RecordIsolated(commands, DlssConfig(request), request.inputs, output, capture);
+    if (!dlss_) return result;
+    const auto attempt = dlss_->RecordIsolated(commands, DlssConfig(request), request.inputs, output, capture);
     result.actualProvider = upscaling::Upscaler::Dlss;
     result.status = Convert(attempt.status);
     result.rawResult = attempt.rawNgxResult;
@@ -191,19 +206,70 @@ SrResult TemporalUpscaler::RecordIsolated(plume::D3D12CommandList& commands,
 
 #endif
 
+#if LO_PLATFORM_MACOS
+// MetalFX has no fixed quality modes; the FSR ratios pick the render extent.
+upscaling::OutputSizing TemporalUpscaler::QuerySizing(const plume::RenderDevice&, const upscaling::SizingKey& key) {
+    upscaling::OutputSizing sizing{};
+    sizing.key = key;
+    for (uint32_t i = 0; i < sizing.modes.size(); ++i) {
+        auto& mode = sizing.modes[i];
+        mode.state = upscaling::SizingState::Unavailable;
+        if (key.provider != upscaling::Upscaler::MetalFx || !key.outputWidth || !key.outputHeight) continue;
+        static constexpr double kRatio[] = {1.5, 1.7, 2.0, 1.0};
+        const resolution::Size size{std::max(1u, uint32_t(key.outputWidth / kRatio[i] + 0.5)),
+            std::max(1u, uint32_t(key.outputHeight / kRatio[i] + 0.5))};
+        mode.state = upscaling::SizingState::Ready;
+        mode.optimal = mode.minimum = mode.maximum = size;
+    }
+    return sizing;
+}
+
+SrResult TemporalUpscaler::Prepare(plume::RenderDevice&, const SrRequest& request) {
+    SrResult result{};
+    result.requestedProvider = request.plan.requestedUpscaler;
+    if (!ValidSrRequest(request) || request.plan.requestedUpscaler != upscaling::Upscaler::MetalFx) return result;
+    result.actualProvider = upscaling::Upscaler::MetalFx;
+    result.status = SrResultStatus::Ready;
+    return result;
+}
+
+SrResult TemporalUpscaler::RecordIsolated(plume::RenderCommandList& commands, const SrRequest& request,
+    plume::RenderTexture& output, dlss::EvaluateCapture*) {
+    SrResult result{};
+    result.requestedProvider = request.plan.requestedUpscaler;
+    if (!ValidSrRequest(request) || request.plan.requestedUpscaler != upscaling::Upscaler::MetalFx) return result;
+    result.actualProvider = upscaling::Upscaler::MetalFx;
+    // The isolated list is the provider's own: open it, record, close it.
+    // Phase 1 stand-in: spatial scaling proves the promotion path on Metal.
+    const auto& color = request.inputs.color;
+    // The renderer's prefix list signalled; its continuation waits for ours.
+    commands.begin();
+    plume::EncodeMetalQueueWait(&commands);
+    const bool encoded = plume::EncodeMetalFxSpatialScale(&commands, color.texture, &output, color.width, color.height);
+    if (encoded) plume::EncodeMetalQueueSignal(&commands);
+    commands.end();
+    result.status = encoded ? SrResultStatus::Ready : SrResultStatus::Failed;
+    return result;
+}
+#endif
+
 void TemporalUpscaler::OnSubmitted(SrUseToken token, uint64_t checkedSerial) {
-    RouteSubmitted(token, checkedSerial, dlss_);
+    if (dlss_) RouteSubmitted(token, checkedSerial, *dlss_);
     if (token.provider == upscaling::Upscaler::Fsr && token.useId && checkedSerial) fsr_->OnBatchSubmitted(token.useId, checkedSerial);
 }
 void TemporalUpscaler::OnDiscarded(SrUseToken token) {
-    RouteDiscarded(token, dlss_);
+    if (dlss_) RouteDiscarded(token, *dlss_);
     if (token.provider == upscaling::Upscaler::Fsr && token.useId) fsr_->OnBatchDiscarded(token.useId);
 }
-void TemporalUpscaler::ReleaseCompleted(uint64_t serial) { if (serial) { dlss_.ReleaseCompletedThrough(serial); fsr_->ReleaseCompletedThrough(serial); } }
-bool TemporalUpscaler::HasFeatureState() const { return dlss_.HasFeatureState() || fsr_->HasFeatureState(); }
-void TemporalUpscaler::ReleaseFeatureAfterGpuDrain() { dlss_.ReleaseFeatureAfterGpuDrain(); fsr_->ReleaseFeatureAfterGpuDrain(); }
-void TemporalUpscaler::ShutdownAfterGpuDrain() { dlss_.ShutdownAfterGpuDrain(); fsr_->ShutdownAfterGpuDrain(); }
-bool TemporalUpscaler::ShutdownComplete() const { return dlss_.ShutdownComplete() && !fsr_->HasFeatureState(); }
-void TemporalUpscaler::AbandonAfterDeviceLoss() { dlss_.AbandonUsesAfterDeviceLoss(); fsr_->AbandonUsesAfterDeviceLoss(); }
+void TemporalUpscaler::ReleaseCompleted(uint64_t serial) {
+    if (!serial) return;
+    if (dlss_) dlss_->ReleaseCompletedThrough(serial);
+    fsr_->ReleaseCompletedThrough(serial);
+}
+bool TemporalUpscaler::HasFeatureState() const { return (dlss_ && dlss_->HasFeatureState()) || fsr_->HasFeatureState(); }
+void TemporalUpscaler::ReleaseFeatureAfterGpuDrain() { if (dlss_) dlss_->ReleaseFeatureAfterGpuDrain(); fsr_->ReleaseFeatureAfterGpuDrain(); }
+void TemporalUpscaler::ShutdownAfterGpuDrain() { if (dlss_) dlss_->ShutdownAfterGpuDrain(); fsr_->ShutdownAfterGpuDrain(); }
+bool TemporalUpscaler::ShutdownComplete() const { return (!dlss_ || dlss_->ShutdownComplete()) && !fsr_->HasFeatureState(); }
+void TemporalUpscaler::AbandonAfterDeviceLoss() { if (dlss_) dlss_->AbandonUsesAfterDeviceLoss(); fsr_->AbandonUsesAfterDeviceLoss(); }
 } // namespace gpu
 #endif
