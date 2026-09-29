@@ -101,8 +101,9 @@ depth-borrowing experiment on Metal was.
 - Memoryless or `DontCare` load/store actions on transient targets (depth that is
   never read back).
 - Argument buffer reuse across draws with identical bindings.
-- MetalFX spatial/temporal upscaling behind the existing upscaler interface, once
-  rendering is correct.
+- MetalFX Temporal behind the existing upscaler interface (spatial is done). Design
+  and measured gain (720p -> 1440p: ~50 FPS vs 33 native in Numara):
+  [METALFX_TEMPORAL_DESIGN.md](METALFX_TEMPORAL_DESIGN.md).
 
 ## Frame pacing and audio (all platforms)
 
