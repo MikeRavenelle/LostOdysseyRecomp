@@ -16,6 +16,9 @@ Windows x64 · Direct3D 12 · Vulkan · PowerPC 静态重编译
 
 </div>
 
+> [!NOTE]
+> **此分支在 [freefrank/LostOdysseyRecomp](https://github.com/freefrank/LostOdysseyRecomp) 的基础上加入了 Apple Silicon macOS（Metal）原生支持。** `arm64-macos` 分支跟随上游（目前为 v0.7.15）；macOS 说明见[英文 README](README.md#macos-apple-silicon-experimental-build-from-source)。下载与 Windows/Linux 支持属于上游项目。
+
 > [!IMPORTANT]
 > **本项目仍处于早期测试阶段。** 已测试开场区域和部分场景，尚未通关。渲染和稳定性仍有问题。请自行提供受支持版本的游戏文件。
 

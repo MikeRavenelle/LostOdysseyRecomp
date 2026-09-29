@@ -16,6 +16,9 @@ Optional diagnostics are off by default and can be disabled in Settings. See [Pr
 
 </div>
 
+> [!NOTE]
+> **This fork adds native macOS on Apple Silicon (Metal)** to [freefrank/LostOdysseyRecomp](https://github.com/freefrank/LostOdysseyRecomp). The `arm64-macos` branch follows upstream (currently v0.7.15); see [macOS](#macos-apple-silicon-experimental-build-from-source) below. Downloads, Windows/Linux support and the links above belong to the upstream project; report macOS-specific problems on this fork.
+
 > [!IMPORTANT]
 > **This project is still in early testing.** Opening areas and selected scenes have been tested; a complete playthrough has not. Rendering and stability issues remain. You must supply your own supported game files.
 
@@ -52,14 +55,27 @@ See the [roadmap](docs/ROADMAP.md) for current plans and the [changelog](CHANGEL
 - **AppImage**: Download `LostOdysseyRecomp-linux-x64-v0.7.15.AppImage`, make it executable (`chmod +x`), and run directly.
 
 ### macOS (Apple Silicon, experimental; build from source)
-There is no macOS release package yet. The `arm64-macos` branch builds a native arm64 runtime that renders through Metal; see [Building on macOS](docs/BUILDING.md#building-on-macos). Boot, title screen, menus, cutscenes and battles have been reached on an M1 Pro (macOS 27); a full playthrough has not. Known limitations:
 
-- Xenos rectangle-list draws currently render only their first triangle (Metal has no geometry shaders).
-- DLSS, FSR and frame generation are unavailable; the upscaler setting is Off.
-- The first launch prepares about 28,000 shaders (a few minutes); later launches start in under a second.
-- The auto-updater is not available on macOS.
+There is no macOS release package yet; build from source with [Building on macOS](docs/BUILDING.md#building-on-macos). The runtime is native arm64 and renders through Metal (plume with SPIRV-Cross).
 
-`tools/package_macos.py` can wrap a local build as an ad-hoc signed `.app` (runs on the building Mac only; no notarization).
+Current state on an M1 Pro (macOS 27):
+
+- Title, menus, cutscenes, battles, fields and cities play; saves from discs 1, 2 and 4 and the *Seeker of the Deep!* DLC dungeon load, with automatic disc switching.
+- About 30 FPS at the default 720p render resolution.
+- A full playthrough has not been done yet.
+
+Known limitations:
+
+- DLSS, FSR and frame generation are not available (MetalFX is planned).
+- The FreeSync / G-SYNC Compatible option is not adapted to ProMotion yet.
+- The first launch compiles about 28,500 shaders (about 5 minutes on an M1 Pro); later launches start in under a second.
+- No auto-updater. `tools/package_macos.py` wraps a local build as an ad-hoc signed `.app` that runs on the building Mac only.
+
+Notes:
+
+- **Output resolution** is the window size in points. **Render resolution → Native (Retina)** renders every display pixel, about 4× the work of *Follow output*.
+- DLC: run the game with `--install` and choose the folder with your DLC packages. Xenia save folders convert with `tools/import_xenia_saves.py`.
+- x86-64 and AArch64 differences handled by the port are listed in [ARM64 notes](docs/ARM64_NOTES.md).
 
 No Python or Visual Studio installation is needed for the release package. Later launches reuse the shader cache. Keep your save and profile folders when updating.
 
@@ -68,7 +84,7 @@ The current branch updater checks GitHub's latest Release: a higher numeric vers
 | Requirement | Supported configuration |
 | :--- | :--- |
 | System | Windows x64, AVX-capable CPU, Direct3D 12 or Vulkan graphics driver |
-| System (experimental) | macOS 14+ on Apple Silicon (tested on an M1 Pro, macOS 27), Metal |
+| System (experimental, this fork) | macOS 14+ on Apple Silicon (tested on an M1 Pro, macOS 27), Metal |
 | Game data | Audited Europe, Asia or USA, Europe edition; Disc 1 is required to start |
 | Additional discs | Import additional discs or DLC from the built-in importer in `LostOdysseyRecomp.exe`; later-disc progression is not fully verified |
 
