@@ -7,6 +7,12 @@ include(GNUInstallDirs)
 # Source version, not a release/commit or clean-checkout assertion.
 # Capture before nested projects can replace PROJECT_VERSION in their scope.
 set(LO_SOURCE_VERSION "${PROJECT_VERSION}")
+# Pre-release suffix for builds released outside upstream, e.g. "macos.1" for the
+# fork's macOS releases (tag v0.7.20-macos.1); the updater compares it too.
+set(LO_VERSION_SUFFIX "" CACHE STRING "Suffix appended to the source version as -<suffix>")
+if(LO_VERSION_SUFFIX)
+    string(APPEND LO_SOURCE_VERSION "-${LO_VERSION_SUFFIX}")
+endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

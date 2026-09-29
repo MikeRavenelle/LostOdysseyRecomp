@@ -69,7 +69,7 @@ Known limitations:
 - DLSS, FSR and frame generation are not available. **Anti-aliasing / Upscaling → MetalFX Temporal** is Apple's temporal upscaler in their place; **Scaling filter → MetalFX** is the spatial one.
 - Busy cities reach about 55 FPS at 720p on an M1 Pro (GPU and renderer thread both near their limit), so the 90/120 FPS targets are not reached there yet.
 - The first launch compiles about 28,500 shaders (about 5 minutes on an M1 Pro); later launches start in under a second.
-- No auto-updater. `tools/package_macos.py` wraps a local build as an ad-hoc signed `.app` that runs on the building Mac only.
+- Releases are signed and notarized `.app` bundles published on this fork (see [macOS releases](docs/MACOS_RELEASE.md)); the app checks this fork for a newer release and opens its download page, but does not replace itself.
 
 Notes:
 

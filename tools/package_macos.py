@@ -1,4 +1,14 @@
-"""Package the macOS runtime as an ad-hoc signed .app bundle in a ZIP."""
+"""Package the macOS runtime as a signed .app bundle in a ZIP.
+
+Without --identity the bundle is ad-hoc signed and runs on the building Mac.
+With a Developer ID identity it is signed with the hardened runtime, and
+--notarize submits it to Apple, staples the ticket and re-verifies it, so the
+ZIP opens without Gatekeeper warnings on any Mac. See docs/MACOS_RELEASE.md.
+
+  python3 tools/package_macos.py                                   # local, ad-hoc
+  python3 tools/package_macos.py --release \
+      --identity "Developer ID Application: Name (TEAMID)" --notarize lo-notary
+"""
 import argparse
 import plistlib
 import shutil
@@ -8,7 +18,8 @@ from pathlib import Path
 from portable_shader_pack_payload import stage_portable_shader_pack
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE_ID = "io.github.freefrank.LostOdysseyRecomp"
+# The fork's own identifier: macOS releases are built and signed by the fork.
+BUNDLE_ID = "io.github.mikeravenelle.LostOdysseyRecomp"
 ICON = ROOT / "packaging/linux/io.github.freefrank.LostOdysseyRecomp.png"
 MINIMUM_MACOS = "14.0"
 
@@ -24,9 +35,12 @@ def source_version(build):
     return stamp.read_text(encoding="utf-8").strip()
 
 
-def asset_tag(version, requested):
+def asset_tag(version, requested, release):
     if requested:
         return requested
+    if release:
+        # The updater looks for LostOdysseyRecomp-macos-arm64-<release tag>.zip.
+        return f"v{version}"
     return f"v{version}-{git('rev-parse', 'HEAD')[:8]}-dev"
 
 
@@ -80,12 +94,29 @@ def stage_licenses(licenses):
     shutil.copy2(ROOT / "thirdparty/SPIRV-Cross/LICENSE", licenses / "SPIRV-Cross-LICENSE.txt")
 
 
-def sign(bundle):
-    """Ad-hoc sign: Apple Silicon requires a signature, and copying invalidates none."""
-    subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none",
-                    str(bundle / "Contents/MacOS/libdxcompiler.dylib")], check=True)
-    subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(bundle)], check=True)
-    subprocess.run(["codesign", "--verify", "--strict", str(bundle)], check=True)
+def sign(bundle, identity):
+    """Sign the bundle, nested code first. A Developer ID signature uses the hardened
+    runtime and a secure timestamp, which notarization requires; ad-hoc ("-") runs on
+    this Mac only (Apple Silicon requires some signature)."""
+    common = ["codesign", "--force", "--sign", identity or "-"]
+    if identity:
+        common += ["--options", "runtime", "--timestamp"]
+    else:
+        common += ["--timestamp=none"]
+    subprocess.run(common + [str(bundle / "Contents/MacOS/libdxcompiler.dylib")], check=True)
+    subprocess.run(common + [str(bundle)], check=True)
+    subprocess.run(["codesign", "--verify", "--strict", "--deep", str(bundle)], check=True)
+
+
+def notarize(bundle, profile, temporary):
+    """Submit to Apple's notary service, staple the ticket to the app and check Gatekeeper."""
+    upload = Path(temporary) / "notarize.zip"
+    subprocess.run(["ditto", "-c", "-k", "--keepParent", str(bundle), str(upload)], check=True)
+    subprocess.run(["xcrun", "notarytool", "submit", str(upload), "--keychain-profile", profile, "--wait"],
+                   check=True)
+    subprocess.run(["xcrun", "stapler", "staple", str(bundle)], check=True)
+    subprocess.run(["xcrun", "stapler", "validate", str(bundle)], check=True)
+    subprocess.run(["spctl", "--assess", "--type", "execute", "--verbose", str(bundle)], check=True)
 
 
 def main():
@@ -94,6 +125,12 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "out/releases")
     parser.add_argument("--version", default="")
     parser.add_argument("--dry-layout", action="store_true", help="Create and list the bundle without zipping")
+    parser.add_argument("--release", action="store_true",
+                        help="Name the asset v<version> (the updater's name) instead of a -dev build")
+    parser.add_argument("--identity", default="",
+                        help='codesign identity, e.g. "Developer ID Application: Name (TEAMID)"; default ad-hoc')
+    parser.add_argument("--notarize", default="", metavar="PROFILE",
+                        help="notarytool keychain profile (xcrun notarytool store-credentials PROFILE ...)")
     args = parser.parse_args()
     build = args.build.resolve()
     runtime = build / "LostOdysseyRecomp/LostOdysseyRecomp"
@@ -102,7 +139,11 @@ def main():
         if not path.is_file():
             raise SystemExit(f"Missing macOS build artifact: {path}")
     version = source_version(build)
-    tag = asset_tag(version, args.version)
+    if args.notarize and not args.identity:
+        raise SystemExit("--notarize needs --identity (a Developer ID Application certificate).")
+    if args.release and not args.identity:
+        raise SystemExit("--release needs --identity: release ZIPs must be Developer ID signed and notarized.")
+    tag = asset_tag(version, args.version, args.release)
     name = f"LostOdysseyRecomp-macos-arm64-{tag}"
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -121,7 +162,9 @@ def main():
         licenses = resources / "licenses"
         stage_licenses(licenses)
         stage_portable_shader_pack(runtime.parent, executables, licenses)
-        sign(bundle)
+        sign(bundle, args.identity)
+        if args.notarize:
+            notarize(bundle, args.notarize, temporary)
         if args.dry_layout:
             print(f"Bundle: {bundle}")
             for path in sorted(bundle.rglob("*")):

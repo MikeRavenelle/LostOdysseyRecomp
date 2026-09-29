@@ -247,7 +247,7 @@ int main(int argc, char* argv[])
     }
     os::diagnostics::LogStartupEnvironment();
 
-#if defined(_WIN32) || defined(__linux__)
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
     // Check for a newer runtime before opening the content importer or setup.
     if (!getenv("LO_HEADLESS") && !getenv("LO_BACKGROUND"))
     {

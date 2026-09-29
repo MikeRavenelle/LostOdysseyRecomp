@@ -44,6 +44,9 @@ namespace xenos
         HMODULE g_module = nullptr;
 #else
         void* g_module = nullptr;
+        // The last dlopen error, reported with "not available" (e.g. a code
+        // signature rejected by the hardened runtime's library validation).
+        std::string g_loadError;
 #endif
         std::atomic<uint64_t> g_calls{0}, g_succeeded{0}, g_rejected{0}, g_infrastructureFailed{0};
         std::once_flag g_loadOnce;
@@ -134,6 +137,8 @@ namespace xenos
                 if (candidate.empty())
                     continue;
                 module = dlopen(candidate.c_str(), RTLD_NOW | RTLD_LOCAL);
+                if (!module)
+                    if (const char* error = dlerror()) g_loadError = error;
                 if (module)
                 {
                     auto proc = reinterpret_cast<DxcCreateInstanceProc>(dlsym(module, "DxcCreateInstance"));
@@ -201,7 +206,7 @@ namespace xenos
 #ifdef _WIN32
             result.errors = "dxcompiler.dll not available";
 #else
-            result.errors = "dxcompiler library not available";
+            result.errors = "dxcompiler library not available" + (g_loadError.empty() ? "" : ": " + g_loadError);
 #endif
             return result;
         }
