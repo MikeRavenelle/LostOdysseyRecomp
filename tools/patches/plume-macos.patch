@@ -1,5 +1,5 @@
 diff --git a/plume_metal.cpp b/plume_metal.cpp
-index 373c87e..343f717 100644
+index 373c87e..4de6e41 100644
 --- a/plume_metal.cpp
 +++ b/plume_metal.cpp
 @@ -8,14 +8,22 @@
@@ -354,7 +354,7 @@ index 373c87e..343f717 100644
      }
  
      std::unique_ptr<RenderSampler> MetalDevice::createSampler(const RenderSamplerDesc &desc) {
-@@ -4222,6 +4443,108 @@ namespace plume {
+@@ -4222,6 +4443,212 @@ namespace plume {
  
      // Global creation function.
  
@@ -448,6 +448,110 @@ index 373c87e..343f717 100644
 +        list->endOtherEncoders(EncoderType::None);
 +        list->activeType = EncoderType::None;
 +        list->mtl->encodeWait(QueueOrderEvent(list), queueOrderValue);
++    }
++
++    // MetalFX temporal upscaling into the command list's buffer. Inputs start at
++    // (0, 0); inputWidth/inputHeight give the rendered content inside them. One
++    // scaler is cached; a change of size or format recreates it (history reset).
++    // On failure, *failure names the step.
++    bool EncodeMetalFxTemporalScale(RenderCommandList *commandList, const RenderTexture *color,
++        const RenderTexture *depth, const RenderTexture *motion, const RenderTexture *output,
++        uint32_t inputWidth, uint32_t inputHeight, float jitterX, float jitterY,
++        float motionScaleX, float motionScaleY, bool depthReversed, bool reset, const char **failure)
++    {
++        const auto fail = [failure](const char *step) {
++            if (failure != nullptr) {
++                *failure = step;
++            }
++            return false;
++        };
++        auto *list = static_cast<MetalCommandList *>(commandList);
++        MTL::Texture *colorTexture = static_cast<const ExtendedRenderTexture *>(color)->getTexture();
++        MTL::Texture *depthTexture = static_cast<const ExtendedRenderTexture *>(depth)->getTexture();
++        MTL::Texture *motionTexture = static_cast<const ExtendedRenderTexture *>(motion)->getTexture();
++        MTL::Texture *target = static_cast<const ExtendedRenderTexture *>(output)->getTexture();
++        if (list == nullptr || list->mtl == nullptr || colorTexture == nullptr || depthTexture == nullptr ||
++            motionTexture == nullptr || target == nullptr) {
++            return fail("missing_texture");
++        }
++
++        MetalAutoreleasePool releasePool;
++        struct CachedScaler {
++            MTL::Device *device = nullptr;
++            NS::UInteger inputWidth = 0, inputHeight = 0, outputWidth = 0, outputHeight = 0;
++            MTL::PixelFormat colorFormat = MTL::PixelFormatInvalid, depthFormat = MTL::PixelFormatInvalid;
++            MTL::PixelFormat motionFormat = MTL::PixelFormatInvalid, outputFormat = MTL::PixelFormatInvalid;
++            MTLFX::TemporalScaler *scaler = nullptr;
++        };
++        static std::mutex cacheMutex;
++        static CachedScaler cache;
++        std::lock_guard lock(cacheMutex);
++        MTL::Device *device = colorTexture->device();
++        const bool recreate = cache.scaler == nullptr || cache.device != device ||
++            cache.inputWidth != colorTexture->width() || cache.inputHeight != colorTexture->height() ||
++            cache.outputWidth != target->width() || cache.outputHeight != target->height() ||
++            cache.colorFormat != colorTexture->pixelFormat() || cache.depthFormat != depthTexture->pixelFormat() ||
++            cache.motionFormat != motionTexture->pixelFormat() || cache.outputFormat != target->pixelFormat();
++        if (recreate) {
++            if (cache.scaler != nullptr) {
++                cache.scaler->release();
++                cache.scaler = nullptr;
++            }
++            if (!MTLFX::TemporalScalerDescriptor::supportsDevice(device)) {
++                return fail("unsupported_device");
++            }
++            MTLFX::TemporalScalerDescriptor *descriptor = MTLFX::TemporalScalerDescriptor::alloc()->init();
++            descriptor->setInputWidth(colorTexture->width());
++            descriptor->setInputHeight(colorTexture->height());
++            descriptor->setOutputWidth(target->width());
++            descriptor->setOutputHeight(target->height());
++            descriptor->setColorTextureFormat(colorTexture->pixelFormat());
++            descriptor->setDepthTextureFormat(depthTexture->pixelFormat());
++            descriptor->setMotionTextureFormat(motionTexture->pixelFormat());
++            descriptor->setOutputTextureFormat(target->pixelFormat());
++            // The rendered content may be smaller than the allocation.
++            descriptor->setInputContentPropertiesEnabled(true);
++            descriptor->setInputContentMinScale(1.0f);
++            descriptor->setInputContentMaxScale(std::max(1.0f,
++                std::max(float(target->width()) / float(std::max<uint32_t>(1, inputWidth)),
++                         float(target->height()) / float(std::max<uint32_t>(1, inputHeight)))));
++            descriptor->setAutoExposureEnabled(false);
++            cache = { device, colorTexture->width(), colorTexture->height(), target->width(), target->height(),
++                colorTexture->pixelFormat(), depthTexture->pixelFormat(), motionTexture->pixelFormat(),
++                target->pixelFormat(), descriptor->newTemporalScaler(device) };
++            descriptor->release();
++            if (cache.scaler == nullptr) {
++                return fail("create_scaler");
++            }
++            reset = true;
++        }
++
++        MTLFX::TemporalScaler *scaler = cache.scaler;
++        const auto usable = [](MTL::Texture *texture, MTL::TextureUsage required) {
++            return (texture->usage() & required) == required;
++        };
++        if (!usable(colorTexture, scaler->colorTextureUsage()) || !usable(depthTexture, scaler->depthTextureUsage()) ||
++            !usable(motionTexture, scaler->motionTextureUsage()) || !usable(target, scaler->outputTextureUsage())) {
++            return fail("texture_usage");
++        }
++
++        list->endOtherEncoders(EncoderType::None);
++        list->activeType = EncoderType::None;
++        scaler->setColorTexture(colorTexture);
++        scaler->setDepthTexture(depthTexture);
++        scaler->setMotionTexture(motionTexture);
++        scaler->setOutputTexture(target);
++        scaler->setInputContentWidth(std::min<NS::UInteger>(inputWidth, colorTexture->width()));
++        scaler->setInputContentHeight(std::min<NS::UInteger>(inputHeight, colorTexture->height()));
++        scaler->setJitterOffsetX(jitterX);
++        scaler->setJitterOffsetY(jitterY);
++        scaler->setMotionVectorScaleX(motionScaleX);
++        scaler->setMotionVectorScaleY(motionScaleY);
++        scaler->setDepthReversed(depthReversed);
++        scaler->setPreExposure(1.0f);
++        scaler->setReset(reset);
++        scaler->encodeToCommandBuffer(list->mtl);
++        return true;
 +    }
 +
 +    bool SupportsMetalFxTemporal(RenderDevice *device) {

@@ -1,4 +1,5 @@
 #include "taa_collection.h"
+#include <source_location>
 #include "taa_binding_producer.h"
 #include "temporal_evidence.h"
 #include "scene_aa_provenance.h"
@@ -4976,11 +4977,14 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             // SR execution errors retain this frame's spatial/legacy result and
             // disable only the matching DLSS request on the next CPU plan. They
             // are not allocation failures and must never enter failedPlanEpochs.
-            void DisableDlssRequest(frame_plan::FailureReason reason)
+            void DisableDlssRequest(frame_plan::FailureReason reason,
+                std::source_location caller = std::source_location::current())
             {
                 if ((!upscaling::IsDlssConsumer(activePlan.consumer) && !upscaling::IsSrConsumer(activePlan.consumer)) || !activePlan.cpuSerial ||
                     dlssDisableReportedEpoch == activePlan.geometryEpoch) return;
                 dlssDisableReportedEpoch = activePlan.geometryEpoch;
+                LOG_WARNING("renderer: SR request disabled frame={} provider={} reason={} at renderer.cpp:{}",
+                    frame, uint32_t(activePlan.requestedUpscaler), uint32_t(reason), caller.line());
                 if (evaluatePage && evaluatePage->frame == frame)
                     evaluatePage->fallbackReason = fmt::format("request_failure_{}", uint32_t(reason));
                 frame_plan::ReportPlanFailure({activePlan.geometryEpoch, activePlan.requestSignature,
@@ -6381,7 +6385,13 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 }
                 // Motion follows the proven main scene allocation. The same shader
                 // hash in a shadow/offscreen view never authorizes replay.
-                const bool motionScene = motionOptions.enabled && (!motionOptions.replay || motionReplay) && temporalActive && jitterAnchor && temporalViewport && depth &&
+                // MetalFX uses camera/depth motion only unless LO_METALFX_OBJECT_MV=1:
+                // replaying the scene for object vectors costs ~6 ms of vertex work
+                // per frame on Apple GPUs (Numara, M1 Pro), about twice MetalFX itself.
+                static const bool metalFxObjectMotion = [] {
+                    const char* value = getenv("LO_METALFX_OBJECT_MV"); return value && strcmp(value, "1") == 0; }();
+                const bool cameraMotionOnly = activePlan.consumer == upscaling::TemporalConsumer::MetalFxSr && !metalFxObjectMotion;
+                const bool motionScene = motionOptions.enabled && !cameraMotionOnly && (!motionOptions.replay || motionReplay) && temporalActive && jitterAnchor && temporalViewport && depth &&
                     depth->allocationSerial == jitterAnchor->depthAllocation && rasterViewport.x == 0 && rasterViewport.y == 0 &&
                     rasterViewport.width == jitterAnchor->viewport.width && rasterViewport.height == jitterAnchor->viewport.height;
                 const bool motionDepthWrite = motionScene && (depthControl & 6) == 6;

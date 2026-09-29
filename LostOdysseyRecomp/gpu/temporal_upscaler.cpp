@@ -8,10 +8,15 @@
 #include <cfloat>
 
 #if LO_PLATFORM_MACOS
+#include <os/logger.h>
+#include <cstdio>
+#include <cstdlib>
 namespace plume {
     struct RenderCommandList; struct RenderTexture;
-    bool EncodeMetalFxSpatialScale(RenderCommandList* commandList, const RenderTexture* input,
-        const RenderTexture* output, uint32_t inputWidth, uint32_t inputHeight);
+    bool EncodeMetalFxTemporalScale(RenderCommandList* commandList, const RenderTexture* color,
+        const RenderTexture* depth, const RenderTexture* motion, const RenderTexture* output,
+        uint32_t inputWidth, uint32_t inputHeight, float jitterX, float jitterY,
+        float motionScaleX, float motionScaleY, bool depthReversed, bool reset, const char** failure);
     void EncodeMetalQueueSignal(RenderCommandList* commandList);
     void EncodeMetalQueueWait(RenderCommandList* commandList);
 }
@@ -239,15 +244,45 @@ SrResult TemporalUpscaler::RecordIsolated(plume::RenderCommandList& commands, co
     result.requestedProvider = request.plan.requestedUpscaler;
     if (!ValidSrRequest(request) || request.plan.requestedUpscaler != upscaling::Upscaler::MetalFx) return result;
     result.actualProvider = upscaling::Upscaler::MetalFx;
-    // The isolated list is the provider's own: open it, record, close it.
-    // Phase 1 stand-in: spatial scaling proves the promotion path on Metal.
-    const auto& color = request.inputs.color;
-    // The renderer's prefix list signalled; its continuation waits for ours.
+    const auto& inputs = request.inputs;
+    const auto& color = inputs.color;
+    // MetalFX reads every input from (0, 0) with one content extent.
+    if (color.x || color.y || inputs.depth.x || inputs.depth.y || inputs.motion.x || inputs.motion.y ||
+        inputs.depth.width < color.width || inputs.depth.height < color.height ||
+        inputs.motion.width < color.width || inputs.motion.height < color.height ||
+        !temporal::KnownDepthConvention(inputs.depthConvention)) {
+        result.status = SrResultStatus::InputUnavailable;
+        return result;
+    }
+    // Motion vectors are backward, unjittered render pixels, +Y down (motion_vector.h),
+    // which is MetalFX's pixel convention; jitter is passed as FSR receives it (the
+    // opposite sign visibly blurs static detail). The environment overrides exist to
+    // check the conventions on screen: LO_METALFX_MV_SCALE="x,y", LO_METALFX_JITTER_SIGN=-1|1.
+    static const auto overrides = [] {
+        struct { float mvX = 1.0f, mvY = 1.0f, jitterSign = 1.0f; } values;
+        if (const char* scale = std::getenv("LO_METALFX_MV_SCALE")) std::sscanf(scale, "%f,%f", &values.mvX, &values.mvY);
+        if (const char* sign = std::getenv("LO_METALFX_JITTER_SIGN")) values.jitterSign = std::atof(sign) < 0 ? -1.0f : 1.0f;
+        return values;
+    }();
+    const bool frameGap = !metalFxLastFrame_ || inputs.renderFrameId != metalFxLastFrame_ + 1;
+    metalFxLastFrame_ = inputs.renderFrameId;
+    const char* failure = "";
+    // The isolated list is the provider's own: open it, record, close it. The
+    // renderer's prefix list signalled; its continuation waits for this signal.
     commands.begin();
     plume::EncodeMetalQueueWait(&commands);
-    const bool encoded = plume::EncodeMetalFxSpatialScale(&commands, color.texture, &output, color.width, color.height);
+    const bool encoded = plume::EncodeMetalFxTemporalScale(&commands, color.texture, inputs.depth.texture,
+        inputs.motion.texture, &output, color.width, color.height,
+        overrides.jitterSign * float(inputs.jitter.pixelX), overrides.jitterSign * float(inputs.jitter.pixelY),
+        overrides.mvX, overrides.mvY, inputs.depthConvention == temporal::DepthConvention::Reversed,
+        inputs.resetHistory || frameGap, &failure);
     if (encoded) plume::EncodeMetalQueueSignal(&commands);
     commands.end();
+    if (!encoded) {
+        metalFxLastFrame_ = 0;
+        LOG_WARNING("MetalFX: temporal scaling failed step={} input={}x{} output={}x{}", failure,
+            color.width, color.height, request.plan.output.width, request.plan.output.height);
+    }
     result.status = encoded ? SrResultStatus::Ready : SrResultStatus::Failed;
     return result;
 }

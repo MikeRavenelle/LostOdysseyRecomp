@@ -11,8 +11,33 @@ stand-in provider. Two Metal-specific requirements surfaced:
   `EncodeMetalQueueWait` (plume patch) order them with a queue event; without
   this the composite read the scratch target before MetalFX wrote it (black scene).
 
-The stand-in output is harsher than native 1440p (sharpening, banding in the sky
-from the 8-bit input); colour is checked again with the temporal scaler.
+Phase 2 done: `plume::EncodeMetalFxTemporalScale` records `MTLFXTemporalScaler`
+with colour (RGBA8), depth (R32F, reversed), motion (RG16F) and the Halton jitter.
+Colour now matches native rendering (the spatial stand-in's harsh look is gone).
+
+Measured in Numara (M1 Pro, 120 FPS target, 720p -> 2560x1440, median after arrival):
+
+| Path | GPU ms/frame | FPS |
+|---|---|---|
+| Native 1440p | 30.2 | 33 |
+| MetalFX Temporal, object motion replay | 26.5 | 37 |
+| MetalFX Temporal, camera/depth motion (default) | 21.9 | 45 |
+| Plain 720p (no upscaling) | 17.4 | 54 |
+
+The MetalFX dispatch costs ~3 ms. Replaying the scene for object motion vectors
+costs ~6 ms more: this game is vertex/tiling-bound on Apple GPUs, so a second pass
+over the geometry is expensive. MetalFX therefore uses the existing SR hybrid
+camera/depth motion (`sr_hybrid_motion_gpu.h`, now enabled on Metal) by default;
+`LO_METALFX_OBJECT_MV=1` restores object vectors. Moving characters get camera
+motion only, and MetalFX's disocclusion handling covers them.
+
+Conventions confirmed on screen: motion vectors in render pixels with scale 1
+(`LO_METALFX_MV_SCALE` overrides), jitter passed with FSR's sign (the opposite
+sign visibly blurs static detail; `LO_METALFX_JITTER_SIGN` overrides).
+
+Next: phase 3 (menu entry, quality row on macOS, failure fallbacks) and phase 4
+(scenario suite, more measurements). The scenario `numara-metalfx-temporal`
+covers the default path.
 
 ## Goal
 

@@ -116,5 +116,6 @@ public:
 private:
     dlss::Controller* dlss_;
     std::unique_ptr<fsr::Controller> fsr_;
+    uint64_t metalFxLastFrame_ = 0; // Render frame of the last MetalFX dispatch; a gap resets history.
 };
 } // namespace gpu
