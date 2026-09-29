@@ -42,6 +42,7 @@ BUTTONS = {
 }
 DRAWS_RE = re.compile(r"render timing frame=(\d+) draws=(\d+)")
 FRAME_MS_RE = re.compile(r"present timing completed=\d+ .*?frame_ms=([0-9.]+)")
+GPU_MS_RE = re.compile(r"gpu_queue_batches_elapsed_ms=([0-9.]+)")
 # Settings every run starts from, so results do not depend on the player's
 # settings.ini; a scenario's [settings] table overrides single keys.
 BASELINE_SETTINGS = {"frame_rate": 30, "internal_resolution": 0, "antialiasing": 0,
@@ -211,13 +212,17 @@ class Run:
         checks = self.s["checks"]
         draws = [int(m.group(2)) for m in DRAWS_RE.finditer(text)]
         frame_ms = [float(m.group(1)) for m in FRAME_MS_RE.finditer(text)]
+        gpu_ms = [float(m.group(1)) for m in GPU_MS_RE.finditer(text)]
         # The second half of the run: after loading, in the scene being checked.
         tail = frame_ms[len(frame_ms) // 2:]
+        gpu_tail = gpu_ms[len(gpu_ms) // 2:]
         min_draws = checks.get("min_draws", 0)
         result = {
             "scenario": self.s["name"], "description": self.s["description"], "save": self.s["save"],
             "elapsed_s": round(elapsed, 1), "exit_code": code, "ran_to_timeout": timed_out,
             "max_draws": max(draws, default=0), "median_fps": round(1000 / statistics.median(tail), 1) if tail else None,
+            "median_gpu_ms": round(statistics.median(gpu_tail), 2) if gpu_tail else None,
+            "screenshots": sorted(p.name for p in self.shots.glob("*.ppm")),
             "crash_reports": [str(p) for p in sorted(crashes)], "unfinished_steps": len(pending),
             "counts": {name: len(pattern.findall(text)) for name, pattern in FAILURES.items()},
             "failures": [],

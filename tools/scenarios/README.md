@@ -8,6 +8,27 @@ python3 tools/scenario.py run tools/scenarios/*.toml            # all
 python3 tools/scenario.py run tools/scenarios/numara.toml       # one
 ```
 
+## Regression run
+
+`tools/regression.py` runs every scenario here and compares each one with a local
+baseline (pass/fail, median FPS, median GPU time, final screenshot):
+
+```bash
+python3 tools/regression.py run                     # all scenarios, about 40 minutes
+python3 tools/regression.py run --only numara attract
+python3 tools/regression.py run --accept            # make a passing run the baseline
+python3 tools/regression.py accept out/regression/runs/<timestamp>
+```
+
+The report is `out/regression/runs/<timestamp>/report.md`. A scenario fails when it
+fails its own checks, loses more than 5% FPS, or its final screenshot (reduced to
+160x90) differs from the baseline by more than `max_image_diff` (default 40, mean
+absolute difference) or changes brightness by more than 30. GPU time more than 10%
+above the baseline is a warning. The baseline stays in `out/regression/baseline` and
+is never committed; accept a new one after an intended visual or performance change.
+
+## Single scenarios
+
 Each run gets its own folder under `out/scenarios/<timestamp>/<name>/` (runtime log,
 stdout, screenshots, `result.json`) and never touches the game's own saves, settings
 or logs. The shader cache next to the binary is shared.
@@ -41,6 +62,8 @@ LO_SCREENSHOT_PRESENTED = "1"   # screenshots of the presented image, not the gu
 
 [checks]
 min_draws = 700      # the scene was reached
+compare_image = true # regression.py: compare the final screenshot with the baseline
+max_image_diff = 40  # regression.py: allowed mean difference (0-255)
 min_fps = 25         # median of the second half of the run
 max_errors = 0       # [error] log lines allowed
 ```
@@ -60,3 +83,6 @@ with `tools/import_xenia_saves.py` (folder `userN` is in-game slot N-1):
 | user16 | Disc 2 start, Crimson Forest shrine |
 | user17 | Disc 4 world map, Northern Shore of Ipsilon |
 | user18 | Seeker of the Deep! DLC dungeon (needs the DLC imported) |
+
+`new-game-battle` needs no save: it starts a New Game, records the opening movie and
+plays one attack in the first battle.
