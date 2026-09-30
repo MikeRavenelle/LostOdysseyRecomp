@@ -186,6 +186,13 @@ int main(int argc, char* argv[])
     // --game launches retain their caller's working directory for isolated tests.
     if(!explicitGame && os::user_paths::UsePortableLayout()) {
         std::filesystem::current_path(executableDirectory);
+    } else if(!explicitGame) {
+        // Installed layouts (a macOS .app, Linux packages) start in the config
+        // directory: a Finder launch begins in "/", where files saved by
+        // relative name (e.g. taa-collection.ini) cannot be written.
+        std::error_code ec;
+        std::filesystem::create_directories(os::user_paths::ConfigDir(), ec);
+        std::filesystem::current_path(os::user_paths::ConfigDir(), ec);
     }
     // Keep each run separately, including launches without a terminal. Tests
     // can select a path or disable the duplicate sink with LO_LOG_FILE=0.
