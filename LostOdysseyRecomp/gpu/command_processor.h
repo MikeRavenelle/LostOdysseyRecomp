@@ -79,7 +79,18 @@ namespace gpu
             }
             uint32_t ReadAndSwap();
             void Advance(uint32_t dwords);
+            // The next `count` guest-endian words when they neither wrap the ring
+            // nor pass the end of an indirect buffer; otherwise nullptr.
+            const uint32_t* Contiguous(uint32_t count) const
+            {
+                return uint64_t(readOffset) + uint64_t(count) * 4 <= size
+                    ? reinterpret_cast<const uint32_t*>(base + readOffset) : nullptr;
+            }
         };
+
+        // Same effects as WriteRegister; skips its special cases for plain banks.
+        void WriteRegisterFast(uint32_t index, uint32_t value);
+        bool WritePlainRun(uint32_t first, const uint32_t* guestWords, uint32_t count);
 
         void WorkerMain();
         void VsyncMain();
@@ -118,6 +129,11 @@ namespace gpu
         uint32_t m_interruptUserData = 0;
         std::mutex m_interruptMutex;
         std::condition_variable m_interruptCv;
+        // Completed guest interrupt callbacks. A WAIT_REG_MEM released by a
+        // handler (D3D clears its scratch writeback word) re-checks at once.
+        std::atomic<uint64_t> m_interruptsCompleted{ 0 };
+        std::mutex m_waitProgressMutex;
+        std::condition_variable m_waitProgress;
         std::vector<std::pair<uint32_t, uint32_t>> m_pendingInterrupts; // (source, cpu)
         uint64_t m_binMask = 0xFFFFFFFFFFFFFFFFull;
         uint64_t m_binSelect = 0xFFFFFFFFFFFFFFFFull;
