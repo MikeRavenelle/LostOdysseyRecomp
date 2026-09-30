@@ -9,10 +9,12 @@ Brief release highlights, newest first. Dates are UTC. Technical validation is r
 ### English
 
 - Capped frame generation multiplier requests at 6×, the most DLSS multi-frame generation supports. The Graphics menu offers 2× to 6×, `settings.ini` values above 6 fall back to 2×, and `LO_FG_MULTIPLIER` accepts 2 to 6. Each request is still limited to what the GPU and driver report.
+- Keep Windows native messages pumping during GPU shutdown to prevent a DXGI quit-to-desktop deadlock (#82). The hang reproduced locally in D3D12 exclusive fullscreen with DLSS frame generation, and the fixed build quit in about 2 seconds. Reporter confirmation is pending.
 
 ### 简体中文
 
 - 插帧倍率上限改为 6×，即 DLSS 多帧生成支持的最大值。图形菜单只提供 2× 到 6×，`settings.ini` 中大于 6 的值回退为 2×，`LO_FG_MULTIPLIER` 只接受 2 到 6。每次请求仍受显卡和驱动报告的上限限制。
+- 退出期间继续处理Windows窗口消息，修复DXGI清理时可能出现的退出桌面死锁（#82）。本机在D3D12独占全屏并开启DLSS插帧时复现了卡死，修复后约2秒正常退出；报告者复测待完成。
 
 ## [v0.7.15 — 2026-09-29](https://github.com/freefrank/LostOdysseyRecomp/releases/tag/v0.7.15)
 
