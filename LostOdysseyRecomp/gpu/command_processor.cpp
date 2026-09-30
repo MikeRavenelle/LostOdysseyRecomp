@@ -109,6 +109,8 @@ namespace gpu
     static std::mutex g_shaderMutex;
     static std::set<uint64_t> g_seenShaders;
     static const bool g_gpuStats = getenv("LO_GPU_STATS") != nullptr;
+    // Read once: CaptureShader runs for every changed IM_LOAD.
+    static const char* const g_shaderDumpDirectory = getenv("LO_SHADER_DUMP_DIR");
     static uint32_t g_detailBudget = 0;
 
     // words point at big-endian microcode in guest memory.
@@ -119,7 +121,7 @@ namespace gpu
         if (g_gpuStats) g_frame.shaderLoads++;
         auto& snapshot = g_activeShaderSnapshots[type];
         if (!snapshot.Load(words, count)) return;
-        const char* dumpDirectory = getenv("LO_SHADER_DUMP_DIR");
+        const char* dumpDirectory = g_shaderDumpDirectory;
         if (!g_gpuStats && !dumpDirectory) return;
         const uint64_t hash = snapshot.CommandHash();
         g_activeShader[type] = hash;
@@ -193,7 +195,9 @@ namespace gpu
         }
     }
 
-    uint32_t CommandProcessor::Reader::ReadAndSwap()
+    // inline: the release build inlines only marked functions (/Ob1), and this
+    // runs once per command word.
+    inline uint32_t CommandProcessor::Reader::ReadAndSwap()
     {
         if (!ring && readOffset >= size)
             return 0;
@@ -277,6 +281,7 @@ namespace gpu
         m_running.store(false, std::memory_order_release);
         m_writePtrChanged.notify_all();
         m_interruptCv.notify_all();
+        m_waitProgress.notify_all();
     }
 
     void CommandProcessor::Shutdown()
@@ -291,6 +296,7 @@ namespace gpu
             std::lock_guard lock(m_interruptMutex);
         }
         m_interruptCv.notify_all();
+        m_waitProgress.notify_all();
         for (auto* t : { &m_worker, &m_vsync, &m_interruptThread })
             if (t->joinable())
                 t->join();
@@ -419,6 +425,45 @@ namespace gpu
         {
             m_registers[index] |= 0x80000000u;
         }
+    }
+
+    // WriteRegister's side effects all lie below 0x2400 (scratch writeback,
+    // coherency, read-only status) or at REGISTER_COUNT and above (frame plan,
+    // catalog, movie clear). The constant, fetch and bool/loop banks in between
+    // only update the register file and the big-endian MMIO image that guest
+    // loads read.
+    constexpr uint32_t kPlainRegisterFirst = 0x2400;
+    static_assert(REG_SCRATCH_REG7 < kPlainRegisterFirst && REG_COHER_STATUS_HOST < kPlainRegisterFirst &&
+        REG_RB_EDRAM_TIMING < kPlainRegisterFirst && REG_RB_BC_CONTROL < kPlainRegisterFirst &&
+        REG_D1MODE_V_COUNTER < kPlainRegisterFirst && REG_INTERRUPT_STATUS < kPlainRegisterFirst &&
+        REG_D1MODE_VIEWPORT_SIZE < kPlainRegisterFirst &&
+        movie_clear::RegisterBase >= REGISTER_COUNT && frame_plan::wire::PlanBase >= REGISTER_COUNT &&
+        frame_plan::wire::CatalogBase >= REGISTER_COUNT);
+
+    inline void CommandProcessor::WriteRegisterFast(uint32_t index, uint32_t value)
+    {
+        if (index >= kPlainRegisterFirst && index < REGISTER_COUNT)
+        {
+            m_registers[index] = value;
+            reinterpret_cast<be<uint32_t>*>(g_memory.Translate(MMIO_BASE))[index] = value;
+            return;
+        }
+        WriteRegister(index, value);
+    }
+
+    // A run of guest-endian words for plain registers: the MMIO image takes the
+    // words as they are and the register file their byte-swapped values, the
+    // same result as WriteRegisterFast on each word. False leaves the caller
+    // to write word by word.
+    inline bool CommandProcessor::WritePlainRun(uint32_t first, const uint32_t* guestWords, uint32_t count)
+    {
+        if (first < kPlainRegisterFirst || uint64_t(first) + count > REGISTER_COUNT)
+            return false;
+        std::memcpy(static_cast<uint8_t*>(g_memory.Translate(MMIO_BASE)) + size_t(first) * 4, guestWords, size_t(count) * 4);
+        uint32_t* registers = m_registers.data() + first;
+        for (uint32_t i = 0; i < count; ++i)
+            registers[i] = ByteSwap(guestWords[i]);
+        return true;
     }
 
     uint32_t CommandProcessor::ReadRegister(uint32_t index)
@@ -620,6 +665,11 @@ namespace gpu
                 LOG_VERBOSE("isr source={} cpu={} block=[{:#x} {:#x} {:#x} {:#x} {:#x} {:#x}]", item.first, item.second,
                     uint32_t(blk[0]), uint32_t(blk[1]), uint32_t(blk[2]), uint32_t(blk[3]), uint32_t(blk[4]), uint32_t(blk[5]));
             g_memory.FindFunction(m_interruptCallback)(ctx.ppcContext, g_memory.base);
+            {
+                std::lock_guard lock(m_waitProgressMutex);
+                m_interruptsCompleted.fetch_add(1, std::memory_order_release);
+            }
+            m_waitProgress.notify_all();
             if (trace)
                 LOG_VERBOSE("isr done block=[{:#x} {:#x} {:#x} {:#x} {:#x} {:#x}]",
                     uint32_t(blk[0]), uint32_t(blk[1]), uint32_t(blk[2]), uint32_t(blk[3]), uint32_t(blk[4]), uint32_t(blk[5]));
@@ -694,10 +744,16 @@ namespace gpu
         uint32_t count = ((packet >> 16) & 0x3FFF) + 1;
         uint32_t baseIndex = packet & 0x7FFF;
         bool writeOneReg = (packet >> 15) & 1;
+        if (!writeOneReg)
+            if (const auto* words = reader.Contiguous(count); words && WritePlainRun(baseIndex, words, count))
+            {
+                reader.Advance(count);
+                return true;
+            }
         for (uint32_t m = 0; m < count; m++)
         {
             uint32_t data = reader.ReadAndSwap();
-            WriteRegister(writeOneReg ? baseIndex : baseIndex + m, data);
+            WriteRegisterFast(writeOneReg ? baseIndex : baseIndex + m, data);
         }
         return true;
     }
@@ -977,6 +1033,9 @@ namespace gpu
             auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             while (m_running)
             {
+                // Snapshot before reading, so a handler finishing after the read
+                // still ends the wait below instead of being missed.
+                const uint64_t progress = m_interruptsCompleted.load(std::memory_order_acquire);
                 uint32_t value;
                 if (isMemory)
                     value = GpuSwap(*reinterpret_cast<volatile uint32_t*>(TranslatePhysical(pollRegAddr & ~3u)), pollRegAddr & 3);
@@ -1017,7 +1076,15 @@ namespace gpu
                     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
                 }
                 if (wait >= 0x100)
-                    std::this_thread::sleep_for(std::chrono::milliseconds(wait / 0x100));
+                {
+                    // Each frame D3D waits here for its interrupt handler to clear
+                    // the scratch writeback word. Re-check when any handler completes
+                    // rather than always sleeping the whole poll interval.
+                    std::unique_lock lock(m_waitProgressMutex);
+                    m_waitProgress.wait_for(lock, std::chrono::milliseconds(wait / 0x100), [&] {
+                        return m_interruptsCompleted.load(std::memory_order_relaxed) != progress || !m_running;
+                    });
+                }
                 else
                     std::this_thread::yield();
             }
@@ -1240,13 +1307,16 @@ namespace gpu
                 if (opcode == PM4_LOAD_ALU_CONSTANT)
                 {
                     auto* src = reinterpret_cast<be<uint32_t>*>(TranslatePhysical(address));
-                    for (uint32_t i = 0; i < n; i++)
-                        WriteRegister(index + i, src[i]);
+                    if (!WritePlainRun(index, reinterpret_cast<const uint32_t*>(src), n))
+                        for (uint32_t i = 0; i < n; i++)
+                            WriteRegisterFast(index + i, src[i]);
                 }
+                else if (const auto* words = reader.Contiguous(n); words && WritePlainRun(index, words, n))
+                    reader.Advance(n);
                 else
                 {
                     for (uint32_t i = 0; i < n; i++)
-                        WriteRegister(index + i, reader.ReadAndSwap());
+                        WriteRegisterFast(index + i, reader.ReadAndSwap());
                 }
             }
             else if (opcode == PM4_SET_CONSTANT)
@@ -1259,8 +1329,13 @@ namespace gpu
         {
             uint32_t index = reader.ReadAndSwap() & 0xFFFF;
             if (g_gpuStats) g_frame.constantWrites += count - 1;
+            if (const auto* words = reader.Contiguous(count - 1); words && WritePlainRun(index, words, count - 1))
+            {
+                reader.Advance(count - 1);
+                return true;
+            }
             for (uint32_t i = 0; i < count - 1; i++)
-                WriteRegister(index + i, reader.ReadAndSwap());
+                WriteRegisterFast(index + i, reader.ReadAndSwap());
             return true;
         }
 

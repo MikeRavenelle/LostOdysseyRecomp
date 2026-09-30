@@ -449,6 +449,8 @@ namespace gpu::renderer
                 uint64_t uploadOffset = 0;
                 uint64_t arenaOffset = 0;
                 std::vector<std::unique_ptr<RenderDescriptorSet>> setPools[4];
+                // Per pooled set: bindings that may hold a non-dummy view.
+                std::vector<uint32_t> setPoolBindings[4];
                 uint32_t setPoolUsed[4] = {};
                 TextureSetCache textureSetCache[3];
                 std::vector<SamplerPalette::Lease> samplerVersions;
@@ -3798,11 +3800,16 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
             RenderDescriptorSet* AcquireSet(int which, bool overwriteAllBindings = false)
             {
                 auto& pool = Gpu().setPools[which];
+                auto& bindings = Gpu().setPoolBindings[which];
                 uint32_t& used = Gpu().setPoolUsed[which];
                 if (used >= pool.size())
                 {
                     pool.push_back(setBuilders[which].create(device));
+                    bindings.push_back(texture_descriptors::kUnknownBindings);
                 }
+                // The caller writes arbitrary bindings; a later texture-bank
+                // reuse of this pooled set must rewrite all of them.
+                bindings[used] = texture_descriptors::kUnknownBindings;
                 // A reused set may still contain views from a previous batch.
                 // One-texture draws overwrite only binding 0, so a stale view
                 // in binding 1 would remain referenced by the new submission.
@@ -3824,10 +3831,30 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                 // cache and pool belong to the same completed-fence interval.
                 const bool reuse = descriptorReuse;
                 auto create = [&]() {
-                    auto* set = AcquireSet(which, reuse);
-                    for (uint32_t slot = 0; slot < kTextureSlots; ++slot)
-                        if (reuse || ((activeSlots >> slot) & 1))
-                            set->setTexture(slot, textures[slot], RenderTextureLayout::SHADER_READ);
+                    if (!reuse) {
+                        auto* set = AcquireSet(which, false);
+                        for (uint32_t slot = 0; slot < kTextureSlots; ++slot)
+                            if ((activeSlots >> slot) & 1)
+                                set->setTexture(slot, textures[slot], RenderTextureLayout::SHADER_READ);
+                        return set;
+                    }
+                    // A reused set must equal the key in every binding. Rewrite only
+                    // those it may still hold plus the key's non-dummy ones, rather
+                    // than all 32 views per miss.
+                    auto& pool = Gpu().setPools[which];
+                    auto& bindings = Gpu().setPoolBindings[which];
+                    uint32_t& used = Gpu().setPoolUsed[which];
+                    if (used >= pool.size()) {
+                        pool.push_back(setBuilders[which].create(device));
+                        bindings.push_back(texture_descriptors::kUnknownBindings);
+                    }
+                    auto* set = pool[used].get();
+                    const HostTexture& dummy = which == 1 ? dummyTexture2D : which == 2 ? dummyTexture3D : dummyTextureCube;
+                    bindings[used] = texture_descriptors::RewriteBindings(bindings[used], textures, dummy.texture.get(),
+                        [&](uint32_t slot, RenderTexture* texture) {
+                            set->setTexture(slot, texture, RenderTextureLayout::SHADER_READ);
+                        });
+                    ++used;
                     return set;
                 };
                 if (!reuse) return create();
@@ -8120,13 +8147,14 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                     color && ps && (ps->info.colorTargetsWritten & 1u) && (key.colorMask & 7)) {
                     if (alphaReplayRecorded || alphaPostprocessRecorded)
                         fsrAlphaBridge->InvalidateClearBackground(color->allocationSerial, "audited_rgb_draw");
+                    static const bool noBlendDiagnostic = getenv("LO_NO_BLEND") != nullptr;
                     if (!alphaReplayRecorded && !alphaPostprocessRecorded)
                         HandleFsrAlphaRgbWriter(*color, "unreplayed_rgb_draw", drawsThisFrame,
                             key.vs, key.ps, key.blend, key.colorMask,
                             fsr_alpha::RetainsRawAfterAuditedLocalBlend(key.vs, key.ps,
                                 key.blend, key.colorMask, (colorInfo >> 16) & 0xF,
                                 color->format == RenderFormat::R16G16B16A16_FLOAT,
-                                shared.flags, getenv("LO_NO_BLEND") != nullptr));
+                                shared.flags, noBlendDiagnostic));
                     if (fsr_alpha::AuditedPostprocessPs(key.ps) && !alphaPostprocessRecorded)
                         fsrAlphaBridge->MarkUnsupportedPostprocess(color->allocationSerial);
                     if (fsr_alpha::AuditedPostprocessPs(key.ps) && !alphaPostprocessRecorded &&
@@ -8797,7 +8825,8 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                             // the graphics API, so an empty mapping must be skipped.
                             if (!clearRects.empty())
                             {
-                                if (getenv("LO_TRACE_CLEAR_CALL"))
+                                static const bool traceClearCall = getenv("LO_TRACE_CLEAR_CALL") != nullptr;
+                                if (traceClearCall)
                                     LOG_INFO("clear begin f{} base={} pitch={} size={}x{} count={} z={}", frame, k.base, k.pitch, target->width, target->height, clearRects.size(), rectZ);
                                 commandList->clearDepthStencil(true, false, rectZ, 0, clearRects.data(), uint32_t(clearRects.size()));
                                 if (trackBinding) {
@@ -8805,7 +8834,7 @@ void main(triangle V input[3], inout TriangleStream<V> stream)
                                         clearRects[0].right == int32_t(target->width) && clearRects[0].bottom == int32_t(target->height);
                                     target->bindingProducer.Clear(bindingEpoch, frame, full);
                                 }
-                                if (getenv("LO_TRACE_CLEAR_CALL")) LOG_INFO("clear end");
+                                if (traceClearCall) LOG_INFO("clear end");
                             }
                             if (logged++ < 8 || frame == captureFrame)
                                 LOG_INFO("renderer: depth clear f{} rect (pitch {}, {}x{} .. {}x{}) -> depth base={:#x} pitch={} size={}x{} to {} msaa={}->{} regions={}", frame, pitch, minX, minY, maxX, maxY, k.base, k.pitch, target->width, target->height, rectZ, (surfaceInfo >> 16) & 3, target->depthMsaa, clearRects.size());
